@@ -21,6 +21,8 @@ extends RefCounted
 const FIELD_GROUP := &"flora_damage_fields"
 ## Nodes that answer `combat_faction`, `combat_position`, and `apply_damage`.
 const COMBATANT_GROUP := &"combatants"
+## Cities that own destructible lots. Applied on every peer, like flora.
+const BUILDING_GROUP := &"city_damage_fields"
 ## Player-facing names for authored attacks. Internal IDs survive the network
 ## with the hit, but exposing those IDs on a death screen would turn
 ## `bigfoot_rock` into implementation detail instead of useful information.
@@ -38,6 +40,7 @@ const ABILITY_DISPLAY_NAMES := {
 	"meteor_punch": "Meteor Punch",
 	"nausicaa": "Nausicaä",
 	"nuke": "Nuke",
+	"building_collapse": "Collapse",
 	"parry_reflect": "Parry Reflection",
 	"starfire": "Starfire",
 	"wall": "Wall",
@@ -62,6 +65,14 @@ enum Reaction {
 }
 
 const REACTION_FULL_RAGDOLL := Reaction.RAGDOLL
+
+
+static func rid_list(rid: RID = RID()) -> Array[RID]:
+	var out: Array[RID]
+	if rid.is_valid():
+		out.append(rid)
+	return out
+
 
 enum Kind {
 	## A sustained cutting line, such as the laser. Damages along its length.
@@ -241,6 +252,8 @@ static func apply_to_world(anywhere: Node, hit: DamageHit) -> float:
 	if hit == null:
 		return 0.0
 	var absorbed := apply_to_fields(anywhere, hit) if hit.affects_flora else 0.0
+	if hit.affects_combatants:
+		absorbed += apply_to_buildings(anywhere, hit)
 	# Flora is deterministic and therefore applied by every peer. Actors are
 	# canonical only on the host.
 	if not hit.affects_combatants:
@@ -265,6 +278,23 @@ static func apply_to_fields(anywhere: Node, hit: DamageHit) -> float:
 		if field is Node and in_same_world(anywhere, field) \
 				and field.has_method(&"apply_damage"):
 			absorbed += float(field.call(&"apply_damage", hit))
+	return absorbed
+
+
+## Painted city lots. Deterministic like flora, so every peer wrecks the same
+## buildings from the same volume.
+static func apply_to_buildings(anywhere: Node, hit: DamageHit) -> float:
+	if anywhere == null or hit == null or not anywhere.is_inside_tree():
+		return 0.0
+	var absorbed := 0.0
+	var has_world := game_world_of(anywhere) != null
+	for node in anywhere.get_tree().get_nodes_in_group(BUILDING_GROUP):
+		var city := node as PatchCity
+		if city == null or not city.has_method(&"apply_damage"):
+			continue
+		if has_world and not in_same_world(anywhere, city):
+			continue
+		absorbed += city.apply_damage(hit)
 	return absorbed
 
 
@@ -460,7 +490,7 @@ func _world_blocks(anywhere: Node, source: Node, combatant: Node) -> bool:
 			or from.distance_squared_to(to) < 0.001:
 		return false
 	var query := PhysicsRayQueryParameters3D.create(from, to, 1)
-	var excluded: Array[RID] = []
+	var excluded := rid_list()
 	if source is CollisionObject3D:
 		excluded.append((source as CollisionObject3D).get_rid())
 	query.collide_with_areas = false
@@ -500,6 +530,64 @@ func reaches(at: Vector3, bounds: float) -> bool:
 	if shape == Shape.CYLINDER:
 		return _cylinder_solid_distance(at) <= maxf(bounds, 0.0)
 	return distance_to(at) <= radius + maxf(bounds, 0.0)
+
+
+## Whether this volume overlaps a capsule from [param a] to [param b].
+##
+## Buildings are tall relative to their plan, so a sphere at mid-height misses
+## a strike on the crown. Treating the lot as a vertical capsule keeps the hit
+## on the storey that was actually struck.
+func reaches_segment(a: Vector3, b: Vector3, bounds: float) -> bool:
+	var pad := radius + maxf(bounds, 0.0)
+	if shape == Shape.CYLINDER:
+		return _segment_distance(origin, toward, a, b) <= pad \
+			and _cylinder_overlaps_segment(a, b, pad)
+	return _segment_distance(origin, toward, a, b) <= pad
+
+
+func _cylinder_overlaps_segment(a: Vector3, b: Vector3, pad: float) -> bool:
+	var along := toward - origin
+	var length := along.length()
+	if length < 0.000001:
+		return a.distance_to(origin) <= pad or b.distance_to(origin) <= pad
+	var axis := along / length
+	for point_variant in [a, b, a.lerp(b, 0.5)]:
+		var point: Vector3 = point_variant
+		var axial := (point - origin).dot(axis)
+		if axial >= -pad and axial <= length + pad:
+			return true
+	return false
+
+
+func _segment_distance(p1: Vector3, q1: Vector3, p2: Vector3, q2: Vector3) -> float:
+	var d1 := q1 - p1
+	var d2 := q2 - p2
+	var r := p1 - p2
+	var a := d1.length_squared()
+	var e := d2.length_squared()
+	var s := 0.0
+	var t := 0.0
+	if a <= 0.0000001 and e <= 0.0000001:
+		return p1.distance_to(p2)
+	if a <= 0.0000001:
+		t = clampf(d2.dot(r) / e, 0.0, 1.0)
+	elif e <= 0.0000001:
+		s = clampf(-d1.dot(r) / a, 0.0, 1.0)
+	else:
+		var b := d1.dot(d2)
+		var c := d1.dot(r)
+		var f := d2.dot(r)
+		var denom := a * e - b * b
+		if denom > 0.0000001:
+			s = clampf((b * f - c * e) / denom, 0.0, 1.0)
+		t = (b * s + f) / e
+		if t < 0.0:
+			t = 0.0
+			s = clampf(-c / a, 0.0, 1.0)
+		elif t > 1.0:
+			t = 1.0
+			s = clampf((b - c) / a, 0.0, 1.0)
+	return (p1 + d1 * s).distance_to(p2 + d2 * t)
 
 
 func _radial_axis_distance(point: Vector3) -> float:

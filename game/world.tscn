@@ -10,7 +10,6 @@
 [ext_resource type="Script" uid="uid://bfw3ak0dy0xh1" path="res://game/planet/surface_anchor.gd" id="7_anchor"]
 [ext_resource type="Script" uid="uid://cxyl1llbkxjek" path="res://game/city/city_builder.gd" id="9_city"]
 [ext_resource type="Script" uid="uid://pi0ekedlrp0k" path="res://game/planet/landmark.gd" id="10_landmark"]
-[ext_resource type="Script" uid="uid://dlrsxm5tm8mfo" path="res://game/props/colony_ship.gd" id="11_ship"]
 [ext_resource type="Script" path="res://game/props/ground_cover.gd" id="12_flowers"]
 [ext_resource type="Script" path="res://game/props/plant_species.gd" id="13_species"]
 [ext_resource type="Resource" path="res://game/props/purple_flower.tres" id="14_flower"]
@@ -49,8 +48,8 @@
 [ext_resource type="Script" path="res://game/planet/night_ground_glow.gd" id="47_night_ground_glow"]
 [ext_resource type="PackedScene" path="res://game/enemies/training_dummy.tscn" id="48_training_dummy"]
 [ext_resource type="PackedScene" path="res://game/fauna/fauna_populations.tscn" id="49_fauna"]
-[ext_resource type="Script" path="res://game/meeps/meep_colonies.gd" id="50_meeps"]
 [ext_resource type="Script" path="res://game/props/ability_test_site.gd" id="51_test_site"]
+[ext_resource type="Script" path="res://game/city/land_patch_overlay.gd" id="52_patches"]
 
 [sub_resource type="ShaderMaterial" id="SkyMaterial"]
 shader = ExtResource("4_space")
@@ -136,9 +135,8 @@ glow_hdr_threshold = 0.95
 
 [sub_resource type="Resource" id="PlanetShape_world"]
 script = ExtResource("6_shape")
-; No town pads in the height field for now, so the ground under both settlements is
-; the natural terrain again. The builders below are switched off to match: a road
-; laid on ground that was never flattened is the one combination to avoid.
+; No authored town pads in the height field. City building starts from the
+; land-patch overlay below, on the natural terrain.
 settled = false
 
 [node name="World" type="Node3D" unique_id=111020355]
@@ -241,7 +239,7 @@ script = ExtResource("31_cycle")
 planet = NodePath("../Planet")
 sun = NodePath("../Sun")
 world_environment = NodePath("../WorldEnvironment")
-noon_anchor = NodePath("../Planet/ColonyShip")
+noon_anchor = NodePath("../Planet/VacationersLanding")
 period_seconds = 960.0
 
 [node name="NightGroundGlow" type="Node3D" parent="." node_paths=PackedStringArray("planet", "cycle")]
@@ -287,7 +285,7 @@ script = ExtResource("37_break_effects")
 [node name="SouthPoleVolcano" type="Node3D" parent="Planet"]
 script = ExtResource("43_volcano")
 
-; Landmark found by dev/_bigfoot_site.gd: 71.290 degrees from the ColonyShip in
+; Landmark found by dev/_bigfoot_site.gd: 71.290 degrees from Vacationer's Landing in
 ; dense ForestGiants habitat, with a dry, fully usable 200 m neighborhood.
 ; Tilde includes its "Bigfoot" marker in the planet-wide navigation overlay.
 [node name="BigfootTerritory" type="Node3D" parent="Planet"]
@@ -325,37 +323,31 @@ site = &"meridian"
 enabled = false
 metadata/_custom_type_script = "uid://cxyl1llbkxjek"
 
-; Every Meep settlement, and nothing until somebody presses RELEASE SETTLERS at a
-; ship. Unrelated to the City builders above: those grade a pad and lay authored
-; streets, and a Meep town is built on the ground as found, by its residents.
-[node name="MeepColonies" type="Node3D" parent="Planet"]
-script = ExtResource("50_meeps")
+; Every buildable shore, cut into neighbourhood-scale territories. Tilde draws
+; the borders and the name at each centre. Ice, the volcano, and the giant-mountain
+; sites are left out; the rest of the land is tiled with no gaps.
+[node name="LandPatches" type="Node3D" parent="Planet"]
+script = ExtResource("52_patches")
 
-; The lander, on the shore of what Vacationer's Landing was named for. It is the
-; town's sign as well as a prop: a ColonyShip is a Landmark, so the waypoint over
-; it is the same node, and the town's own marker went with the streets.
-;
-; The site is dev/_lander_site.gd's answer, taken against the unsettled terrain
-; the pads being off leaves behind: 790 m from the town centre, 70 m from the
-; sea, level to 0.5 m across the ship's own 12 m footprint, on ground sloping a
-; degree and a half. The facing turns its -Z at the water.
-[node name="ColonyShip" type="Node3D" parent="Planet" unique_id=1704339828]
-script = ExtResource("11_ship")
+; The coastal sign for Vacationer's Landing, placed by hand because Settlements
+; leaves this town's waypoints empty. It is the noon anchor, the fauna showcase
+; origin, and the keep-out the landing flowers and trees measure from. The
+; facing turns its -Z at the water.
+[node name="VacationersLanding" type="Node3D" parent="Planet" unique_id=1704339828]
+script = ExtResource("10_landmark")
 direction = Vector3(-0.2881049, -0.1121179, 0.9510127)
 facing = 91.9
-title = "Colony Ship"
+title = "Vacationer's Landing"
 tint = Color(0.964706, 0.701961, 0.168627, 1)
-; Nearer than the default before it is named, and gone sooner: the ship is 26 m
-; tall and reads as itself from a long way off, so a label over it is only
-; wanted while it is still a speck on a shore.
 show_beyond = 400.0
 aimed_beyond = 900.0
-metadata/_custom_type_script = "uid://dlrsxm5tm8mfo"
+metadata/_custom_type_script = "uid://pi0ekedlrp0k"
 
-; Two hundred metres from the lander on a surveyed dry shelf: 0.88 m of relief
-; across the 14 m pad and a 2.5-degree slope at full terrain detail. The waypoint
-; is visible from the ship, while the lit mast and ring identify the site after
-; arrival. Dummies settle independently onto the procedural ground and respawn.
+; Two hundred metres from Vacationer's Landing on a surveyed dry shelf: 0.88 m of
+; relief across the 14 m pad and a 2.5-degree slope at full terrain detail. The
+; waypoint is visible from the shore, while the lit mast and ring identify the
+; site after arrival. Dummies settle independently onto the procedural ground
+; and respawn.
 [node name="AbilityTestingSite" type="Node3D" parent="Planet"]
 script = ExtResource("51_test_site")
 direction = Vector3(-0.26689449, -0.12450018, 0.95565003)
@@ -444,7 +436,7 @@ show_beyond = 500.0
 aimed_beyond = 900.0
 hide_beyond = 0.0
 
-; The flowers, over the shelf the ship came down on and out across the headland
+; The flowers, over the shelf at Vacationer's Landing and out across the headland
 ; behind it. The field is grown from the species' `random_seed` and the height
 ; field alone, so it is the same on every peer, nothing about it is replicated
 ; or saved, and only the tiles near whoever is looking exist at any moment.
@@ -459,7 +451,7 @@ direction = Vector3(-0.2881049, -0.1121179, 0.9510127)
 species = Array[ExtResource("13_species")]([ExtResource("14_flower")])
 spread = 430.0
 tile_size = 34.0
-clear_of = NodePath("../ColonyShip")
+clear_of = NodePath("../VacationersLanding")
 additional_clear_of = Array[NodePath]([NodePath("../AbilityTestingSite")])
 keep_back = 26.0
 wind_heading = 35.0
@@ -487,7 +479,7 @@ glow_light_pulse_speed = 0.25
 pending_limit = 1
 applies_per_frame = 1
 
-; Giant flower trees over the grassy country around the colony ship.
+; Giant flower trees over the grassy country around Vacationer's Landing.
 ; Trunks and independently angled flowers are two MultiMeshes — two draw calls
 ; for the field — while one static body owns primitive trunk/crown collision for
 ; every tree. Placement asks GlobalGrass which terrain layer the ground shader
@@ -499,7 +491,7 @@ model = ExtResource("29_tree_model")
 material = ExtResource("30_tree_material")
 head_material = ExtResource("32_tree_head_material")
 grass_cover = NodePath("../GlobalGrass")
-clear_of = NodePath("../ColonyShip")
+clear_of = NodePath("../VacationersLanding")
 additional_clear_of = Array[NodePath]([NodePath("../AbilityTestingSite")])
 spread = 900.0
 tree_count = 280
@@ -740,7 +732,7 @@ avoid_push = 3.4
 ;
 ; Which is now true of every reef on the planet rather than the one off the
 ; beach. The coral is global cover and always was; these swarms used to be a fan
-; pinned to the colony ship, so the two agreed only where they happened to
+; pinned to Vacationer's Landing, so the two agreed only where they happened to
 ; overlap. Siting the swarms around the viewer instead makes the depth band they
 ; share do the work everywhere: swim out over any sand eight to thirty metres
 ; down and there is coral, and there are fish over it.

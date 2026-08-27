@@ -84,7 +84,12 @@ func bind(camera: Camera3D) -> void:
 ## arrives at and the range it arrives by.
 func drawn(least := 0.5) -> PackedStringArray:
 	var titles := PackedStringArray()
-	for landmark: Landmark in _markers:
+	for key in _markers:
+		if not is_instance_valid(key):
+			continue
+		var landmark := key as Landmark
+		if landmark == null:
+			continue
 		var marker: Control = _markers[landmark]
 		if marker.visible and marker.modulate.a > least:
 			titles.append(landmark.title)
@@ -95,14 +100,20 @@ func _process(_delta: float) -> void:
 	if not enabled:
 		# Markers already built are hidden rather than freed, so switching back on
 		# is the same one line and does not have to rebuild anything.
-		for landmark: Landmark in _markers:
-			(_markers[landmark] as Control).visible = false
+		for key in _markers:
+			if not is_instance_valid(key):
+				continue
+			var marker: Control = _markers[key]
+			if marker != null:
+				marker.visible = false
 		return
 	if _camera == null or not _camera.is_inside_tree():
 		return
 	var eye := _camera.global_position
 	var half := size * 0.5
 	for node in get_tree().get_nodes_in_group(Landmark.GROUP):
+		if not is_instance_valid(node):
+			continue
 		var landmark := node as Landmark
 		if landmark == null:
 			continue

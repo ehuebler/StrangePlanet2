@@ -1,0 +1,86 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/glimmer_crest_bird.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/glimmer_crest_bird.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/glimmer_crest_bird_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "glimmer_crest_bird"
+display_name = "Glimmer-Crest Bird"
+enabled = true
+disposition = 1
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Violet body streaks, gold breast blaze, teal wing bands, cream face, magenta crest discs, and lime tail chevrons"
+height = 0.56
+height_variation = 0.12
+variant_tint_a = Color(0.94, 0.88, 1.0, 1.0)
+variant_tint_b = Color(1.0, 0.96, 0.82, 1.0)
+saturation = 1.4
+brightness = 1.06
+biome_tint_strength = 0.11
+night_emission_color = Color(0.95, 0.4, 0.78, 1.0)
+night_emission_energy = 1.9
+night_emission_albedo = 0.5
+night_pulse_amount = 0.16
+night_pulse_speed = 0.32
+local_light_color = Color(0.9, 0.42, 0.8, 1.0)
+local_light_energy = 1.1
+local_light_range = 6.8
+local_light_height_share = 0.7
+collision_radius_share = 0.28
+collision_height_share = 0.84
+combat_radius_share = 0.4
+ground_layer = 1
+minimum_ground_claim = 0.04
+above_water = 4.0
+below = 380.0
+minimum_arid = 0.0
+maximum_arid = 0.8
+minimum_frost = 0.0
+maximum_frost = 0.76
+max_slope = 26.0
+steady_over = 1.8
+steady_within = 0.9
+global_population = false
+cell_size = 80.0
+spawn_chance = 0.18
+pack_min = 2
+pack_max = 4
+pack_radius = 6.0
+maximum_instances = 8
+spawn_within = 200.0
+despawn_beyond = 268.0
+random_seed = 20268203
+colony_count = 2
+colony_near = 22.0
+colony_far = 56.0
+health = 36.0
+health_per_metre = 8.0
+toughness = 0
+respawn_delay = 12.0
+walk_speed = 1.7
+run_speed = 5.8
+move_acceleration = 20.0
+turn_speed = 10.0
+wander_radius = 20.0
+wander_pause = 1.6
+notice_range = 14.0
+flee_range = 8.5
+physics_within = 40.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 1.2
+clip_blend = 0.12
+attack_damage = 6.0
+attack_range = 0.45
+attack_radius = 0.36
+attack_windup = 0.28
+attack_cooldown = 0.95
+attack_knockback = 2.8

@@ -122,6 +122,14 @@ func _check_compact_player_hud() -> void:
 		_player._unhandled_input(tilde)
 		_expect(not info.visible, "second tilde hides the info plate")
 
+	var mini := _player.find_child("CityMinimap", true, false) as Control
+	_expect(mini != null, "circular city mini-map sits in the HUD")
+	if mini != null:
+		_expect(is_equal_approx(mini.anchor_top, 1.0)
+			and is_equal_approx(mini.anchor_right, 1.0),
+			"mini-map is anchored bottom-right, left of the info plate")
+		_expect(not mini.visible, "mini-map stays hidden outside a mapped city")
+
 	var weapon_bar := _player.find_child("WeaponBar", true, false) as WeaponBar
 	_expect(weapon_bar != null, "themed weapon bar exists")
 	if weapon_bar != null:
@@ -353,6 +361,18 @@ func _check_local_feedback() -> void:
 	_player.combat_feedback().damage_taken(12.0, _player.global_position, 0)
 	await get_tree().process_frame
 	_expect(_count == 1, "local damage number signal fires once")
+	_player.combat_feedback().outgoing_damage(
+		42.0, _player.global_position, 0, false, true, "lot")
+	await get_tree().process_frame
+	var layer := _player.hud.get_node_or_null("DamageNumbers") as Node
+	var red := false
+	if layer != null:
+		for child in layer.get_children():
+			var label := child as Label
+			if label == null or label.text != "42":
+				continue
+			red = label.get_theme_color(&"font_color") == Color(1.0, 0.3, 0.25)
+	_expect(red, "building damage pops a red number")
 	remote.queue_free()
 
 

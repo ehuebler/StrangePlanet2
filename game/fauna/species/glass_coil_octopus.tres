@@ -1,0 +1,86 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/glass_coil_octopus.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/glass_coil_octopus.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/glass_coil_octopus_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "glass_coil_octopus"
+display_name = "Glass-Coil Octopus"
+enabled = true
+disposition = 1
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Teal mantle bands, violet arm streaks, gold sucker rings, cream underside, magenta arm-tip spots, and lime eye discs"
+height = 0.5
+height_variation = 0.1
+variant_tint_a = Color(0.84, 1.0, 1.0, 1.0)
+variant_tint_b = Color(0.96, 0.84, 1.0, 1.0)
+saturation = 1.42
+brightness = 1.07
+biome_tint_strength = 0.11
+night_emission_color = Color(0.72, 1.0, 0.4, 1.0)
+night_emission_energy = 1.8
+night_emission_albedo = 0.5
+night_pulse_amount = 0.16
+night_pulse_speed = 0.28
+local_light_color = Color(0.46, 1.0, 0.62, 1.0)
+local_light_energy = 1.15
+local_light_range = 6.5
+local_light_height_share = 0.52
+collision_radius_share = 0.5
+collision_height_share = 0.7
+combat_radius_share = 0.56
+ground_layer = 1
+minimum_ground_claim = 0.03
+above_water = 1.8
+below = 200.0
+minimum_arid = 0.0
+maximum_arid = 0.72
+minimum_frost = 0.0
+maximum_frost = 0.5
+max_slope = 22.0
+steady_over = 2.0
+steady_within = 0.95
+global_population = false
+cell_size = 90.0
+spawn_chance = 0.12
+pack_min = 1
+pack_max = 2
+pack_radius = 5.0
+maximum_instances = 5
+spawn_within = 200.0
+despawn_beyond = 268.0
+random_seed = 20268208
+colony_count = 2
+colony_near = 30.0
+colony_far = 62.0
+health = 80.0
+health_per_metre = 14.0
+toughness = 0
+respawn_delay = 16.0
+walk_speed = 1.25
+run_speed = 3.6
+move_acceleration = 12.0
+turn_speed = 7.0
+wander_radius = 12.0
+wander_pause = 2.4
+notice_range = 11.0
+flee_range = 6.5
+physics_within = 40.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 1.0
+clip_blend = 0.16
+attack_damage = 10.0
+attack_range = 0.8
+attack_radius = 0.7
+attack_windup = 0.38
+attack_cooldown = 1.5
+attack_knockback = 4.5

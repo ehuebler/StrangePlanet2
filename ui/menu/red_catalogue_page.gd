@@ -4,8 +4,10 @@ extends VBoxContainer
 ## Finite, live loadout catalogue for the red in-game menu.
 ##
 ## Call [method configure] before adding the page to the tree. Physical entries
-## always point at their real [ItemContainer] slot; this page never manufactures
-## inventory from ItemDB and never removes an item when requesting a world drop.
+## always point at their real [ItemContainer] slot. Apparel also lists every
+## garment that fits the current body, the same way abilities list known powers,
+## so a hat can be worn without first living in the backpack. A world drop still
+## never removes an item here.
 
 signal drop_requested(source: String, index: int, item_id: String)
 
@@ -30,6 +32,7 @@ const SOURCE_BACKPACK := "backpack"
 const SOURCE_HOTBAR := "hotbar"
 const SOURCE_ABILITIES := "abilities"
 const SOURCE_KNOWN := "known"
+const SOURCE_WARDROBE := "wardrobe"
 
 const NARROW_WIDTH := 780.0
 const TILE_EDGE := 82.0
@@ -68,6 +71,7 @@ var _target_index := 0
 var _feedback := ""
 var _visible_entries: Array[Dictionary] = []
 var _ability_library: ItemContainer
+var _wardrobe: ItemContainer
 
 var _header_title: Label
 var _header_count: Label
@@ -448,6 +452,7 @@ func _collect_entries() -> Array[Dictionary]:
 			var allowed := CharacterDB.apparel_ids(_player.body_id())
 			_append_apparel(entries, _equipment, SOURCE_EQUIPMENT, allowed)
 			_append_apparel(entries, _backpack, SOURCE_BACKPACK, allowed)
+			_append_wardrobe(entries, allowed)
 		Mode.ITEMS:
 			_append_numbered_items(entries, _hotbar, SOURCE_HOTBAR)
 			_append_numbered_items(entries, _backpack, SOURCE_BACKPACK)
@@ -469,6 +474,26 @@ func _append_apparel(
 		if id.is_empty() or not ItemDB.is_apparel(id) or not allowed.has(id):
 			continue
 		entries.append(_entry(id, source, container, index))
+
+
+func _append_wardrobe(entries: Array[Dictionary], allowed: PackedStringArray) -> void:
+	var seen: Dictionary = {}
+	for entry: Dictionary in entries:
+		seen[String(entry["id"])] = true
+	var wardrobe_ids: Array = []
+	for item_id: String in allowed:
+		if item_id.is_empty() or seen.has(item_id):
+			continue
+		seen[item_id] = true
+		wardrobe_ids.append(item_id)
+	_wardrobe = ItemContainer.new(wardrobe_ids.size(), wardrobe_ids)
+	for index in _wardrobe.size():
+		entries.append(_entry(
+			_wardrobe.get_item(index),
+			SOURCE_WARDROBE,
+			_wardrobe,
+			index
+		))
 
 
 func _append_numbered_items(
@@ -634,12 +659,13 @@ func _fill_empty_state() -> void:
 				else _glyph_for_body_slot(_filter)
 			)
 			_empty_title.text = (
-				"NO OWNED APPAREL"
+				"NO APPAREL"
 				if _filter.is_empty()
-				else "NO OWNED %s APPAREL" % _filter_label(_filter)
+				else "NO %s APPAREL" % _filter_label(_filter)
 			)
 			_empty_body.text = (
-				"APPAREL APPEARS ONLY WHEN IT IS WORN OR STORED IN YOUR BACKPACK."
+				"EVERY GARMENT THAT FITS THIS BODY APPEARS HERE.\n"
+				+ "HOLD EQUIP ON A TILE, OR SHIFT-CLICK IT, TO PUT IT ON."
 			)
 		Mode.ITEMS:
 			_empty_glyph.glyph = (
@@ -778,6 +804,7 @@ func _fill_empty_detail() -> void:
 	var body_text := "SELECT AN OWNED ENTRY TO OPEN ITS LOADOUT RECORD."
 	if _mode == Mode.APPAREL:
 		title_text = "NO APPAREL SELECTED"
+		body_text = "SELECT A WARDROBE ENTRY TO OPEN ITS LOADOUT RECORD."
 	elif _mode == Mode.ABILITIES:
 		title_text = "NO ABILITY SELECTED"
 		body_text = (
@@ -943,7 +970,7 @@ func _can_equip(entry: Dictionary) -> bool:
 		return false
 	match _mode:
 		Mode.APPAREL:
-			return _equipment != null and _backpack != null and _target_index >= 0
+			return _equipment != null and _target_index >= 0
 		Mode.ITEMS:
 			return _hotbar != null and _target_index >= 0 \
 				and _target_index < _hotbar.size()
@@ -989,15 +1016,44 @@ func _equip_apparel(entry: Dictionary) -> void:
 		return
 	var moved := false
 	if source == SOURCE_EQUIPMENT:
+		if _backpack == null:
+			_equipment.set_item(index, "")
+			_feedback = "APPAREL REMOVED"
+			return
 		moved = ItemContainer.quick_move(_equipment, index, _backpack)
-		_feedback = (
-			"MOVED TO BACKPACK"
-			if moved
-			else "BACKPACK FULL // APPAREL REMAINS WORN"
-		)
+		if not moved:
+			# Wardrobe garments do not have to occupy a backpack slot.
+			_equipment.set_item(index, "")
+			_feedback = "APPAREL REMOVED"
+		else:
+			_feedback = "MOVED TO BACKPACK"
 	elif source == SOURCE_BACKPACK and container == _backpack:
 		moved = ItemContainer.transfer(_backpack, index, _equipment, equipment_index)
 		_feedback = "APPAREL EQUIPPED" if moved else "EQUIP TRANSFER REFUSED"
+	elif source == SOURCE_WARDROBE:
+		_wear_wardrobe_item(id, equipment_index)
+
+
+func _wear_wardrobe_item(id: String, equipment_index: int) -> void:
+	var current := _equipment.get_item(equipment_index)
+	if current == id:
+		if _backpack != null and _backpack.find(current) < 0 \
+				and ItemContainer.quick_move(_equipment, equipment_index, _backpack):
+			_feedback = "MOVED TO BACKPACK"
+		else:
+			_equipment.set_item(equipment_index, "")
+			_feedback = "APPAREL REMOVED"
+		return
+	if not current.is_empty() and _backpack != null and _backpack.find(current) < 0:
+		var dest := _backpack.first_accepting(current)
+		if dest >= 0:
+			_backpack.set_item(dest, current)
+	_equipment.set_item(equipment_index, id)
+	_feedback = (
+		"APPAREL EQUIPPED"
+		if _equipment.get_item(equipment_index) == id
+		else "EQUIP REFUSED"
+	)
 
 
 func _move_numbered(
@@ -1135,6 +1191,8 @@ func _entry_badge(entry: Dictionary) -> String:
 			return ["LMB", "RMB"][index] if index >= 0 and index < 2 else "A"
 		SOURCE_KNOWN:
 			return "KNOWN"
+		SOURCE_WARDROBE:
+			return "WARDROBE"
 	return ""
 
 
@@ -1154,6 +1212,8 @@ func _entry_state(entry: Dictionary) -> String:
 			)
 		SOURCE_KNOWN:
 			return "KNOWN // UNASSIGNED"
+		SOURCE_WARDROBE:
+			return "WARDROBE // READY TO WEAR"
 	return "UNASSIGNED"
 
 
@@ -1167,7 +1227,11 @@ func _update_header(total_count: int) -> void:
 		Mode.ABILITIES:
 			heading = "ABILITIES"
 	_header_title.text = heading.to_upper()
-	var noun := "KNOWN" if _mode == Mode.ABILITIES else "OWNED"
+	var noun := "KNOWN"
+	if _mode == Mode.ITEMS:
+		noun = "OWNED"
+	elif _mode == Mode.APPAREL:
+		noun = "WARDROBE"
 	_header_count.text = "%02d / %02d %s" % [
 		_visible_entries.size(),
 		total_count,

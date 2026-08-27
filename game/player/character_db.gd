@@ -20,9 +20,32 @@ const HOTBAR_SLOTS := 3
 const ABILITY_SLOTS := 2
 const BACKPACK_SLOTS := 36
 ## One-time ownership seed. Revision five repairs the known partial-wardrobe
-## state where Settler Hair alone was never granted. Other missing pieces remain
-## finite ownership: once this revision is recorded, dropped apparel stays gone.
-const STARTER_INVENTORY_REVISION := 5
+## state where Settler Hair alone was never granted. Revision six grants the
+## first twenty-five settler hats. Revision seven grants the next batch. Other
+## missing pieces remain finite ownership: once this revision is recorded,
+## dropped apparel stays gone.
+const STARTER_INVENTORY_REVISION := 7
+
+## Headwear added after the original settler wardrobe. Granted once by revision
+## six without resurrecting garments a player already dropped.
+const SETTLER_HEADWEAR := [
+	"c3_party_hat", "c3_bunny_ears", "c3_top_hat", "c3_crown", "c3_beanie",
+	"c3_cowboy_hat", "c3_propeller_cap", "c3_flower_crown", "c3_antlers",
+	"c3_halo", "c3_wizard_hat", "c3_sombrero", "c3_newsboy_cap", "c3_helmet",
+	"c3_pirate_hat", "c3_chef_toque", "c3_jester_hat", "c3_mushroom_cap",
+	"c3_antennae", "c3_visor", "c3_bow", "c3_horned_helm", "c3_fedora",
+	"c3_santa_hat", "c3_cat_ears",
+]
+
+## Second hat drop. Granted once by revision seven; dropped first-batch hats
+## stay dropped.
+const SETTLER_HEADWEAR_MORE := [
+	"c3_beret", "c3_baseball_cap", "c3_sun_hat", "c3_hard_hat", "c3_ushanka",
+	"c3_turban", "c3_devil_horns", "c3_unicorn_horn", "c3_headphones", "c3_tiara",
+	"c3_bandana", "c3_rice_hat", "c3_laurel", "c3_nightcap", "c3_deerstalker",
+	"c3_frog_hood", "c3_rainbow", "c3_paper_crown", "c3_space_helmet",
+	"c3_cake_hat", "c3_leaf_wreath", "c3_mohawk",
+]
 
 ## Paint schemes laid over a body without changing its mesh, skeleton or
 ## measurements. A skin is kept separate from `body`: all three painted designs
@@ -64,7 +87,21 @@ const BODIES := {
 		"eye_height": 1.45,
 		"eye_offset": Vector3(0.048, 0.104, -0.084),
 		"lean_pivot": 0.85,
-		"apparel": ["c3_hair", "c3_goggles", "c3_tunic", "c3_boots"],
+		"apparel": [
+			"c3_hair",
+			"c3_party_hat", "c3_bunny_ears", "c3_top_hat", "c3_crown", "c3_beanie",
+			"c3_cowboy_hat", "c3_propeller_cap", "c3_flower_crown", "c3_antlers",
+			"c3_halo", "c3_wizard_hat", "c3_sombrero", "c3_newsboy_cap", "c3_helmet",
+			"c3_pirate_hat", "c3_chef_toque", "c3_jester_hat", "c3_mushroom_cap",
+			"c3_antennae", "c3_visor", "c3_bow", "c3_horned_helm", "c3_fedora",
+			"c3_santa_hat", "c3_cat_ears",
+			"c3_beret", "c3_baseball_cap", "c3_sun_hat", "c3_hard_hat", "c3_ushanka",
+			"c3_turban", "c3_devil_horns", "c3_unicorn_horn", "c3_headphones",
+			"c3_tiara", "c3_bandana", "c3_rice_hat", "c3_laurel", "c3_nightcap",
+			"c3_deerstalker", "c3_frog_hood", "c3_rainbow", "c3_paper_crown",
+			"c3_space_helmet", "c3_cake_hat", "c3_leaf_wreath", "c3_mohawk",
+			"c3_goggles", "c3_tunic", "c3_boots",
+		],
 		# First is the fallback for an old settings file with no skin key.
 		"skins": ["luke", "clean_robotic", "integrated_robotic"],
 	},
@@ -319,6 +356,18 @@ static func _seed_starter_inventory(look: Dictionary) -> void:
 			and backpack.size() < BACKPACK_SLOTS:
 		backpack.append("c3_hair")
 		owned["c3_hair"] = true
+	if revision < 6 and body_id == "settler":
+		for item_id: String in SETTLER_HEADWEAR:
+			if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
+				continue
+			backpack.append(item_id)
+			owned[item_id] = true
+	if revision < 7 and body_id == "settler":
+		for item_id: String in SETTLER_HEADWEAR_MORE:
+			if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
+				continue
+			backpack.append(item_id)
+			owned[item_id] = true
 	# Weapons were authored before finite ownership was introduced, but older
 	# profiles were never granted them. Fill open numbered slots first so both
 	# weapons are immediately usable without disturbing an existing assignment.

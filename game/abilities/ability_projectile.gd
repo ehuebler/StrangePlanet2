@@ -18,6 +18,7 @@ var _range := 1.0
 var _travelled := 0.0
 var _shooter_rid := RID()
 var _disk: MeshInstance3D
+var _probe: SphereShape3D
 
 
 static func launch(world: Node, source: OnlinePlayer, ability_id: String,
@@ -144,9 +145,7 @@ func _physics_process(delta: float) -> void:
 	var step_vector := _velocity * delta
 	var from := global_position
 	var to := from + step_vector
-	var query := PhysicsRayQueryParameters3D.create(from, to)
-	query.exclude = [_shooter_rid] if _shooter_rid.is_valid() else []
-	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	var hit := _trace_step(from, to)
 	if not hit.is_empty():
 		global_position = hit["position"]
 		if authoritative:
@@ -168,3 +167,42 @@ func _physics_process(delta: float) -> void:
 			AbilityImpact.apply(
 				shooter, definition, global_position, facing)
 		queue_free()
+
+
+func _quoted_radius() -> float:
+	return maxf(float(definition.stats.get("projectile_radius", 0.36)), 0.08)
+
+
+func _trace_step(from: Vector3, to: Vector3) -> Dictionary:
+	var space := get_world_3d().direct_space_state
+	var exclude := DamageHit.rid_list(_shooter_rid)
+	var motion := to - from
+	if motion.length_squared() < 0.000001:
+		return {}
+	if _probe == null:
+		_probe = SphereShape3D.new()
+	_probe.radius = _quoted_radius()
+	var sweep := PhysicsShapeQueryParameters3D.new()
+	sweep.shape = _probe
+	sweep.transform = Transform3D(Basis(), from)
+	sweep.motion = motion
+	sweep.exclude = exclude
+	sweep.collide_with_areas = false
+	sweep.collide_with_bodies = true
+	var fractions := space.cast_motion(sweep)
+	if fractions.size() >= 1 and fractions[0] < 1.0:
+		var share := fractions[1] if fractions.size() > 1 else fractions[0]
+		var at := from + motion * clampf(share, 0.0, 1.0)
+		sweep.transform.origin = at
+		var rest := space.get_rest_info(sweep)
+		if not rest.is_empty():
+			rest["position"] = rest.get("point", at)
+			if rest.get("normal", Vector3.ZERO).length_squared() < 0.001:
+				rest["normal"] = -_along
+			return rest
+		return {"position": at, "normal": -_along}
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.exclude = exclude
+	query.hit_from_inside = true
+	query.hit_back_faces = true
+	return space.intersect_ray(query)

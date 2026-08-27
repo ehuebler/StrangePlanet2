@@ -822,7 +822,7 @@ func _can_see(target: Node) -> bool:
 	var from := _throw_origin()
 	var to := _combat_position(target)
 	var query := PhysicsRayQueryParameters3D.create(from, to)
-	query.exclude = [get_rid()]
+	query.exclude = DamageHit.rid_list(get_rid())
 	var blocked := get_world_3d().direct_space_state.intersect_ray(query)
 	if blocked.is_empty():
 		return true
@@ -1122,7 +1122,7 @@ func _probe_obstacle(wanted: Vector3) -> void:
 		var from: Vector3 = global_position \
 			+ up * OBSTACLE_PROBE_HEIGHT + side * lane
 		var query := PhysicsRayQueryParameters3D.create(from, from + wanted * look)
-		query.exclude = [get_rid()]
+		query.exclude = DamageHit.rid_list(get_rid())
 		query.collision_mask = collision_mask
 		var result := space.intersect_ray(query)
 		if result.is_empty():

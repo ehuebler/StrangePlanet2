@@ -179,6 +179,14 @@ func _check_hit_geometry_and_wire() -> void:
 	_expect(hit.reaches(Vector3(0.0, 2.3, 0.0), 0.4)
 		and not hit.reaches(Vector3(0.0, 2.6, 0.0), 0.4),
 		"spherical target bounds touch a flat cylinder cap without rounding it")
+	var crown := DamageHit.impact(Vector3(0.0, 40.0, 0.0), 2.0, 25.0)
+	_expect(crown.reaches_segment(Vector3.ZERO, Vector3(0.0, 50.0, 0.0), 3.0),
+		"an impact on a tower crown reaches its vertical capsule")
+	_expect(not crown.reaches(Vector3(0.0, 25.0, 0.0), 3.0),
+		"the same impact misses a mid-height sphere")
+	_expect(not crown.reaches_segment(
+			Vector3(20.0, 0.0, 0.0), Vector3(20.0, 50.0, 0.0), 3.0),
+		"a neighbouring tower is outside the same impact")
 	var edge_target := TestEnemy.new()
 	add_child(edge_target)
 	edge_target.global_position = Vector3(8.0, 0.0, 0.0)

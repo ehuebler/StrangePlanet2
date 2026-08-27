@@ -66,13 +66,13 @@ func _ready() -> void:
 	_planet = world.get_node_or_null("Planet") as Planet
 	_forest = world.get_node_or_null("Planet/BiomePopulations/ForestGiants") \
 		as GroundCover
-	var colony_anchor := world.get_node_or_null("Planet/ColonyShip") as SurfaceAnchor
+	var colony_anchor := world.get_node_or_null("Planet/VacationersLanding") as SurfaceAnchor
 	if _planet == null or _planet.shape == null:
 		_fail("world has no configured PlanetShape")
 	if _forest == null or _forest.species.is_empty():
 		_fail("world has no ForestGiants GroundCover species")
 	if colony_anchor == null:
-		_fail("world has no ColonyShip direction")
+		_fail("world has no VacationersLanding direction")
 	if _failures > 0:
 		world.free()
 		get_tree().quit(_failures)
@@ -125,7 +125,7 @@ func _bind_forest() -> void:
 
 
 func _collect_clearances() -> void:
-	_settlements.append({"name": "ColonyShip", "direction": _colony})
+	_settlements.append({"name": "VacationersLanding", "direction": _colony})
 	for plan: CityPlan in Settlements.plans():
 		_settlements.append({
 			"name": plan.title,
@@ -134,7 +134,7 @@ func _collect_clearances() -> void:
 
 
 func _search() -> Dictionary:
-	print("Bigfoot arena survey: %.1f +/- %.1f degrees from ColonyShip, "
+	print("Bigfoot arena survey: %.1f +/- %.1f degrees from VacationersLanding, "
 		% [TARGET_ARC_DEGREES, SEARCH_ARC_MAX - TARGET_ARC_DEGREES]
 		+ "ForestGiants habitat, 200 m neighborhood")
 	print("  species: %s" % ", ".join(_species_names()))

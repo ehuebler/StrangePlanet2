@@ -1,0 +1,86 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/lantern_orb_spider.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/lantern_orb_spider.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/lantern_orb_spider_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "lantern_orb_spider"
+display_name = "Lantern-Orb Spider"
+enabled = true
+disposition = 2
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Violet-black body streaks, gold abdomen orb, teal limb rings, cream fangs, magenta hourglass, and lime eye discs"
+height = 0.38
+height_variation = 0.1
+variant_tint_a = Color(0.92, 0.86, 1.0, 1.0)
+variant_tint_b = Color(1.0, 0.94, 0.78, 1.0)
+saturation = 1.4
+brightness = 1.05
+biome_tint_strength = 0.1
+night_emission_color = Color(1.0, 0.78, 0.28, 1.0)
+night_emission_energy = 2.2
+night_emission_albedo = 0.54
+night_pulse_amount = 0.18
+night_pulse_speed = 0.3
+local_light_color = Color(1.0, 0.72, 0.24, 1.0)
+local_light_energy = 1.25
+local_light_range = 6.2
+local_light_height_share = 0.46
+collision_radius_share = 0.52
+collision_height_share = 0.68
+combat_radius_share = 0.56
+ground_layer = 0
+minimum_ground_claim = 0.0
+above_water = 3.0
+below = 360.0
+minimum_arid = 0.0
+maximum_arid = 1.0
+minimum_frost = 0.0
+maximum_frost = 0.72
+max_slope = 30.0
+steady_over = 1.6
+steady_within = 0.85
+global_population = false
+cell_size = 86.0
+spawn_chance = 0.14
+pack_min = 1
+pack_max = 3
+pack_radius = 4.5
+maximum_instances = 6
+spawn_within = 200.0
+despawn_beyond = 268.0
+random_seed = 20268209
+colony_count = 2
+colony_near = 32.0
+colony_far = 64.0
+health = 42.0
+health_per_metre = 9.0
+toughness = 0
+respawn_delay = 13.0
+walk_speed = 1.8
+run_speed = 5.2
+move_acceleration = 20.0
+turn_speed = 11.0
+wander_radius = 12.0
+wander_pause = 1.4
+notice_range = 13.0
+flee_range = 0.0
+physics_within = 40.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 1.15
+clip_blend = 0.12
+attack_damage = 11.0
+attack_range = 0.5
+attack_radius = 0.42
+attack_windup = 0.26
+attack_cooldown = 1.05
+attack_knockback = 3.4

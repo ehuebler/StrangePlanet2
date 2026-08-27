@@ -92,7 +92,7 @@ func _ready() -> void:
 
 	var direction := COLONY_DIRECTION.normalized()
 	var colony := Node3D.new()
-	colony.name = "ColonyShip"
+	colony.name = "VacationersLanding"
 	colony.position = planet.shape.surface_point(
 		direction, planet.finest_spacing())
 	planet.add_child(colony)
@@ -158,9 +158,24 @@ func _check_species_contracts() -> void:
 
 
 func _check_population(spawner: FaunaSpawner) -> void:
-	_expect(spawner.colony_actor_count()
-		== PORCUPINE.colony_count + ALPACA.colony_count,
-		"every catalogued colony creature spawns near Colony Ship")
+	var expected_colony := 0
+	var skeletal := 0
+	for definition in spawner.species:
+		if definition == null:
+			continue
+		_expect(definition.validate().is_empty(),
+			"%s resource satisfies runtime asset contract" % definition.species_id)
+		if definition.enabled:
+			expected_colony += definition.colony_count
+		if definition.skeletal_clips:
+			skeletal += 1
+			_expect(not definition.quadruped_gait
+				and not definition.clip_attack.is_empty(),
+				"%s is posed by clips and names an attack" % definition.species_id)
+	_expect(skeletal >= 10,
+		"rigged creature catalogue includes the ten new land fauna")
+	_expect(spawner.colony_actor_count() == expected_colony,
+		"every catalogued colony creature spawns near Vacationer's Landing")
 	_expect(spawner.species_count("lumaquill_porcupine") >= 4,
 		"porcupine colony population is live")
 	_expect(spawner.species_count("aurora_fleece_alpaca")

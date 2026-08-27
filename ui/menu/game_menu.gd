@@ -6,6 +6,7 @@ extends Control
 
 signal closed
 signal leave_requested
+signal respawn_requested
 
 ## Compatibility entries intentionally have distinct values. That lets legacy
 ## QUESTS and ACHIEVEMENTS calls select the matching Data subtab before they are
@@ -41,7 +42,7 @@ const EDGE_GAP := 28.0
 const CONTENT_RECT := Rect2(0.065, 0.035, 0.870, 0.715)
 const SELECTOR_RECT := Rect2(0.250, 0.765, 0.220, 0.210)
 const ADMIN_RECT := Rect2(0.035, 0.875, 0.135, 0.090)
-const ACTIONS_RECT := Rect2(0.545, 0.765, 0.390, 0.140)
+const ACTIONS_RECT := Rect2(0.500, 0.765, 0.435, 0.140)
 
 var _player: OnlinePlayer
 var _tab: Tab = Tab.ITEMS
@@ -317,6 +318,28 @@ func _build_right_actions() -> void:
 	_settings_action.pressed.connect(func() -> void: show_tab(Tab.SETTINGS))
 	cluster.add_child(_action_entry(_settings_action, "SETTINGS"))
 
+	var respawn_action := HoldActionButton.new()
+	respawn_action.name = "RespawnAction"
+	respawn_action.custom_minimum_size = Vector2(54.0, 54.0)
+	respawn_action.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	respawn_action.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	respawn_action.label_text = ""
+	respawn_action.glyph = RedMenuGlyph.Glyph.RESPAWN
+	respawn_action.hold_duration = 1.1
+	respawn_action.content_padding = 6.0
+	respawn_action.progress_width = 3.0
+	respawn_action.fill_color = GREEN
+	respawn_action.green_color = GREEN
+	respawn_action.active = true
+	respawn_action.circular = true
+	respawn_action.tooltip_text = "Hold to respawn above the nearest city"
+	respawn_action.completed.connect(_on_respawn_completed)
+	cluster.add_child(_action_entry(respawn_action, "HOLD RESPAWN"))
+	var respawn_glyph := respawn_action.get_node_or_null("Glyph") as RedMenuGlyph
+	if respawn_glyph != null:
+		respawn_glyph.green_color = BLACK_82
+		respawn_glyph.black_color = BLACK_82
+
 	var leave_action := HoldActionButton.new()
 	leave_action.name = "LeaveAction"
 	leave_action.custom_minimum_size = Vector2(54.0, 54.0)
@@ -368,7 +391,7 @@ func _action_button(node_name: String, glyph_kind: RedMenuGlyph.Glyph) -> Button
 
 func _action_entry(control: Control, label_text: String) -> VBoxContainer:
 	var entry := VBoxContainer.new()
-	entry.custom_minimum_size = Vector2(118.0, 82.0)
+	entry.custom_minimum_size = Vector2(108.0, 82.0)
 	entry.alignment = BoxContainer.ALIGNMENT_CENTER
 	entry.add_theme_constant_override(&"separation", 4)
 	entry.add_child(control)
@@ -479,6 +502,11 @@ func _surrounding_world() -> Node:
 
 func _on_leave_completed() -> void:
 	leave_requested.emit()
+
+
+func _on_respawn_completed() -> void:
+	respawn_requested.emit()
+	close()
 
 
 # --- Sharp red/green control styling ----------------------------------------

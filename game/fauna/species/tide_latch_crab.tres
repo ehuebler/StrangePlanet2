@@ -1,0 +1,86 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/tide_latch_crab.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/tide_latch_crab.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/tide_latch_crab_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "tide_latch_crab"
+display_name = "Tide-Latch Crab"
+enabled = true
+disposition = 1
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Coral carapace bands, cream belly, teal limb joints, gold claw plates, cyan eye-glow discs, and magenta pincer tips"
+height = 0.4
+height_variation = 0.1
+variant_tint_a = Color(1.0, 0.9, 0.86, 1.0)
+variant_tint_b = Color(0.88, 1.0, 0.96, 1.0)
+saturation = 1.36
+brightness = 1.06
+biome_tint_strength = 0.12
+night_emission_color = Color(0.36, 0.88, 1.0, 1.0)
+night_emission_energy = 1.85
+night_emission_albedo = 0.52
+night_pulse_amount = 0.14
+night_pulse_speed = 0.28
+local_light_color = Color(0.3, 0.82, 1.0, 1.0)
+local_light_energy = 1.15
+local_light_range = 6.5
+local_light_height_share = 0.48
+collision_radius_share = 0.55
+collision_height_share = 0.72
+combat_radius_share = 0.58
+ground_layer = 1
+minimum_ground_claim = 0.04
+above_water = 2.0
+below = 220.0
+minimum_arid = 0.0
+maximum_arid = 0.86
+minimum_frost = 0.0
+maximum_frost = 0.55
+max_slope = 28.0
+steady_over = 1.8
+steady_within = 0.9
+global_population = false
+cell_size = 88.0
+spawn_chance = 0.16
+pack_min = 2
+pack_max = 4
+pack_radius = 5.0
+maximum_instances = 8
+spawn_within = 200.0
+despawn_beyond = 268.0
+random_seed = 20268201
+colony_count = 2
+colony_near = 24.0
+colony_far = 58.0
+health = 48.0
+health_per_metre = 10.0
+toughness = 1
+respawn_delay = 14.0
+walk_speed = 1.35
+run_speed = 3.8
+move_acceleration = 16.0
+turn_speed = 9.0
+wander_radius = 14.0
+wander_pause = 2.2
+notice_range = 10.0
+flee_range = 6.0
+physics_within = 40.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 1.05
+clip_blend = 0.14
+attack_damage = 8.0
+attack_range = 0.55
+attack_radius = 0.48
+attack_windup = 0.32
+attack_cooldown = 1.1
+attack_knockback = 3.6

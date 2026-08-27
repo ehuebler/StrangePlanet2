@@ -1,7 +1,7 @@
 class_name FlowerTreeField
 extends SurfaceAnchor
 
-## Sparse, collidable flower trees over the grassy shelf around the colony ship.
+## Sparse, collidable flower trees over the grassy shelf around Vacationer's Landing.
 ##
 ## Trees do not use [GroundCover]. Grass can be one transform in a MultiMesh and
 ## nothing else; a tree has an independently angled flower and two collision
@@ -16,8 +16,8 @@ extends SurfaceAnchor
 @export var head_material: Material
 ## Existing GroundCover whose terrain classification must agree with this field.
 @export var grass_cover: NodePath
-## Usually the colony ship. Trees fade in from this radius rather than trapping
-## the player between a trunk and a landing leg at spawn.
+## Usually Vacationer's Landing. Trees fade in from this radius rather than trapping
+## the player against a trunk at spawn.
 @export var clear_of: NodePath
 ## Other pads and buildings that need the same tree-free working radius.
 @export var additional_clear_of: Array[NodePath] = []
@@ -102,7 +102,7 @@ extends SurfaceAnchor
 ## so this publishes a mask built from the generated trunk transforms. It only
 ## speaks for trees. [GroundCover] publishes the undergrowth mask from its own
 ## deterministic scatter; using this field's radius for both was what painted a
-## violet circle over bare ground around the colony ship.
+## violet circle over bare ground around Vacationer's Landing.
 ##
 ## Note what is and is not sent. The shader is told where every generated crown
 ## stands, and nothing whatever about how it should look: its altitude law,
@@ -634,7 +634,9 @@ func _fell(index: int, at: Vector3, strength: float,
 	if _head_stand != null:
 		_head_stand.multimesh.set_instance_transform(
 			index, _hidden(_heads[index]))
-	for shape: CollisionShape3D in _tree_colliders[index]:
+	for shape in _tree_colliders[index]:
+		if not is_instance_valid(shape):
+			continue
 		shape.set_meta(IMPACT_BROKEN_META, true)
 		shape.set_deferred(&"disabled", true)
 	if not bursts:
@@ -656,9 +658,9 @@ func _fell(index: int, at: Vector3, strength: float,
 ## wants both together and neither an array of dictionaries nor two parallel returns
 ## is worth the allocation.
 ##
-## Answered for whoever is felling trees on purpose rather than by accident, which
-## today is the Meep colony's mining. It is answerable at all because this field is
-## not streamed: every tree is placed once and kept, so the colony can plan work
+## Answered for whoever is felling trees on purpose rather than by accident.
+## It is answerable at all because this field is
+## not streamed: every tree is placed once and kept, so work can be planned
 ## against trees that no player is anywhere near. [GroundCover] cannot promise that —
 ## its tiles exist only around a viewer — which is why this is the field mining
 ## starts with rather than the one with the most in it.
@@ -739,7 +741,9 @@ func restore_within(centre: Vector3, radius: float) -> int:
 			_trunk_stand.multimesh.set_instance_transform(index, _trees[index])
 		if _head_stand != null:
 			_head_stand.multimesh.set_instance_transform(index, _heads[index])
-		for shape: CollisionShape3D in _tree_colliders[index]:
+		for shape in _tree_colliders[index]:
+			if not is_instance_valid(shape):
+				continue
 			shape.set_meta(IMPACT_BROKEN_META, false)
 			shape.set_deferred(&"disabled", false)
 		restored_indices[index] = true
@@ -893,10 +897,28 @@ func _turn_between(from: Vector3, to: Vector3) -> Basis:
 
 
 func _inside_clearance(at: Vector3) -> bool:
+	if PatchCity.flora_covers(at):
+		return true
 	for keep_out in _keep_outs:
 		if at.dot(keep_out) >= _keep_cos:
 			return true
 	return false
+
+
+func hide_under_city() -> void:
+	if _trees.is_empty() or _host == null:
+		return
+	for index in _trees.size():
+		if _broken_trees.has(index):
+			continue
+		var world := to_global(_trees[index].origin)
+		var local := _host.to_local(world)
+		if local.length_squared() < 1.0:
+			continue
+		if not PatchCity.flora_covers(local.normalized()):
+			continue
+		var visual_height := _trees[index].basis.y.length() * _authored_height
+		_fell(index, world, 0.0, visual_height, false)
 
 
 ## A suitable root patch. This mirrors GroundCover's slope/lumpiness check and

@@ -166,6 +166,487 @@
       "paint_size_bytes": 82593,
       "close_preview_size_bytes": 229715,
       "gameplay_preview_size_bytes": 150123
+    },
+    "tide_latch_crab": {
+      "name": "tide_latch_crab",
+      "display_name": "Tide-Latch Crab",
+      "category": "land_fauna",
+      "form": "crab",
+      "seed": 20268201,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/tide_latch_crab_rigged.blend",
+      "glb": "assets/runtime/fauna/models/tide_latch_crab.glb",
+      "color_paint": "assets/runtime/biomes/paint/tide_latch_crab_paint.png",
+      "close_preview": "assets/previews/fauna/tide_latch_crab_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/tide_latch_crab_gameplay.png",
+      "authored_height": 0.400011,
+      "triangle_count": 4000,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.22,
+        "height": 0.34,
+        "centre": [
+          0.0,
+          0.17,
+          0.0
+        ]
+      },
+      "color_paint_style": "Coral carapace bands, cream belly, teal limb joints, gold claw plates, cyan eye-glow discs, and magenta pincer tips",
+      "emission_style": "eye stalks and claw-seam glow after sunset",
+      "emission_strength": 1.45,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/tide_latch_crab_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 31,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 950568,
+      "paint_size_bytes": 120049
+    },
+    "prism_fin_dolphin": {
+      "name": "prism_fin_dolphin",
+      "display_name": "Prism-Fin Dolphin",
+      "category": "land_fauna",
+      "form": "dolphin",
+      "seed": 20268202,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/prism_fin_dolphin_rigged.blend",
+      "glb": "assets/runtime/fauna/models/prism_fin_dolphin.glb",
+      "color_paint": "assets/runtime/biomes/paint/prism_fin_dolphin_paint.png",
+      "close_preview": "assets/previews/fauna/prism_fin_dolphin_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/prism_fin_dolphin_gameplay.png",
+      "authored_height": 0.578897,
+      "triangle_count": 5000,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.2,
+        "height": 0.48,
+        "centre": [
+          0.0,
+          0.24,
+          0.0
+        ]
+      },
+      "color_paint_style": "Silver-blue flank streaks, cream belly blaze, teal side-stripe, indigo flukes, gold dorsal marks, and a pink melon glow",
+      "emission_style": "melon and dorsal leading-edge glow after sunset",
+      "emission_strength": 1.55,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/prism_fin_dolphin_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 13,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1077364,
+      "paint_size_bytes": 125500
+    },
+    "glimmer_crest_bird": {
+      "name": "glimmer_crest_bird",
+      "display_name": "Glimmer-Crest Bird",
+      "category": "land_fauna",
+      "form": "bird",
+      "seed": 20268203,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/glimmer_crest_bird_rigged.blend",
+      "glb": "assets/runtime/fauna/models/glimmer_crest_bird.glb",
+      "color_paint": "assets/runtime/biomes/paint/glimmer_crest_bird_paint.png",
+      "close_preview": "assets/previews/fauna/glimmer_crest_bird_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/glimmer_crest_bird_gameplay.png",
+      "authored_height": 0.56,
+      "triangle_count": 4568,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.16,
+        "height": 0.48,
+        "centre": [
+          0.0,
+          0.24,
+          0.0
+        ]
+      },
+      "color_paint_style": "Violet body streaks, gold breast blaze, teal wing bands, cream face, magenta crest discs, and lime tail chevrons",
+      "emission_style": "crest and wing-edge glow after sunset",
+      "emission_strength": 1.6,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/glimmer_crest_bird_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 21,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 734280,
+      "paint_size_bytes": 127330
+    },
+    "lumen_hide_cow": {
+      "name": "lumen_hide_cow",
+      "display_name": "Lumen-Hide Cow",
+      "category": "land_fauna",
+      "form": "cow",
+      "seed": 20268204,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/lumen_hide_cow_rigged.blend",
+      "glb": "assets/runtime/fauna/models/lumen_hide_cow.glb",
+      "color_paint": "assets/runtime/biomes/paint/lumen_hide_cow_paint.png",
+      "close_preview": "assets/previews/fauna/lumen_hide_cow_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/lumen_hide_cow_gameplay.png",
+      "authored_height": 1.42,
+      "triangle_count": 5898,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.38,
+        "height": 1.16,
+        "centre": [
+          0.0,
+          0.58,
+          0.0
+        ]
+      },
+      "color_paint_style": "Cream hide streaks, lilac flank patches, indigo hooves, gold horn rings, teal udder glow, and a magenta tail switch",
+      "emission_style": "udder and horn-ring glow after sunset",
+      "emission_strength": 1.35,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/lumen_hide_cow_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 24,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Graze",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1329892,
+      "paint_size_bytes": 126146
+    },
+    "rift_hulk_monster": {
+      "name": "rift_hulk_monster",
+      "display_name": "Rift-Hulk Monster",
+      "category": "land_fauna",
+      "form": "monster",
+      "seed": 20268205,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/rift_hulk_monster_rigged.blend",
+      "glb": "assets/runtime/fauna/models/rift_hulk_monster.glb",
+      "color_paint": "assets/runtime/biomes/paint/rift_hulk_monster_paint.png",
+      "close_preview": "assets/previews/fauna/rift_hulk_monster_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/rift_hulk_monster_gameplay.png",
+      "authored_height": 2.1,
+      "triangle_count": 6104,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.42,
+        "height": 1.7,
+        "centre": [
+          0.0,
+          0.85,
+          0.0
+        ]
+      },
+      "color_paint_style": "Charcoal hide streaks, ember flank bands, bone-cream muzzle, toxic green back spines, red maw, and gold knuckle plates",
+      "emission_style": "spine tips and maw glow after sunset",
+      "emission_strength": 1.7,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/rift_hulk_monster_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 21,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 942972,
+      "paint_size_bytes": 113061
+    },
+    "violet_seeker_alien": {
+      "name": "violet_seeker_alien",
+      "display_name": "Violet Seeker",
+      "category": "land_fauna",
+      "form": "alien",
+      "seed": 20268206,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/violet_seeker_alien_rigged.blend",
+      "glb": "assets/runtime/fauna/models/violet_seeker_alien.glb",
+      "color_paint": "assets/runtime/biomes/paint/violet_seeker_alien_paint.png",
+      "close_preview": "assets/previews/fauna/violet_seeker_alien_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/violet_seeker_alien_gameplay.png",
+      "authored_height": 1.76,
+      "triangle_count": 6816,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.22,
+        "height": 1.46,
+        "centre": [
+          0.0,
+          0.73,
+          0.0
+        ]
+      },
+      "color_paint_style": "Violet skin streaks, lavender belly blaze, teal eye discs, gold knuckle marks, indigo limb bands, and pink cranial membranes",
+      "emission_style": "eye discs and cranial membrane glow after sunset",
+      "emission_strength": 1.8,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/violet_seeker_alien_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 19,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1033552,
+      "paint_size_bytes": 113324
+    },
+    "amber_stalker_alien": {
+      "name": "amber_stalker_alien",
+      "display_name": "Amber Stalker",
+      "category": "land_fauna",
+      "form": "alien",
+      "seed": 20268207,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/amber_stalker_alien_rigged.blend",
+      "glb": "assets/runtime/fauna/models/amber_stalker_alien.glb",
+      "color_paint": "assets/runtime/biomes/paint/amber_stalker_alien_paint.png",
+      "close_preview": "assets/previews/fauna/amber_stalker_alien_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/amber_stalker_alien_gameplay.png",
+      "authored_height": 1.52,
+      "triangle_count": 6100,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.28,
+        "height": 1.24,
+        "centre": [
+          0.0,
+          0.62,
+          0.0
+        ]
+      },
+      "color_paint_style": "Amber carapace bands, rust shoulder plates, cream joints, teal glow seams, dark claws, and a gold cranial crest",
+      "emission_style": "crest and thoracic glow seams after sunset",
+      "emission_strength": 1.65,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/amber_stalker_alien_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 26,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1354852,
+      "paint_size_bytes": 113364
+    },
+    "glass_coil_octopus": {
+      "name": "glass_coil_octopus",
+      "display_name": "Glass-Coil Octopus",
+      "category": "land_fauna",
+      "form": "octopus",
+      "seed": 20268208,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/glass_coil_octopus_rigged.blend",
+      "glb": "assets/runtime/fauna/models/glass_coil_octopus.glb",
+      "color_paint": "assets/runtime/biomes/paint/glass_coil_octopus_paint.png",
+      "close_preview": "assets/previews/fauna/glass_coil_octopus_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/glass_coil_octopus_gameplay.png",
+      "authored_height": 0.5,
+      "triangle_count": 4700,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.22,
+        "height": 0.42,
+        "centre": [
+          0.0,
+          0.21,
+          0.0
+        ]
+      },
+      "color_paint_style": "Teal mantle bands, violet arm streaks, gold sucker rings, cream underside, magenta arm-tip spots, and lime eye discs",
+      "emission_style": "eye discs and sucker-ring glow after sunset",
+      "emission_strength": 1.5,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/glass_coil_octopus_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 31,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1131480,
+      "paint_size_bytes": 121451
+    },
+    "lantern_orb_spider": {
+      "name": "lantern_orb_spider",
+      "display_name": "Lantern-Orb Spider",
+      "category": "land_fauna",
+      "form": "spider",
+      "seed": 20268209,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/lantern_orb_spider_rigged.blend",
+      "glb": "assets/runtime/fauna/models/lantern_orb_spider.glb",
+      "color_paint": "assets/runtime/biomes/paint/lantern_orb_spider_paint.png",
+      "close_preview": "assets/previews/fauna/lantern_orb_spider_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/lantern_orb_spider_gameplay.png",
+      "authored_height": 0.38,
+      "triangle_count": 4200,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.18,
+        "height": 0.3,
+        "centre": [
+          0.0,
+          0.15,
+          0.0
+        ]
+      },
+      "color_paint_style": "Violet-black body streaks, gold abdomen orb, teal limb rings, cream fangs, magenta hourglass, and lime eye discs",
+      "emission_style": "abdomen orb and fang glow after sunset",
+      "emission_strength": 1.55,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/lantern_orb_spider_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 31,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 985540,
+      "paint_size_bytes": 120262
+    },
+    "star_mane_hound": {
+      "name": "star_mane_hound",
+      "display_name": "Star-Mane Hound",
+      "category": "land_fauna",
+      "form": "dog",
+      "seed": 20268210,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/star_mane_hound_rigged.blend",
+      "glb": "assets/runtime/fauna/models/star_mane_hound.glb",
+      "color_paint": "assets/runtime/biomes/paint/star_mane_hound_paint.png",
+      "close_preview": "assets/previews/fauna/star_mane_hound_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/star_mane_hound_gameplay.png",
+      "authored_height": 0.8,
+      "triangle_count": 7136,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.22,
+        "height": 0.66,
+        "centre": [
+          0.0,
+          0.33,
+          0.0
+        ]
+      },
+      "color_paint_style": "Warm sand coat streaks, cream chest blaze, indigo ears and socks, gold mane marks, teal eye rings, and a pink tail tip",
+      "emission_style": "mane marks and eye rings glow after sunset",
+      "emission_strength": 1.4,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/star_mane_hound_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 24,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1093816,
+      "paint_size_bytes": 118787
     }
   }
 }

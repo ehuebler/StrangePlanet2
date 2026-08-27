@@ -1,0 +1,33 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://shaders/vivid/vivid_surface.gdshader" id="1_shader"]
+
+[resource]
+resource_name = "Lumen-Hide Cow Surface"
+shader = ExtResource("1_shader")
+shader_parameter/base_color = Color(1.0, 1.0, 1.0, 1.0)
+shader_parameter/use_vertex_color = true
+shader_parameter/saturation = 1.28
+shader_parameter/brightness = 1.02
+shader_parameter/metallic = 0.0
+shader_parameter/roughness_variation = 0.18
+shader_parameter/relief_width = 2.0
+shader_parameter/region_albedo = 0.0
+shader_parameter/region_sheen = 0.28
+shader_parameter/region_rim = 0.42
+shader_parameter/detail_near = 10.0
+shader_parameter/detail_far = 52.0
+shader_parameter/camera_rim_color = Color(0.86, 0.72, 1.0, 1.0)
+shader_parameter/night_emission_color = Color(0.3, 0.95, 0.86, 1.0)
+shader_parameter/night_emission_energy = 1.55
+shader_parameter/night_emission_from_texture_alpha = true
+shader_parameter/roughness = 0.64
+shader_parameter/specular = 0.22
+shader_parameter/texture_relief = 1.35
+shader_parameter/detail_scale = 12.0
+shader_parameter/detail_amount = 0.14
+shader_parameter/bump_scale = 18.0
+shader_parameter/bump_strength = 0.15
+shader_parameter/macro_scale = 1.2
+shader_parameter/macro_amount = 0.11
+shader_parameter/camera_rim_energy = 0.28

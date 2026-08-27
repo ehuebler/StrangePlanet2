@@ -48,7 +48,7 @@ func _initialize() -> void:
 	_cycle = world.find_child("CelestialCycle", true, false)
 	_sun = world.find_child("Sun", true, false) as DirectionalLight3D
 	_planet = world.find_child("Planet", true, false) as Node3D
-	_anchor = world.find_child("ColonyShip", true, false) as Node3D
+	_anchor = world.find_child("VacationersLanding", true, false) as Node3D
 
 	print("day_test: cycle=%s sun=%s planet=%s anchor=%s" % [
 		_cycle, _sun, _planet, _anchor])
@@ -92,7 +92,7 @@ func _process(delta: float) -> bool:
 		_first_angle = angle
 	var phase := float(_cycle.call("phase")) if _cycle.has_method("phase") else -1.0
 
-	# Elevation of the sun over the colony ship: +1 is noon overhead, 0 is the
+	# Elevation of the sun over Vacationer's Landing: +1 is noon overhead, 0 is the
 	# horizon, -1 is midnight. This is the number the complaint is really about.
 	var elevation := 0.0
 	if _anchor != null and _planet != null:

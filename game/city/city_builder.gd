@@ -131,7 +131,7 @@ func _raise_waypoints() -> void:
 		# retuned default reached every landmark in the world scene and none of these.
 		#
 		# `waypoint` is in the list although no settlement currently sets it. The
-		# planet's hand-placed landmarks are all silent now bar the colony ship, and
+		# planet's hand-placed landmarks are all silent now bar Vacationer's Landing, and
 		# a town switched back on would otherwise be the one way to get a marker up
 		# without a say in the matter.
 		for field: String in ["clearance", "tint", "show_beyond", "aimed_beyond",

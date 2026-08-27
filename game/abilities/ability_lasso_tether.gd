@@ -72,7 +72,7 @@ static func create_miss(world: Node, caster: OnlinePlayer,
 	tether._miss_to = from + along * reach
 	var query := PhysicsRayQueryParameters3D.create(
 		from, tether._miss_to, 1)
-	query.exclude = [caster.get_rid()]
+	query.exclude = DamageHit.rid_list(caster.get_rid())
 	query.collide_with_areas = false
 	var hit := caster.get_world_3d().direct_space_state.intersect_ray(query)
 	if not hit.is_empty():

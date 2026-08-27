@@ -288,14 +288,25 @@ func _check_starter_inventory() -> void:
 	var backpack: Array = look.get("backpack", [])
 	var worn: Dictionary = look.get("worn", {})
 	var hotbar: Array = look.get("hotbar", [])
-	for item_id: String in CharacterDB.apparel_ids(CharacterDB.DEFAULT_BODY):
-		var count := backpack.count(item_id)
-		if worn.values().has(item_id):
-			count += 1
-		_expect(count == 1, "starter owns exactly one %s" % item_id)
-	_expect(backpack.size() + worn.size()
-		== CharacterDB.apparel_ids(CharacterDB.DEFAULT_BODY).size(),
-		"starter ownership is finite across worn and backpack")
+	# The settler wardrobe is larger than the backpack. The seed fills what
+	# fits and leaves the rest to the wardrobe catalogue; it must not
+	# duplicate anything it does grant.
+	var owned := {}
+	for item_id: String in backpack:
+		_expect(not owned.has(item_id), "starter backpack does not duplicate %s" % item_id)
+		owned[item_id] = true
+	for item_id: Variant in worn.values():
+		var worn_id := str(item_id)
+		if worn_id.is_empty():
+			continue
+		_expect(not owned.has(worn_id), "starter does not wear a backpack duplicate")
+		owned[worn_id] = true
+	_expect(owned.has("c3_hair") and owned.has("c3_goggles"),
+		"starter keeps the worn hair and carried goggles")
+	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
+		_expect(owned.has(item_id), "starter seed grants %s" % item_id)
+	_expect(backpack.size() <= CharacterDB.BACKPACK_SLOTS,
+		"starter seed does not overflow the backpack")
 	for item_id: String in ItemDB.weapon_ids():
 		_expect(hotbar.count(item_id) + backpack.count(item_id) == 1,
 			"starter owns exactly one %s" % item_id)
@@ -325,9 +336,13 @@ func _check_starter_inventory() -> void:
 		CharacterDB._seed_starter_inventory(broken_look)
 		var repaired: Array = broken_look.get("backpack", [])
 		var repaired_hotbar: Array = broken_look.get("hotbar", [])
-		for item_id: String in CharacterDB.apparel_ids(CharacterDB.DEFAULT_BODY):
+		_expect(repaired.has("c3_hair"),
+			"empty revision-%d save recovers Settler Hair" % old_revision)
+		for item_id: String in CharacterDB.SETTLER_HEADWEAR:
 			_expect(repaired.count(item_id) == 1,
 				"empty revision-%d save recovers %s" % [old_revision, item_id])
+		_expect(repaired.size() <= CharacterDB.BACKPACK_SLOTS,
+			"empty revision-%d save stays inside the backpack" % old_revision)
 		for item_id: String in ItemDB.weapon_ids():
 			_expect(repaired_hotbar.count(item_id) == 1,
 				"revision-%d save receives %s" % [old_revision, item_id])
@@ -340,8 +355,15 @@ func _check_starter_inventory() -> void:
 	var partial_look := CharacterDB.default_look()
 	partial_look["backpack"] = ["c3_hair"]
 	CharacterDB._seed_starter_inventory(partial_look)
-	_expect(partial_look["backpack"] == ["c3_hair"],
+	_expect((partial_look["backpack"] as Array).has("c3_hair"),
+		"partial older wardrobe keeps the garment it already owned")
+	_expect(not (partial_look["backpack"] as Array).has("c3_tunic")
+		and not (partial_look["backpack"] as Array).has("c3_boots")
+		and not (partial_look["backpack"] as Array).has("c3_goggles"),
 		"partial older wardrobe preserves removed apparel")
+	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
+		_expect((partial_look["backpack"] as Array).has(item_id),
+			"revision-three wardrobe receives %s" % item_id)
 	_expect((partial_look["hotbar"] as Array).has("sword")
 		and (partial_look["hotbar"] as Array).has("laser_rifle"),
 		"revision-three wardrobe receives both missing weapons")
@@ -360,11 +382,15 @@ func _check_starter_inventory() -> void:
 	hairless_look["hotbar"] = ["sword", "laser_rifle", ""]
 	hairless_look["backpack"] = ["c3_goggles"]
 	CharacterDB._seed_starter_inventory(hairless_look)
-	_expect(hairless_look["backpack"] == ["c3_goggles", "c3_hair"],
-		"revision-four partial wardrobe receives missing Settler Hair only")
+	_expect((hairless_look["backpack"] as Array).has("c3_goggles")
+		and (hairless_look["backpack"] as Array).has("c3_hair"),
+		"revision-four partial wardrobe receives missing Settler Hair")
 	_expect(not (hairless_look["backpack"] as Array).has("c3_tunic")
 		and not (hairless_look["backpack"] as Array).has("c3_boots"),
 		"hair repair does not resurrect unrelated removed apparel")
+	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
+		_expect((hairless_look["backpack"] as Array).has(item_id),
+			"revision-four wardrobe receives %s" % item_id)
 	SettingsManager._config = saved_config
 
 

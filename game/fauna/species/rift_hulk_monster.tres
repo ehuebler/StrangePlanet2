@@ -1,0 +1,86 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/rift_hulk_monster.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/rift_hulk_monster.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/rift_hulk_monster_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "rift_hulk_monster"
+display_name = "Rift-Hulk Monster"
+enabled = true
+disposition = 2
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Charcoal hide streaks, ember flank bands, bone-cream muzzle, toxic green back spines, red maw, and gold knuckle plates"
+height = 2.1
+height_variation = 0.07
+variant_tint_a = Color(1.0, 0.9, 0.84, 1.0)
+variant_tint_b = Color(0.86, 1.0, 0.88, 1.0)
+saturation = 1.3
+brightness = 1.04
+biome_tint_strength = 0.08
+night_emission_color = Color(0.42, 1.0, 0.36, 1.0)
+night_emission_energy = 2.1
+night_emission_albedo = 0.44
+night_pulse_amount = 0.18
+night_pulse_speed = 0.2
+local_light_color = Color(0.46, 1.0, 0.32, 1.0)
+local_light_energy = 1.55
+local_light_range = 11.0
+local_light_height_share = 0.62
+collision_radius_share = 0.34
+collision_height_share = 0.88
+combat_radius_share = 0.48
+ground_layer = 0
+minimum_ground_claim = 0.0
+above_water = 5.0
+below = 420.0
+minimum_arid = 0.0
+maximum_arid = 1.0
+minimum_frost = 0.0
+maximum_frost = 0.9
+max_slope = 24.0
+steady_over = 2.8
+steady_within = 1.15
+global_population = false
+cell_size = 120.0
+spawn_chance = 0.08
+pack_min = 1
+pack_max = 1
+pack_radius = 4.0
+maximum_instances = 3
+spawn_within = 220.0
+despawn_beyond = 290.0
+random_seed = 20268205
+colony_count = 1
+colony_near = 48.0
+colony_far = 78.0
+health = 260.0
+health_per_metre = 32.0
+toughness = 2
+respawn_delay = 32.0
+walk_speed = 2.0
+run_speed = 6.6
+move_acceleration = 18.0
+turn_speed = 5.0
+wander_radius = 16.0
+wander_pause = 1.4
+notice_range = 22.0
+flee_range = 0.0
+physics_within = 55.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 0.95
+clip_blend = 0.16
+attack_damage = 28.0
+attack_range = 1.6
+attack_radius = 1.05
+attack_windup = 0.46
+attack_cooldown = 2.1
+attack_knockback = 12.0

@@ -1,30 +1,26 @@
-"""Turns the two MeshMaker .blend files at Vacationer's Landing into game .glb files.
+"""Turns the MeshMaker purple-flower .blend at Vacationer's Landing into game .glb files.
 
 Run headless from the project root; it needs no input file of its own, because it
-opens each source in turn:
+opens the source directly:
 
     $blender = "C:\\Program Files\\Blender Foundation\\Blender 5.1\\blender.exe"
     & $blender --background --factory-startup --python assets/source/blender/build_landing.py
 
-It writes `assets/runtime/environment/colony_ship.glb` and `assets/runtime/biomes/models/purple_flower.glb`,
-and never saves the sources in `assets/source/meshmaker/`, so re-exporting either of them from
-MeshMaker and running this again is the whole of the update path.
+It writes `assets/runtime/biomes/models/purple_flower.glb`, and never saves the
+source in `assets/source/meshmaker/`, so re-exporting it from MeshMaker and
+running this again is the whole of the update path.
 
 What it is for is the triangle count. MeshMaker hands out about 60,000 triangles
-whatever the subject is, which is generous for a 26 m ship and absurd for a
-flower there are twenty thousand of. Both come down by a collapse decimate,
-which keeps the vertex colours the whole look is carried in.
+whatever the subject is, which is absurd for a flower there are twenty thousand
+of. A collapse decimate brings it down while keeping the vertex colours the
+whole look is carried in.
 
-Three details are load-bearing:
+Two details are load-bearing:
 
 - **The decimate is applied here, not at export.** glTF's `export_apply` runs the
   modifier stack, and doing it at export time gives up control over the order
   the modifiers are applied in, which is what decides whether the vertex colours
   survive the collapse.
-- **The ship's collider is a second, much coarser object.** Godot's `-colonly`
-  suffix turns it into a StaticBody3D with a trimesh shape and no mesh to draw,
-  so the ship collides as its own silhouette — four legs you can walk between —
-  without the 69 ms it costs to build a BVH over the full sixty thousand faces.
 - **The flower's armature is thrown away and it goes out twice.** Its sway is a
   vertex shader now rather than a skeleton, and the field it grows in is a
   MultiMesh, which can draw a plain mesh by the thousand and cannot draw a
@@ -41,18 +37,12 @@ import bpy
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.abspath(os.path.join(
     SOURCE_DIR, os.pardir, os.pardir, os.pardir))
-ENVIRONMENT_DIR = os.path.join(
-    PROJECT_DIR, "assets", "runtime", "environment")
 BIOME_MODEL_DIR = os.path.join(
     PROJECT_DIR, "assets", "runtime", "biomes", "models")
 
-# Triangles wanted out, per object. The ship is looked at from twenty metres and
-# is one draw in the world, so it keeps enough to hold its greebles. The flower
-# is charged per triangle by the ten thousand, so it keeps a silhouette and its
-# petals and nothing else; see GroundCover for how the two levels are spent. The
-# collider only has to be the shape you bump into.
-SHIP_FACES = 20000
-SHIP_COLLIDER_FACES = 3600
+# Triangles wanted out, per object. The flower is charged per triangle by the
+# ten thousand, so it keeps a silhouette and its petals and nothing else; see
+# GroundCover for how the two levels are spent.
 FLOWER_FACES = 520
 FLOWER_FAR_FACES = 110
 
@@ -104,8 +94,7 @@ def export(objects, filename):
         obj.select_set(True)
     view_layer.objects.active = objects[0]
 
-    output_dir = ENVIRONMENT_DIR if filename == "colony_ship.glb" else BIOME_MODEL_DIR
-    path = os.path.join(output_dir, filename)
+    path = os.path.join(BIOME_MODEL_DIR, filename)
     settings = dict(
         filepath=path,
         export_format="GLB",
@@ -131,36 +120,6 @@ def export(objects, filename):
 def open_source(name):
     bpy.ops.wm.open_mainfile(filepath=os.path.join(
         PROJECT_DIR, "assets", "source", "meshmaker", name))
-
-
-def build_ship():
-    print("colony_ship.blend")
-    open_source("colony_ship.blend")
-    hull = biggest_mesh()
-    hull.name = "ColonyShip"
-    hull.data.name = "ColonyShipMesh"
-
-    # The rig is MeshMaker's boilerplate and this prop never bends, so the skin
-    # goes with it: a static 20k mesh should not be paying to be skinned every
-    # frame against three bones that never move.
-    for modifier in list(hull.modifiers):
-        if modifier.type == "ARMATURE":
-            hull.modifiers.remove(modifier)
-    hull.vertex_groups.clear()
-    for rig in armatures():
-        bpy.data.objects.remove(rig, do_unlink=True)
-
-    collider = hull.copy()
-    collider.data = hull.data.copy()
-    collider.name = "ColonyShipHull-colonly"
-    collider.data.name = "ColonyShipColliderMesh"
-    bpy.context.scene.collection.objects.link(collider)
-
-    decimate(hull, SHIP_FACES)
-    decimate(collider, SHIP_COLLIDER_FACES)
-    print("  standing {0:.1f} m tall on a {1:.1f} m span".format(
-        hull.dimensions.z, max(hull.dimensions.x, hull.dimensions.y)))
-    export([hull, collider], "colony_ship.glb")
 
 
 def build_flower():
@@ -195,7 +154,6 @@ def build_flower():
 
 
 def main():
-    build_ship()
     build_flower()
 
 

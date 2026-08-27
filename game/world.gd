@@ -9,8 +9,8 @@ extends Node3D
 const PLAYER_SCENE := preload("res://game/player/player.tscn")
 
 ## The title view opens at the light the authored cycle reaches after three
-## minutes: low over the Colony Ship and close to local sunset. Gameplay still
-## begins from phase zero in [method _begin_session].
+## minutes: low over Vacationer's Landing and close to local sunset. Gameplay
+## still begins from phase zero in [method _begin_session].
 const HOME_SUN_ADVANCE_SECONDS := 180.0
 const DROP_FORWARD_DISTANCE := 1.55
 const DROP_SURFACE_CLEARANCE := 0.08
@@ -22,14 +22,11 @@ const PICKUP_MAX_DISTANCE := 3.2
 ## damage itself, because this is a correction and not the mechanism: the peers
 ## have already worked it out for themselves.
 const FLORA_CONFIRM_INTERVAL := 0.4
-## How far from the ship the host will still honour a RELEASE SETTLERS press.
-## Generous next to the 2.4 m interaction ray, because the ship is 26 m tall and
-## the panel stays open while the player moves, but still a check that they are
-## at it rather than across the planet from it.
-const SETTLER_RELEASE_MAX_DISTANCE := 40.0
 const RESPAWN_CLEARANCE := 0.35
-## Outside the ship's roughly twelve-metre footprint, but still visibly at it.
+## A ring around the landing waypoint, still visibly at the shore.
 const RESPAWN_SPACING := 14.0
+## Metres above the nearest city's pad when holding Respawn in the Tab menu.
+const CITY_RESPAWN_CLEARANCE := 96.0
 ## Shoulder-to-shoulder separation at the orbital start used by an online
 ## sandbox. Wide enough that two flight capsules cannot begin intersecting, but
 ## close enough that the party enters the world as one visible group.
@@ -208,21 +205,6 @@ func apply_ability_construct_snapshot(snapshot: Array) -> void:
 			float(entry.get("alpha", 0.52)))
 
 
-## Which sites have been settled, for a peer that joined after somebody pressed
-## the button. Only the founding facts travel: the ground a colony was measured
-## against is the same height field on every peer, so the grid, the claim and the
-## wall are rebuilt locally rather than sent.
-func colony_snapshot() -> Array:
-	var colonies := meep_colonies()
-	return colonies.snapshot() if colonies != null else []
-
-
-func apply_colony_snapshot(snapshot: Array) -> void:
-	var colonies := meep_colonies()
-	if colonies != null:
-		colonies.apply_snapshot(snapshot)
-
-
 func active_ability_wall_count() -> int:
 	var count := 0
 	for barrier_variant: Variant in _ability_constructs.values():
@@ -266,7 +248,24 @@ func _apply_scar(wire: Dictionary) -> void:
 	var world_planet := planet()
 	if world_planet == null:
 		return
-	world_planet.add_scar(TerrainScars.Scar.from_wire(wire))
+	var scar := TerrainScars.Scar.from_wire(wire)
+	var absorbed := _absorb_city_scars(scar)
+	if absorbed > 0.0:
+		scar.depth = maxf(scar.depth - absorbed, 0.0)
+	if scar.depth > 0.05:
+		world_planet.add_scar(scar)
+
+
+func _absorb_city_scars(scar: TerrainScars.Scar) -> float:
+	if scar == null or not is_inside_tree():
+		return 0.0
+	var absorbed := 0.0
+	for node in get_tree().get_nodes_in_group(PatchCity.PAD_GROUP):
+		var city := node as PatchCity
+		if city == null:
+			continue
+		absorbed = maxf(absorbed, city.absorb_scar(scar))
+	return absorbed
 
 
 ## Every mark on the ground, for a peer joining a session that has already been
@@ -292,6 +291,7 @@ func apply_scar_snapshot(wire: Array) -> void:
 			# Read back off a scar rather than out of the wire, so the widest
 			# reach of a warped rim is the thing invalidated here too.
 			var scar := TerrainScars.Scar.from_wire(entry)
+			_absorb_city_scars(scar)
 			world_planet.mark_region_stale(
 				scar.direction, scar.outer, scar.depth)
 
@@ -352,11 +352,70 @@ func respawn_player_at_colony(peer_id: int) -> bool:
 	return true
 
 
-## Terrain-sampled, deterministic positions beside the colony ship (or the
-## landing site fallback). The host computes and broadcasts the exact transform,
+@rpc("any_peer", "call_local", "reliable")
+func request_city_respawn() -> void:
+	if not _is_host_authority():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender <= 0:
+		sender = multiplayer.get_unique_id()
+	respawn_player_above_city(sender)
+
+
+func respawn_player_above_city(peer_id: int) -> bool:
+	if not _is_host_authority():
+		return false
+	var player := _spawned_players.get(peer_id) as OnlinePlayer
+	if not is_instance_valid(player):
+		return false
+	var sequence := int(_respawn_sequence.get(peer_id, 0)) + 1
+	_respawn_sequence[peer_id] = sequence
+	var at_transform := nearest_city_respawn_transform(player.global_position, peer_id)
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_colony_respawn.rpc(peer_id, at_transform, sequence)
+	else:
+		_apply_colony_respawn(peer_id, at_transform, sequence)
+	return true
+
+
+func nearest_city_respawn_transform(from: Vector3, peer_id: int) -> Transform3D:
+	var city := _nearest_city(from)
+	if city == null:
+		return safe_colony_respawn_transform(peer_id)
+	var at := city.hover_point(CITY_RESPAWN_CLEARANCE)
+	var up := city.world_up()
+	var facing := from - at
+	facing -= up * facing.dot(up)
+	if facing.length_squared() < 0.0001:
+		facing = Vector3.FORWARD
+	return Transform3D(_upright_basis(facing.normalized(), up), at)
+
+
+func _nearest_city(from: Vector3) -> PatchCity:
+	var overlay := get_node_or_null("Planet/LandPatches") as LandPatchOverlay
+	if overlay == null:
+		overlay = get_tree().get_first_node_in_group(LandPatchOverlay.GROUP) \
+			as LandPatchOverlay
+	if overlay == null:
+		return null
+	var best: PatchCity = null
+	var nearest := 1.0e30
+	for held in overlay.all_cities():
+		var city := held as PatchCity
+		if city == null:
+			continue
+		var away := from.distance_squared_to(city.world_centre())
+		if away < nearest:
+			nearest = away
+			best = city
+	return best
+
+
+## Terrain-sampled, deterministic positions beside Vacationer's Landing (or the
+## landing-site fallback). The host computes and broadcasts the exact transform,
 ## so peers need not agree on their local terrain streaming state that frame.
 func safe_colony_respawn_transform(peer_id: int) -> Transform3D:
-	var anchor := get_node_or_null("Planet/ColonyShip") as Node3D
+	var anchor := get_node_or_null("Planet/VacationersLanding") as Node3D
 	if anchor == null:
 		anchor = get_node_or_null("Planet/LandingSite") as Node3D
 	if anchor == null:
@@ -573,67 +632,6 @@ func leave_session() -> void:
 	NetworkManager.leave_game()
 	if NetworkManager.menu_scene_path.is_empty():
 		queue_free()
-
-
-func meep_colonies() -> MeepColonies:
-	return get_node_or_null("Planet/MeepColonies") as MeepColonies
-
-
-## What [CityMenu] reads while it is open, for the colony a given ship controls.
-## Empty rather than null for a site that has not been settled, so the panel has
-## rows to draw before there is anything in them.
-func colony_report(site: StringName) -> Dictionary:
-	var colonies := meep_colonies()
-	return colonies.report(site) if colonies != null else {}
-
-
-## RELEASE SETTLERS. Same shape as [method request_pickup]: a client sends the
-## claim and nothing else, the host derives who asked from the RPC sender, and a
-## local call is accepted only for the caller's own body so this cannot be used
-## to spend another player's ship.
-func request_release_settlers(peer_id: int, site: StringName) -> void:
-	var local_id := multiplayer.get_unique_id()
-	if peer_id != local_id:
-		return
-	var player := _spawned_players.get(local_id) as OnlinePlayer
-	if not is_instance_valid(player):
-		return
-	if _is_host_authority():
-		_server_release_settlers(local_id, site)
-		return
-	_request_release_settlers_from_client.rpc_id(1, site)
-
-
-@rpc("any_peer", "call_remote", "reliable")
-func _request_release_settlers_from_client(site: StringName) -> void:
-	if not multiplayer.is_server():
-		return
-	var sender := multiplayer.get_remote_sender_id()
-	if NetworkManager.state != NetworkManager.SessionState.IN_GAME \
-			or not NetworkManager.is_peer_registered(sender):
-		return
-	_server_release_settlers(sender, site)
-
-
-## The host's answer, and the only place a colony is founded. Checked against the
-## ship's own position rather than trusting that the client's interaction ray hit
-## something: the panel can be left open and walked away from.
-func _server_release_settlers(peer_id: int, site: StringName) -> void:
-	if not _is_host_authority():
-		return
-	var colonies := meep_colonies()
-	if colonies == null:
-		return
-	var ship := colonies.ship(site)
-	if ship == null:
-		return
-	var player := _spawned_players.get(peer_id) as OnlinePlayer
-	if not is_instance_valid(player) or player.is_dead():
-		return
-	if player.global_position.distance_to(ship.global_position) \
-			> SETTLER_RELEASE_MAX_DISTANCE:
-		return
-	colonies.release_settlers(site)
 
 
 ## Public red-menu entry point. A client sends only the source claim; the server
@@ -1025,8 +1023,7 @@ func _request_world_state() -> void:
 	_receive_world_state.rpc_id(
 		sender, snapshots, celestial_cycle.phase(), pickup_snapshots(),
 		scar_snapshot(), flora_snapshot(), bigfoot_snapshot(),
-		celestial_cycle.day_index(), ability_construct_snapshot(),
-		colony_snapshot())
+		celestial_cycle.day_index(), ability_construct_snapshot())
 
 
 @rpc("authority", "reliable")
@@ -1038,8 +1035,7 @@ func _receive_world_state(
 		flora_state: Dictionary = {},
 		boss_state: Dictionary = {},
 		day_number := 0,
-		ability_construct_state: Array = [],
-		colony_state: Array = []
+		ability_construct_state: Array = []
 	) -> void:
 	if float(day_phase) >= 0.0:
 		celestial_cycle.set_phase(float(day_phase))
@@ -1048,7 +1044,6 @@ func _receive_world_state(
 	apply_flora_snapshot(flora_state)
 	apply_bigfoot_snapshot(boss_state)
 	apply_ability_construct_snapshot(ability_construct_state)
-	apply_colony_snapshot(colony_state)
 	for snapshot_variant in snapshots:
 		if not snapshot_variant is Dictionary:
 			continue

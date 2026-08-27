@@ -1,0 +1,90 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/lumen_hide_cow.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/lumen_hide_cow.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/lumen_hide_cow_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "lumen_hide_cow"
+display_name = "Lumen-Hide Cow"
+enabled = true
+disposition = 0
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Cream hide streaks, lilac flank patches, indigo hooves, gold horn rings, teal udder glow, and a magenta tail switch"
+height = 1.42
+height_variation = 0.08
+variant_tint_a = Color(1.0, 0.96, 0.9, 1.0)
+variant_tint_b = Color(0.92, 0.9, 1.0, 1.0)
+saturation = 1.28
+brightness = 1.02
+biome_tint_strength = 0.12
+night_emission_color = Color(0.3, 0.95, 0.86, 1.0)
+night_emission_energy = 1.55
+night_emission_albedo = 0.46
+night_pulse_amount = 0.12
+night_pulse_speed = 0.18
+local_light_color = Color(0.34, 0.92, 0.82, 1.0)
+local_light_energy = 1.2
+local_light_range = 8.0
+local_light_height_share = 0.38
+collision_radius_share = 0.36
+collision_height_share = 0.82
+combat_radius_share = 0.46
+ground_layer = 1
+minimum_ground_claim = 0.05
+above_water = 4.0
+below = 340.0
+minimum_arid = 0.0
+maximum_arid = 0.74
+minimum_frost = 0.0
+maximum_frost = 0.7
+max_slope = 20.0
+steady_over = 2.4
+steady_within = 1.05
+global_population = false
+cell_size = 100.0
+spawn_chance = 0.14
+pack_min = 2
+pack_max = 3
+pack_radius = 8.0
+maximum_instances = 6
+spawn_within = 210.0
+despawn_beyond = 278.0
+random_seed = 20268204
+colony_count = 2
+colony_near = 26.0
+colony_far = 60.0
+health = 150.0
+health_per_metre = 22.0
+toughness = 1
+respawn_delay = 24.0
+walk_speed = 1.4
+run_speed = 4.8
+move_acceleration = 16.0
+turn_speed = 5.5
+wander_radius = 18.0
+wander_pause = 3.2
+notice_range = 14.0
+flee_range = 7.0
+physics_within = 50.0
+graze = true
+graze_chance = 0.68
+graze_seconds = 6.0
+provoked_seconds = 8.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 1.0
+clip_blend = 0.18
+attack_damage = 12.0
+attack_range = 0.85
+attack_radius = 0.62
+attack_windup = 0.4
+attack_cooldown = 1.6
+attack_knockback = 6.0

@@ -1,27 +1,27 @@
 extends Node3D
 
-## The colony ship and the flower field: the numbers and the pictures.
+## Vacationer's Landing and the flower field: the numbers and the pictures.
 ##
 ##     & $godot --path . dev/_landing_test.tscn
 ##     & $godot --path . dev/_landing_test.tscn -- --nosway
 ##
 ## It boots the real `game/world.tscn` rather than standing a planet up of its
-## own, because most of what can go wrong here is wiring: a material override
-## that missed a mesh, a collider that did not come through the import, a field
-## whose `clear_of` points at nothing. A harness that rebuilt the scene would
-## pass with all three broken.
+## own, because most of what can go wrong here is wiring: a field whose
+## `clear_of` points at nothing, a waypoint that never draws, a bloom that came
+## up in the sea. A harness that rebuilt the scene would pass with all three
+## broken.
 ##
 ## What it measures:
 ##
-## - **The ship.** Where it stands, how level the ground under it is, and that
-##   the `-colonly` body arrived with a shape on it, since a lander you walk
-##   through is the failure that a screenshot from outside cannot show.
+## - **The shore.** Where the landing landmark stands, how level the ground
+##   under it is, and how far it is from the sea.
 ## - **The field.** What grew, and then the rules themselves as measurements:
-##   the lowest plant against sea level, the nearest one to the lander, the
+##   the lowest plant against sea level, the nearest one to the landing, the
 ##   steepest ground any of them ended up on. Those three are the request — off
-##   the shore, off the sharp ground, away from the ship — and each is a number
-##   rather than a matter of opinion. Also what the streaming is doing, which is
-##   the difference between the plants that exist and the plants being drawn.
+##   the shore, off the sharp ground, away from the keep-out — and each is a
+##   number rather than a matter of opinion. Also what the streaming is doing,
+##   which is the difference between the plants that exist and the plants being
+##   drawn.
 ## - **The sway.** There is nothing left to measure it on: the bend is a vertex
 ##   shader and no CPU-side value moves when a plant leans. So it is measured
 ##   off the picture instead, by photographing the same flowers from the same
@@ -37,18 +37,17 @@ const SHOT_DIR := "res://dev/captures/"
 const SPACING := 1.5
 
 ## Name, metres out from the subject along the local ground, metres up, and what
-## to look at: the ship, or the flowers.
+## to look at: the landing, or the flowers.
 const VIEWS := [
-	["lander_far", 300.0, 120.0, "ship"],
-	["lander_shore", 90.0, 26.0, "ship"],
-	["lander_ground", 34.0, 2.0, "ship"],
-	["lander_under", 13.0, 1.7, "ship"],
+	["landing_far", 300.0, 120.0, "landing"],
+	["landing_shore", 90.0, 26.0, "landing"],
+	["landing_ground", 34.0, 2.0, "landing"],
 	["flowers_over", 26.0, 16.0, "bloom"],
 	["flowers_close", 3.4, 1.1, "bloom"],
 ]
 
 var _planet: Planet
-var _ship: ColonyShip
+var _landing: Landmark
 var _field: GroundCover
 var _flower: PlantSpecies
 var _player: OnlinePlayer
@@ -63,7 +62,7 @@ func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SHOT_DIR))
 	# An offline session, the way the world is entered from the menu. Without a
 	# peer and a roster it opens its home screen instead of spawning anybody,
-	# and there is nobody here to fly over to the ship.
+	# and there is nobody here to fly over to the landing.
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	NetworkManager.is_single_player = true
 	NetworkManager.is_host = true
@@ -82,15 +81,15 @@ func _ready() -> void:
 		return
 	_camera = _player.camera
 	_planet = world.find_children("*", "Planet", true, false).pop_front() as Planet
-	_ship = world.find_children("*", "ColonyShip", true, false).pop_front() as ColonyShip
+	_landing = world.find_child("VacationersLanding", true, false) as Landmark
 	_field = world.find_children("*", "GroundCover", true, false).pop_front() as GroundCover
-	if _planet == null or _ship == null or _field == null:
-		push_error("landing_test: world.tscn is missing the planet, the ship or the field")
+	if _planet == null or _landing == null or _field == null:
+		push_error("landing_test: world.tscn is missing the planet, the landing or the field")
 		get_tree().quit(1)
 		return
 	_flower = _field.species[0] as PlantSpecies
 
-	_measure_ship()
+	_measure_landing()
 	await _measure_waypoint()
 	await _measure_field()
 	_measure_flower_vat()
@@ -117,58 +116,25 @@ func _measure_flower_vat() -> void:
 		push_error("landing_test: flower LODs share a material and incompatible VAT uniforms")
 
 
-# --- The ship ---------------------------------------------------------------
+# --- The landing ------------------------------------------------------------
 
-func _measure_ship() -> void:
+func _measure_landing() -> void:
 	var shape := _planet.shape
-	var up: Vector3 = _ship.direction.normalized()
+	var up: Vector3 = _landing.direction.normalized()
 	var elevation := shape.elevation(up, SPACING)
 	var normal := shape.normal_at(up, SPACING)
-	print("--- colony ship ---")
-	print("title            %s" % _ship.title)
+	print("--- vacationer's landing ---")
+	print("title            %s" % _landing.title)
 	print("elevation        %.1f m above sea level" % elevation)
 	print("slope underfoot  %.2f deg" % rad_to_deg(
 		acos(clampf(normal.dot(up), -1.0, 1.0))))
-	print("from the Landing %.0f m" % (
+	print("from the town    %.0f m" % (
 		CityLayout.CENTRE.normalized().angle_to(up) * shape.radius))
 	print("to the sea       %.0f m" % _to_sea(shape, up))
 
-	var meshes := _ship.find_children("*", "MeshInstance3D", true, false)
-	var tris := 0
-	var painted := 0
-	# Merged in the ship's own frame rather than the world's. An AABB is axis
-	# aligned to whatever space it is in, and the ship stands 8 km out on a
-	# sphere at an angle to every world axis, so a box merged out there reports
-	# the diagonal of the ship rather than the ship.
-	var reach := AABB()
-	for node in meshes:
-		var mesh_instance := node as MeshInstance3D
-		tris += mesh_instance.mesh.get_faces().size() / 3
-		if mesh_instance.material_override != null:
-			painted += 1
-		var box := (_ship.global_transform.affine_inverse()
-			* mesh_instance.global_transform) * mesh_instance.mesh.get_aabb()
-		reach = box if reach.size == Vector3.ZERO else reach.merge(box)
-	print("meshes           %d, %d triangles, %d repainted" % [meshes.size(), tris, painted])
-	print("stands           %.1f m tall, %.1f m across" % [
-		reach.size.y, maxf(reach.size.x, reach.size.z)])
-	if painted < meshes.size():
-		push_error("landing_test: %d of the ship's meshes kept their imported material"
-			% [meshes.size() - painted])
-
-	var faces := 0
-	for node in _ship.find_children("*", "CollisionShape3D", true, false):
-		var shape_3d := (node as CollisionShape3D).shape
-		if shape_3d is ConcavePolygonShape3D:
-			faces += (shape_3d as ConcavePolygonShape3D).get_faces().size() / 3
-	print("collision        %d trimesh faces" % faces)
-	if faces == 0:
-		push_error("landing_test: the ship has no collision; the -colonly mesh did not import")
-
 
 ## Roughly how far the water is, by walking out along the steepest downhill until
-## the ground goes under. Good enough to report; dev/_lander_site.gd is what
-## actually chose the spot, and it floods a grid to do it properly.
+## the ground goes under.
 func _to_sea(shape: PlanetShape, from: Vector3) -> float:
 	var east := from.cross(Vector3.UP if absf(from.y) < 0.9 else Vector3.RIGHT).normalized()
 	var north := from.cross(east)
@@ -186,7 +152,7 @@ func _to_sea(shape: PlanetShape, from: Vector3) -> float:
 
 # --- The waypoint -----------------------------------------------------------
 
-## Whether the ship is named on the HUD, and at what range. Read off the layer
+## Whether the landing is named on the HUD, and at what range. Read off the layer
 ## rather than off a screenshot: whether a marker is up is the whole of that
 ## behaviour, and the label is twelve pixels of text over a hillside.
 func _measure_waypoint() -> void:
@@ -196,45 +162,45 @@ func _measure_waypoint() -> void:
 		return
 	print("--- waypoint ---")
 	print("drawn from %.0f m out, aimed inside %.0f m, gone past %.0f m" % [
-		_ship.show_beyond, _ship.aimed_beyond, _ship.hide_beyond])
-	var up: Vector3 = _ship.global_basis.y.normalized()
-	var across: Vector3 = _ship.global_basis.x.normalized()
+		_landing.show_beyond, _landing.aimed_beyond, _landing.hide_beyond])
+	var up: Vector3 = _landing.global_basis.y.normalized()
+	var across: Vector3 = _landing.global_basis.x.normalized()
 	var named := false
 	for out: float in [120.0, 700.0, 2000.0, 6000.0]:
-		var eye := _ship.global_position + across * out + up * (out * 0.25 + 20.0)
+		var eye := _landing.global_position + across * out + up * (out * 0.25 + 20.0)
 		await _stand(eye, 90)
 		# Aimed at it and then well off it, because the two have different
 		# cutoffs and a reading taken only one way cannot tell them apart.
 		var reading := PackedStringArray()
 		for swing: float in [0.0, 45.0]:
-			var look := (_ship.global_position - eye).normalized().rotated(
+			var look := (_landing.global_position - eye).normalized().rotated(
 				up, deg_to_rad(swing))
 			_camera.global_transform = Transform3D(Basis.looking_at(look, up), eye)
 			await get_tree().process_frame
 			await get_tree().process_frame
 			var drawn := layer.drawn()
-			named = named or "Colony Ship" in drawn
+			named = named or "Vacationer's Landing" in drawn
 			reading.append("%s %s" % ["aimed" if swing == 0.0 else "aside",
 				", ".join(drawn) if not drawn.is_empty() else "—"])
 		print("  %5.0f m out   %s" % [out, "   ".join(reading)])
 	if not named:
-		push_error("landing_test: the ship is never named on the HUD")
+		push_error("landing_test: the landing is never named on the HUD")
 
 
 # --- The field --------------------------------------------------------------
 
 ## The field only exists around whoever is looking at it, so this stands the body
 ## on the shelf first and waits for the tiles to arrive. Everything below is
-## therefore a measurement of the plants near the ship and not of the whole
+## therefore a measurement of the plants near the landing and not of the whole
 ## meadow, which is the only kind of measurement there is now: the rest of it has
 ## not been grown and will not be until somebody walks over there.
 func _measure_field() -> void:
-	await _stand(_ship.global_position + _ship.global_basis.y * 2.0, 30)
+	await _stand(_landing.global_position + _landing.global_basis.y * 2.0, 30)
 	var waited := 0
 	for _frame in 600:
 		await get_tree().process_frame
 		waited += 1
-		_player.global_position = _ship.global_position + _ship.global_basis.y * 2.0
+		_player.global_position = _landing.global_position + _landing.global_basis.y * 2.0
 		_player.velocity = Vector3.ZERO
 		if _field.tiles() > 0 and _field.settling() == 0:
 			break
@@ -255,17 +221,17 @@ func _measure_field() -> void:
 
 	var lowest := INF
 	var highest := -INF
-	var nearest_ship := INF
+	var nearest_landing := INF
 	var steepest := 0.0
 	var shortest := INF
 	var tallest := -INF
-	var ship: Vector3 = _ship.direction.normalized()
+	var landing: Vector3 = _landing.direction.normalized()
 	for stood in plants:
 		var up := _planet.to_local(stood.origin).normalized()
 		var elevation := shape.elevation(up, SPACING)
 		lowest = minf(lowest, elevation)
 		highest = maxf(highest, elevation)
-		nearest_ship = minf(nearest_ship, up.angle_to(ship) * shape.radius)
+		nearest_landing = minf(nearest_landing, up.angle_to(landing) * shape.radius)
 		steepest = maxf(steepest, rad_to_deg(acos(clampf(
 			shape.normal_at(up, SPACING).dot(up), -1.0, 1.0))))
 		var size := stood.basis.get_scale().y * _flower.authored_height()
@@ -274,7 +240,7 @@ func _measure_field() -> void:
 
 	print("elevation        %.1f m to %.1f m (floor is %.1f m)" % [
 		lowest, highest, _flower.above_water])
-	print("nearest the ship %.1f m (gap is %.1f m)" % [nearest_ship, _field.keep_back])
+	print("nearest landing  %.1f m (gap is %.1f m)" % [nearest_landing, _field.keep_back])
 	print("steepest ground  %.1f deg (limit is %.1f deg)" % [
 		steepest, _flower.max_slope])
 	print("heights          %.2f m to %.2f m" % [shortest, tallest])
@@ -286,8 +252,8 @@ func _measure_field() -> void:
 		push_error("landing_test: the flowers picked up collision")
 	if lowest < _flower.above_water:
 		push_error("landing_test: a bloom came up below the shore line")
-	if nearest_ship < _field.keep_back:
-		push_error("landing_test: a bloom came up inside the ship's clearance")
+	if nearest_landing < _field.keep_back:
+		push_error("landing_test: a bloom came up inside the landing's clearance")
 	# The slope is read here at the terrain's own scale and the rule is applied
 	# at the plant's, over a couple of metres, so the two do not have to agree
 	# closely — a plant on a two-metre-wide level step is standing on ground this
@@ -417,9 +383,9 @@ func _frame_cost(eye: Vector3, focus: Vector3, up: Vector3, stood: Vector3) -> f
 
 # --- Scaffolding ------------------------------------------------------------
 
-## The plant nearest the ship, which is the one every close view is framed on.
+## The plant nearest the landing, which is the one every close view is framed on.
 func _nearest_bloom() -> Transform3D:
-	var at := _ship.global_position
+	var at := _landing.global_position
 	var nearest := Transform3D.IDENTITY
 	var closest := INF
 	for stood in _field.standing():
@@ -443,18 +409,17 @@ func _stand(at: Vector3, frames: int) -> void:
 
 
 func _shot(shot_name: String, out: float, altitude: float, subject: String) -> void:
-	var at: Vector3 = _ship.global_position + _ship.global_basis.y * 13.0
+	var at: Vector3 = _landing.global_position + _landing.global_basis.y * 2.0
 	if subject == "bloom":
 		var bloom := _nearest_bloom()
 		if bloom == Transform3D.IDENTITY:
 			return
 		at = bloom.origin + bloom.basis.y.normalized() * 0.5
 	var up := (at - _planet.global_position).normalized()
-	# Back along the ship's own -Z, which the anchor turned at the water: stand
+	# Back along the landing's own -Z, which the anchor turned at the water: stand
 	# inland of the subject and the sea is behind it in every frame. Standing
-	# the other side is standing in the sea looking at the shore, which is the
-	# one view that cannot show how near the water the ship is.
-	var across := _ship.global_basis.z
+	# the other side is standing in the sea looking at the shore.
+	var across := _landing.global_basis.z
 	across = (across - up * across.dot(up)).normalized()
 	var eye := at + across * out + up * altitude
 	await _stand(eye, 110)

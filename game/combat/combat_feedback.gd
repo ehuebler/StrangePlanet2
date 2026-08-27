@@ -133,7 +133,7 @@ func parry_feedback(perfect: bool, at := Vector3.ZERO) -> void:
 
 
 func outgoing_damage(amount: float, at: Vector3, target_peer := 0,
-		critical := false) -> void:
+		critical := false, structure := false, merge_key := "") -> void:
 	if amount <= 0.0:
 		return
 	var event := DamageNumberEvent.new()
@@ -141,6 +141,8 @@ func outgoing_damage(amount: float, at: Vector3, target_peer := 0,
 	event.world_position = at
 	event.target_peer = target_peer
 	event.critical = critical
+	event.structure = structure
+	event.merge_key = merge_key
 	_show_number(event)
 
 

@@ -15,6 +15,7 @@ var _failures := 0
 var _world: GameWorld
 var _player: OnlinePlayer
 var _isolated_leave_count := 0
+var _isolated_respawn_count := 0
 
 var _settings_existed := false
 var _settings_bytes := PackedByteArray()
@@ -69,7 +70,7 @@ func _check_ability_test_site() -> void:
 	# Long enough that an unguarded CharacterBody would fall far through terrain
 	# that has not streamed near any player yet.
 	await _wait_frames(90)
-	var ship := _world.get_node_or_null("Planet/ColonyShip") as ColonyShip
+	var landing := _world.get_node_or_null("Planet/VacationersLanding") as Landmark
 	var site := _world.get_node_or_null(
 		"Planet/AbilityTestingSite") as Landmark
 	var dummies: Array[TrainingDummy] = []
@@ -77,11 +78,11 @@ func _check_ability_test_site() -> void:
 		for child: Node in site.get_children():
 			if child is TrainingDummy:
 				dummies.append(child as TrainingDummy)
-	var span := ship.global_position.distance_to(site.global_position) \
-		if ship != null and site != null else 0.0
-	_expect(ship != null and site != null
+	var span := landing.global_position.distance_to(site.global_position) \
+		if landing != null and site != null else 0.0
+	_expect(landing != null and site != null
 		and span >= 185.0 and span <= 215.0,
-		"the marked Ability Test Site is about 200 m from the colony ship")
+		"the marked Ability Test Site is about 200 m from Vacationer's Landing")
 	_expect(site != null and site.waypoint
 		and site.show_beyond <= 12.0 and site.hide_beyond >= 1000.0
 		and site.get_node_or_null("Beacon") != null,
@@ -190,6 +191,7 @@ func _run() -> void:
 	await _check_data_settings_and_admin(menu)
 	await _check_graphics_toggle_rows(menu)
 	await _check_isolated_leave_hold()
+	await _check_isolated_respawn_hold()
 	await _check_drop_round_trip(menu)
 
 
@@ -233,6 +235,8 @@ func _check_open_and_close_policy() -> void:
 			"SettingsAction", true, false) as Button
 		var leave_button := menu.find_child(
 			"LeaveAction", true, false) as HoldActionButton
+		var respawn_button := menu.find_child(
+			"RespawnAction", true, false) as HoldActionButton
 		var viewport_rect := get_viewport().get_visible_rect()
 		var shell_rect := shell.get_global_rect() if shell != null else Rect2()
 		var edge_gaps := Vector4(
@@ -291,8 +295,9 @@ func _check_open_and_close_policy() -> void:
 		_expect(close_style != null and settings_style != null
 			and close_style.corner_radius_top_left >= 24
 			and settings_style.corner_radius_top_left >= 24
-			and leave_button != null and leave_button.circular,
-			"Close, Settings, and Hold Leave use circular icon keys")
+			and leave_button != null and leave_button.circular
+			and respawn_button != null and respawn_button.circular,
+			"Close, Settings, Hold Respawn, and Hold Leave use circular icon keys")
 		var close_glyph := close_button.find_child(
 			"Glyph", true, false) as Control if close_button != null else null
 		var settings_glyph := settings_button.find_child(
@@ -305,6 +310,14 @@ func _check_open_and_close_policy() -> void:
 			"Settings glyph is centered inside its circular key")
 		_expect(_centres_match(leave_button, leave_glyph),
 			"Hold Leave glyph is centered inside its circular key")
+		var respawn_glyph := respawn_button.find_child(
+			"Glyph", true, false) as Control if respawn_button != null else null
+		_expect(_centres_match(respawn_button, respawn_glyph),
+			"Hold Respawn glyph is centered inside its circular key")
+		_expect(respawn_button != null and leave_button != null
+			and respawn_button.get_global_rect().end.x
+				<= leave_button.get_global_rect().position.x + 1.0,
+			"Hold Respawn sits to the left of Hold Leave")
 		_expect(_children_have_even_horizontal_gaps(actions),
 			"session action keys use even horizontal spacing")
 
@@ -480,10 +493,18 @@ func _check_apparel(menu: GameMenu) -> void:
 		return
 
 	var owned := _owned_slots(page)
-	_expect(owned.size() == 1
-		and owned[0].container == _player.backpack
-		and owned[0].item_id() == "c3_hair",
-		"Apparel lists finite ownership instead of a global catalogue")
+	var listed: PackedStringArray = PackedStringArray()
+	for slot: RedItemSlot in owned:
+		var listed_id := slot.item_id()
+		if not listed_id.is_empty() and not listed.has(listed_id):
+			listed.append(listed_id)
+	_expect(listed.has("c3_hair"),
+		"Apparel still lists the physically owned garment")
+	_expect(listed.has("c3_party_hat") and listed.has("c3_bunny_ears"),
+		"Apparel lists body-wardrobe hats that are not in the backpack")
+	var hair_owned := _red_slot(page, _player.backpack, 0)
+	_expect(hair_owned != null and hair_owned.item_id() == "c3_hair",
+		"physically owned Settler Hair keeps its backpack slot in the catalogue")
 	var filter_row := page.find_child(
 		"CatalogueFilters", true, false) as Control
 	var filters_centred := filter_row != null
@@ -877,6 +898,40 @@ func _check_isolated_leave_hold() -> void:
 	await _wait_frames(2)
 
 
+func _check_isolated_respawn_hold() -> void:
+	var shell := Control.new()
+	shell.name = "IsolatedRespawnShell"
+	shell.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(shell)
+	var isolated := GameMenu.new()
+	isolated.configure(null)
+	isolated.respawn_requested.connect(_on_isolated_respawn_requested)
+	shell.add_child(isolated)
+	await _wait_frames(2)
+
+	var respawn := isolated.find_child("RespawnAction", true, false) as HoldActionButton
+	if not _expect(respawn != null, "side hold-to-respawn action exists"):
+		shell.queue_free()
+		return
+	respawn.hold_duration = 0.01
+	respawn.grab_focus()
+	await _wait_frames(1)
+	var press := InputEventAction.new()
+	press.action = &"ui_accept"
+	press.pressed = true
+	respawn._gui_input(press)
+	respawn._process(0.02)
+	respawn._process(0.02)
+	var release := InputEventAction.new()
+	release.action = &"ui_accept"
+	release.pressed = false
+	respawn._gui_input(release)
+	_expect(_isolated_respawn_count == 1,
+		"one continuous respawn hold completes exactly once")
+	shell.queue_free()
+	await _wait_frames(2)
+
+
 func _check_drop_round_trip(menu: GameMenu) -> void:
 	_player.equipment.clear()
 	_player.hotbar.clear()
@@ -1072,6 +1127,10 @@ func _capture(capture_name: String) -> void:
 
 func _on_isolated_leave_requested() -> void:
 	_isolated_leave_count += 1
+
+
+func _on_isolated_respawn_requested() -> void:
+	_isolated_respawn_count += 1
 
 
 func _centres_match(

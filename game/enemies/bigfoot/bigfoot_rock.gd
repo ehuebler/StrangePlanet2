@@ -133,7 +133,7 @@ func _physics_process(delta: float) -> void:
 		return
 	var query := PhysicsRayQueryParameters3D.create(from, to)
 	if _blocker.is_valid():
-		query.exclude = [_blocker]
+		query.exclude = DamageHit.rid_list(_blocker)
 	var landed := get_world_3d().direct_space_state.intersect_ray(query)
 	if landed.is_empty():
 		global_position = to

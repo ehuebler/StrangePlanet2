@@ -5,7 +5,7 @@ extends Node3D
 ##
 ## Species own habitat, density, appearance, vitality, temperament, and moves.
 ## This node only decides which stable cells are live around the current players,
-## guarantees authored showcase packs beside the Colony Ship, and replicates the
+## guarantees authored showcase packs beside Vacationer's Landing, and replicates the
 ## resulting actors. Unlike flora, mobs carry state, so clients never generate
 ## their own independent simulation.
 
@@ -80,7 +80,7 @@ func _build() -> void:
 	if not colony_anchor.is_empty():
 		_colony = get_node_or_null(colony_anchor) as Node3D
 	if _colony == null:
-		_colony = _planet.get_node_or_null("ColonyShip") as Node3D
+		_colony = _planet.get_node_or_null("VacationersLanding") as Node3D
 
 	for definition in species:
 		if definition == null:
@@ -145,7 +145,7 @@ func _find_planet() -> Planet:
 func _place_colony_populations() -> void:
 	if _colony == null:
 		if not species.is_empty():
-			push_warning("FaunaSpawner has no Colony Ship anchor")
+			push_warning("FaunaSpawner has no Vacationer's Landing anchor")
 		return
 	var anchor_local := _planet.to_local(_colony.global_position)
 	if anchor_local.length_squared() < 1.0:

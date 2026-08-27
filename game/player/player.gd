@@ -34,6 +34,7 @@ const DAMAGE_RAGDOLL_TIME := 0.75
 ## player can legitimately cover is far more than this, so the real limit is
 ## worked out from their stance; see `_speed_limit`.
 const MAX_ACCEPTED_STEP := 4.0
+const CityMinimap := preload("res://game/city/city_minimap.gd")
 
 ## How far in front of the eyes something can be interacted with. Measured from
 ## the body, not the camera, so third person is not a longer arm.
@@ -808,8 +809,6 @@ var _dead := false
 var _death_cause := ""
 ## Local player only, and only while they are dead.
 var _death_screen: DeathScreen
-## Local player only, and only while they are stood at a colony ship.
-var _city_menu: CityMenu
 var _stagger_left := 0.0
 ## Damage/throw ragdolls do not start blending upright until they have landed.
 var _forced_ragdoll := false
@@ -939,7 +938,7 @@ var _confirmed_drop_ids: Dictionary = {}
 var _received_pickup_ids: Dictionary = {}
 var _waypoints: WaypointLayer
 ## Tilde opens the planet-wide navigation overlay. It is deliberately false on
-## spawn: no landmark, including the colony ship, is ambient HUD furniture. The
+## spawn: no landmark, including Vacationer's Landing, is ambient HUD furniture. The
 ## compact diagnostic plate follows the same toggle so it is absent from ordinary
 ## play and available beside the navigation context when requested.
 var _waypoints_wanted := false
@@ -947,6 +946,8 @@ var _waypoints_wanted := false
 ## until the tilde navigation overlay is requested.
 var _coordinates: CoordinatePlate
 var _coordinates_wanted := false
+var _minimap: CityMinimap
+var _land_patches: LandPatchOverlay
 ## Present only on the owning peer.
 var _combat_hud: Node
 ## Charge left per weapon id, kept while a weapon is put away so switching is not
@@ -1079,9 +1080,15 @@ func _ready() -> void:
 		_coordinates.aim_ray = aim_ray
 		_coordinates.visible = _coordinates_wanted
 		hud.add_child(_coordinates)
+		_land_patches = _find_land_patches()
+		if _land_patches != null:
+			_land_patches.set_overlay_enabled(_waypoints_wanted)
 		_combat_hud = load("res://ui/combat/combat_hud.gd").new()
 		_combat_hud.configure(self, hud, _coordinates, _weapon_bar)
 		hud.add_child(_combat_hud)
+		_minimap = CityMinimap.new()
+		_minimap.bind(_coordinates)
+		hud.add_child(_minimap)
 		# Only the person who died is told about it. Everyone else sees a body.
 		died.connect(_on_died)
 		respawned.connect(_on_respawned)
@@ -1150,9 +1157,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_shoulder = -_shoulder
 	elif event.is_action_pressed("interact"):
 		if not _interact():
-			# E always tries the thing under the crosshair first. Empty space
-			# switches back to ability mode by putting the weapon away.
-			holster()
+			# Tilde map: E renders the patch city from the live generator.
+			# Empty space with the map down still holsters.
+			if not _try_found_city_live():
+				holster()
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_J:
+		if _try_place_baked_city():
+			get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("parry"):
 		request_parry()
 	elif event.is_action_pressed("waypoints"):
@@ -1163,6 +1175,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			_waypoints.visible = _waypoints_wanted
 		if _coordinates != null:
 			_coordinates.visible = _coordinates_wanted
+		if _land_patches != null:
+			_land_patches.set_overlay_enabled(_waypoints_wanted)
+		if _minimap != null:
+			var look := -global_transform.basis.z
+			if camera != null:
+				look = -camera.global_transform.basis.z
+			_minimap.refresh(
+				global_position,
+				look,
+				_planet_below(),
+				_waypoints_wanted and not _menu_open)
 	elif event.is_action_pressed("inventory"):
 		_open_game_menu(GameMenu.Tab.HERO)
 	elif event.is_action_pressed("pause"):
@@ -1279,9 +1302,12 @@ func _interact_target() -> Node:
 	var from := camera.global_position
 	var query := PhysicsRayQueryParameters3D.create(
 		from, from - camera.global_basis.z * (REACH + camera_arm.spring_length))
-	query.exclude = [get_rid()]
+	query.exclude = DamageHit.rid_list(get_rid())
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
-	return _interactable(hit.get("collider") as Node)
+	var collider: Variant = hit.get("collider")
+	if not is_instance_valid(collider):
+		return null
+	return _interactable(collider as Node)
 
 
 ## The nearest thing at or above [param collider] that can be used.
@@ -1328,6 +1354,7 @@ func _open_game_menu(tab: GameMenu.Tab) -> void:
 	menu.show_tab(tab)
 	menu.closed.connect(_on_game_menu_closed)
 	menu.leave_requested.connect(_on_leave_requested)
+	menu.respawn_requested.connect(_on_city_respawn_requested)
 	open_menu()
 	hud.add_child(menu)
 	# The world decides what being in a menu costs: a real stop in single player, a
@@ -1335,46 +1362,6 @@ func _open_game_menu(tab: GameMenu.Tab) -> void:
 	var world := NetworkManager.active_world as GameWorld
 	if world != null:
 		world.set_local_pause(true)
-
-
-## Opened by using a [ColonyShip]. On this player's HUD rather than in the world,
-## and costing the same as any other menu: the mouse, the crosshair and — alone —
-## the simulation, exactly as [method _open_game_menu] does.
-##
-## The panel is given a way to read the colony and a way to ask for settlers, and
-## is told nothing else. Both close over the world this body is in rather than
-## whichever one is current, so a panel left open across a session change reports
-## nothing instead of reporting somebody else's town.
-func open_city_menu(site: StringName) -> void:
-	if _menu_open or is_instance_valid(_city_menu):
-		return
-	var world := DamageHit.game_world_of(self)
-	if world == null:
-		return
-	var menu := CityMenu.new()
-	menu.configure(func() -> Dictionary:
-		return world.colony_report(site) if is_instance_valid(world) else {})
-	menu.release_settlers_requested.connect(func() -> void:
-		if is_instance_valid(world):
-			world.request_release_settlers(peer_id, site))
-	menu.closed.connect(_on_city_menu_closed)
-	_city_menu = menu
-	open_menu()
-	hud.add_child(menu)
-	world.set_local_pause(true)
-
-
-func _on_city_menu_closed() -> void:
-	_city_menu = null
-	# Dying at the ship leaves the death screen behind the panel, which owns the
-	# mouse from here rather than the world doing.
-	if is_instance_valid(_death_screen):
-		open_menu()
-	else:
-		close_menu()
-	var world := NetworkManager.active_world as GameWorld
-	if world != null:
-		world.set_local_pause(false)
 
 
 func _on_game_menu_closed() -> void:
@@ -1433,6 +1420,18 @@ func _on_leave_requested() -> void:
 	var world := NetworkManager.active_world as GameWorld
 	if world != null:
 		world.leave_session()
+
+
+func _on_city_respawn_requested() -> void:
+	var world := DamageHit.game_world_of(self)
+	if world == null:
+		world = NetworkManager.active_world as GameWorld
+	if world == null:
+		return
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		world.request_city_respawn.rpc_id(1)
+	else:
+		world.request_city_respawn()
 
 
 ## Sparse slot/"body" → HTML colour, as CharacterDB stores them, for a menu that
@@ -1510,6 +1509,10 @@ func open_menu() -> void:
 		_waypoints.visible = false
 	if _coordinates != null:
 		_coordinates.visible = false
+	if _minimap != null:
+		_minimap.visible = false
+	if _land_patches != null:
+		_land_patches.set_overlay_enabled(false)
 	if _combat_hud != null:
 		_combat_hud.set_menu_open(true)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -1524,6 +1527,8 @@ func close_menu() -> void:
 	# Back to what it was, not to on: the menu is not a reason to undo a toggle.
 	if _coordinates != null:
 		_coordinates.visible = _coordinates_wanted
+	if _land_patches != null:
+		_land_patches.set_overlay_enabled(_waypoints_wanted)
 	if _combat_hud != null:
 		_combat_hud.set_menu_open(false)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -3147,6 +3152,24 @@ func combat_damage_dealt(target: Node, amount: float, hit: DamageHit) -> void:
 		_apply_outgoing_feedback(_feedback_sequence, event.to_wire())
 
 
+## Buildings are simulated on every peer, like flora, so the number is local
+## presentation rather than a host-replicated combat event.
+func building_damage_dealt(target: Node, amount: float, hit: DamageHit) -> void:
+	if amount <= 0.0 or _combat_feedback == null:
+		return
+	var at := hit.centre() if hit != null else Vector3.ZERO
+	if target != null and target.has_method(&"nearest_hit_point") and hit != null:
+		var pointed: Variant = target.call(&"nearest_hit_point", hit.centre())
+		if pointed is Vector3 and (pointed as Vector3).is_finite():
+			at = pointed
+	elif target != null and target.has_method(&"combat_position"):
+		var pointed: Variant = target.call(&"combat_position")
+		if pointed is Vector3 and (pointed as Vector3).is_finite():
+			at = pointed
+	var merge := str(target.get_instance_id()) if target != null else "building"
+	_combat_feedback.outgoing_damage(amount, at, 0, false, true, merge)
+
+
 ## Returns whether a real ability was dispatched. Empty or invalid slots are a
 ## safe no-op until ability definitions are introduced.
 func activate_ability(index: int) -> bool:
@@ -3539,6 +3562,12 @@ func _catch_ground() -> bool:
 		return false
 	var out := local.normalized()
 	var floor_radius := planet.shape.radius + planet.shape.elevation(out, spacing)
+	# Intact pavement is the floor the body can see. Using the planet field
+	# here would treat a raised deck as air, then later push a clipped stride
+	# *into* the hillside the slab was overlapping.
+	var pad_radius := PatchCity.deck_radius(out, get_tree())
+	if not is_nan(pad_radius):
+		floor_radius = maxf(floor_radius, pad_radius)
 	_ground_radius = floor_radius
 	var under := floor_radius - local.length()
 	# A crossing has already been narrowed down to the surface it crossed, so
@@ -3650,6 +3679,64 @@ func _planet_below() -> Planet:
 			_planet = sibling as Planet
 			return _planet
 	return null
+
+
+func _find_land_patches() -> LandPatchOverlay:
+	if is_instance_valid(_land_patches):
+		return _land_patches
+	var planet := _planet_below()
+	if planet != null:
+		var named := planet.get_node_or_null("LandPatches") as LandPatchOverlay
+		if named != null:
+			_land_patches = named
+			return named
+	var grouped := get_tree().get_first_node_in_group(LandPatchOverlay.GROUP) \
+			as LandPatchOverlay
+	if grouped != null:
+		_land_patches = grouped
+	return grouped
+
+
+func _aimed_patch_id() -> int:
+	if not _waypoints_wanted:
+		return -1
+	var overlay := _find_land_patches()
+	if overlay == null or not overlay.visible:
+		return -1
+	var planet := _planet_below()
+	if planet == null or planet.shape == null:
+		return -1
+	aim_ray.force_raycast_update()
+	if not aim_ray.is_colliding():
+		return -1
+	var local := planet.to_local(aim_ray.get_collision_point())
+	if local.length_squared() < 1.0:
+		return -1
+	return overlay.partition.owner_at(local.normalized())
+
+
+func _try_found_city_live() -> bool:
+	if not _waypoints_wanted:
+		return false
+	var overlay := _find_land_patches()
+	if overlay == null:
+		return false
+	var patch_id := _aimed_patch_id()
+	if patch_id < 0:
+		return false
+	return overlay.render_live_city(patch_id)
+
+
+func _try_place_baked_city() -> bool:
+	if not _waypoints_wanted:
+		return false
+	var overlay := _find_land_patches()
+	if overlay == null:
+		return false
+	var patch_id := _aimed_patch_id()
+	if patch_id < 0:
+		return false
+	return overlay.place_baked_city(patch_id)
 
 
 ## move_and_slide plus a stair step. Without it a capsule stops dead against any
@@ -4495,7 +4582,7 @@ func _ability_grapple_target_valid(target: Node3D, reach: float,
 	if miss > target_radius + GRAPPLE_AIM_PADDING:
 		return false
 	var query := PhysicsRayQueryParameters3D.create(from, target_at)
-	query.exclude = [get_rid()]
+	query.exclude = DamageHit.rid_list(get_rid())
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
 		return true
@@ -4786,7 +4873,7 @@ func _ability_lasso_target_valid(target: Node3D,
 	if miss > bounds + LASSO_AIM_PADDING:
 		return false
 	var query := PhysicsRayQueryParameters3D.create(from, target_at, 1)
-	query.exclude = [get_rid()]
+	query.exclude = DamageHit.rid_list(get_rid())
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
 	if hit.is_empty():
 		return true
@@ -4994,7 +5081,7 @@ func _ability_wall_space_clear(at: Transform3D,
 	query.transform = at
 	query.collision_mask = 1
 	query.collide_with_areas = false
-	query.exclude = [get_rid()]
+	query.exclude = DamageHit.rid_list(get_rid())
 	return get_world_3d().direct_space_state \
 		.intersect_shape(query, 1).is_empty()
 
@@ -5205,12 +5292,18 @@ func _meteor_move(delta: float) -> void:
 		velocity = _meteor_along * _meteor_speed
 	var carried := velocity
 	var was := global_position
+	var fist_was := _meteor_fist
 	move_and_slide()
 	_meteor_travelled += global_position.distance_to(was)
 	var flora := _resolve_flora_contacts(carried)
 	var handled: Dictionary = flora["handled"]
 	_sweep_fist(delta)
-	var contact := _meteor_contact(handled)
+	var blocked := _meteor_obstruction(was, fist_was)
+	var slid := _meteor_contact(handled)
+	var contact := _prefer_building_contact(blocked, slid)
+	if not contact.is_empty() and _collider_is_building(contact.get("collider")):
+		_land_meteor_on_building(contact, carried.length())
+		return
 	# Before the guard, which plants the body on the surface and takes the
 	# inward speed off it. That speed is what the punch arrived with and what
 	# the size of the hole is worked out from, so it has to be read first.
@@ -5306,8 +5399,132 @@ func _meteor_contact(handled: Dictionary) -> Dictionary:
 			continue
 		if _impact_was_handled(hit, handled):
 			continue
-		return {"at": hit.get_position()}
+		return {
+			"at": hit.get_position(),
+			"normal": hit.get_normal(),
+			"collider": hit.get_collider(),
+		}
 	return {}
+
+
+## Swept test so a punch at flight speed cannot tunnel through a tower the
+## same way it used to tunnel through a hillside. Slide contacts are still
+## consulted; this is the backup that notices a face between two samples.
+func _meteor_obstruction(from: Vector3, fist_from: Vector3) -> Dictionary:
+	var space := get_world_3d().direct_space_state
+	var exclude := DamageHit.rid_list(get_rid())
+	var hits: Array[Dictionary] = []
+	var fist := fist_point()
+	hits.append(_meteor_ray(space, from, global_position, exclude))
+	hits.append(_meteor_ray(space, fist_from, fist, exclude))
+	var best: Dictionary = {}
+	var nearest := 1.0e9
+	for hit in hits:
+		if hit.is_empty():
+			continue
+		var at: Vector3 = hit.get("at", Vector3.ZERO)
+		var away := from.distance_squared_to(at)
+		if away < nearest:
+			nearest = away
+			best = hit
+	return best
+
+
+func _meteor_ray(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector3,
+		exclude: Array[RID]) -> Dictionary:
+	if from.distance_squared_to(to) < 0.0001:
+		return {}
+	var skipped := DamageHit.rid_list()
+	for rid in exclude:
+		skipped.append(rid)
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.hit_from_inside = true
+	query.hit_back_faces = true
+	query.collision_mask = collision_mask
+	for _step in 6:
+		query.exclude = skipped
+		var hit := space.intersect_ray(query)
+		if hit.is_empty():
+			return {}
+		var collider = hit.get("collider")
+		if not (collider is StaticBody3D):
+			return {}
+		if _collider_is_building(collider):
+			return {
+				"at": hit.get("position"),
+				"normal": hit.get("normal", -_meteor_along),
+				"collider": collider,
+			}
+		if hit.get("normal", Vector3.UP).dot(_meteor_along) > -METEOR_CONTACT_FACING:
+			if collider is CollisionObject3D:
+				skipped.append((collider as CollisionObject3D).get_rid())
+				continue
+			return {}
+		return {
+			"at": hit.get("position"),
+			"normal": hit.get("normal", -_meteor_along),
+			"collider": collider,
+		}
+	return {}
+
+
+func _prefer_building_contact(a: Dictionary, b: Dictionary) -> Dictionary:
+	if _collider_is_building(a.get("collider")):
+		return a
+	if _collider_is_building(b.get("collider")):
+		return b
+	if not a.is_empty():
+		return a
+	return b
+
+
+func _collider_is_building(collider: Variant) -> bool:
+	if collider == null:
+		return false
+	if CityBuilding.from_collider(collider) != null:
+		return true
+	var node := collider as Node
+	while node != null:
+		if node is StaticBody3D and String(node.name) == "CityBuildingsBody":
+			return true
+		node = node.get_parent()
+	return false
+
+
+## Punch met a building rather than the planet: damage the lot at the contact
+## and stop there. Digging a crater along the radial would teleport the body
+## through the tower onto the ground beneath it.
+func _land_meteor_on_building(contact: Dictionary, arrival: float) -> void:
+	var at: Vector3 = contact.get("at", global_position)
+	var normal: Vector3 = contact.get("normal", -_meteor_along)
+	if not at.is_finite():
+		at = global_position
+	if normal.length_squared() < 0.001 or not normal.is_finite():
+		normal = -_meteor_along
+	normal = normal.normalized()
+	var force := _impact_scale(arrival)
+	var blow := DamageHit.impact(at,
+		maxf(float(_meteor_stats.get("radius", METEOR_FIST_RADIUS)) * 1.6, 2.4),
+		float(_meteor_stats.get("impact", 0.0)) * force)
+	blow.ability_id = "meteor_punch"
+	blow.affects_flora = false
+	deal_damage(blow)
+	play_meteor_impact_dust(at, normal, METEOR_FIST_RADIUS * force, force)
+	global_position = at + normal * 0.65
+	_swept_from = global_position
+	var bounce := velocity.bounce(normal)
+	velocity = bounce.limit_length(walk_speed * 2.4) + normal * 6.0
+	_meteor_falling = false
+	_meteor_stats = {}
+	_flight_velocity = Vector3.ZERO
+	floor_snap_length = _floor_snap
+	_land_left = 0.0
+	_crater_left = 0.0
+	if _meteor_flew:
+		_flight_velocity = velocity
+		_apply_stance(Stance.FLY)
+	else:
+		_apply_stance(Stance.STAND)
 
 
 ## The end of the punch: a crater, a spreading blow, and the planted pose.
@@ -5436,6 +5653,9 @@ func _settle_into_crater(delta: float) -> void:
 		return
 	var planet := _planet_below()
 	var out := planet.to_local(global_position).normalized()
+	if PatchCity.deck_blocks(out, get_tree()):
+		_crater_left = 0.0
+		return
 	global_position = planet.to_global(out * floor_radius)
 	# The ground guard reads this as the place the body set off from and rewinds
 	# to where it crossed the surface. Being planted is not a move it made, and
@@ -6415,7 +6635,7 @@ func _dust_ground_point() -> Vector3:
 	if is_inside_tree():
 		var query := PhysicsRayQueryParameters3D.create(
 			global_position + up * 0.45, global_position - up * 2.5)
-		query.exclude = [get_rid()]
+		query.exclude = DamageHit.rid_list(get_rid())
 		query.collision_mask = collision_mask
 		query.collide_with_areas = false
 		var hit := get_world_3d().direct_space_state.intersect_ray(query)
@@ -6468,6 +6688,16 @@ func _update_hud(delta: float) -> void:
 			velocity.length() if _stance == Stance.FLY else _horizontal_speed()
 		)
 		_coordinates.refresh(global_position, _planet_below(), delta)
+	if _minimap != null:
+		var look := -global_transform.basis.z
+		if camera != null:
+			look = -camera.global_transform.basis.z
+		_minimap.refresh(
+			global_position,
+			look,
+			_planet_below(),
+			_waypoints_wanted and not _menu_open
+		)
 	if _combat_hud != null:
 		_combat_hud.refresh(delta)
 	if _weapon_bar != null:
@@ -6475,9 +6705,21 @@ func _update_hud(delta: float) -> void:
 		_weapon_bar.show_cell("cell  %d / %d" % [_charge(), cell] if cell > 0 else "")
 	if not _menu_open:
 		var target := _interact_target()
-		prompt_plate.visible = target != null
 		if target != null:
+			prompt_plate.visible = true
 			interact_prompt.text = "E    %s" % target.call("interact_prompt")
+		else:
+			var overlay := _find_land_patches()
+			var patch_id := _aimed_patch_id()
+			if overlay != null and patch_id >= 0 \
+					and patch_id < overlay.partition.patches.size():
+				var patch := overlay.partition.patches[patch_id]
+				prompt_plate.visible = true
+				interact_prompt.text = "E    Generate %s" % patch.name
+				if overlay.has_baked_city(patch_id):
+					interact_prompt.text += "    J    Place baked"
+			else:
+				prompt_plate.visible = false
 
 
 func _hud_motion_state() -> String:
@@ -7052,7 +7294,8 @@ func _apply_outgoing_feedback(event_sequence: int,
 		return
 	var event := DamageNumberEvent.from_wire(wire)
 	_combat_feedback.outgoing_damage(
-		event.amount, event.world_position, event.target_peer, event.critical)
+		event.amount, event.world_position, event.target_peer, event.critical,
+		event.structure, event.merge_key)
 
 
 @rpc("authority", "call_local", "reliable")

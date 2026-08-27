@@ -1,0 +1,87 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/prism_fin_dolphin.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/prism_fin_dolphin.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/prism_fin_dolphin_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "prism_fin_dolphin"
+display_name = "Prism-Fin Dolphin"
+enabled = true
+disposition = 0
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Silver-blue flank streaks, cream belly blaze, teal side-stripe, indigo flukes, gold dorsal marks, and a pink melon glow"
+height = 0.58
+height_variation = 0.08
+variant_tint_a = Color(0.88, 0.98, 1.0, 1.0)
+variant_tint_b = Color(1.0, 0.92, 0.96, 1.0)
+saturation = 1.32
+brightness = 1.08
+biome_tint_strength = 0.1
+night_emission_color = Color(0.9, 0.72, 1.0, 1.0)
+night_emission_energy = 1.7
+night_emission_albedo = 0.48
+night_pulse_amount = 0.12
+night_pulse_speed = 0.22
+local_light_color = Color(0.7, 0.82, 1.0, 1.0)
+local_light_energy = 1.05
+local_light_range = 7.0
+local_light_height_share = 0.42
+collision_radius_share = 0.48
+collision_height_share = 0.7
+combat_radius_share = 0.52
+ground_layer = 1
+minimum_ground_claim = 0.03
+above_water = 1.5
+below = 180.0
+minimum_arid = 0.0
+maximum_arid = 0.7
+minimum_frost = 0.0
+maximum_frost = 0.62
+max_slope = 18.0
+steady_over = 2.4
+steady_within = 1.0
+global_population = false
+cell_size = 96.0
+spawn_chance = 0.1
+pack_min = 2
+pack_max = 3
+pack_radius = 6.5
+maximum_instances = 6
+spawn_within = 200.0
+despawn_beyond = 268.0
+random_seed = 20268202
+colony_count = 2
+colony_near = 28.0
+colony_far = 64.0
+health = 70.0
+health_per_metre = 14.0
+toughness = 0
+respawn_delay = 18.0
+walk_speed = 2.4
+run_speed = 6.4
+move_acceleration = 14.0
+turn_speed = 5.5
+wander_radius = 22.0
+wander_pause = 1.8
+notice_range = 16.0
+flee_range = 8.0
+physics_within = 48.0
+provoked_seconds = 6.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 1.1
+clip_blend = 0.18
+attack_damage = 9.0
+attack_range = 0.7
+attack_radius = 0.5
+attack_windup = 0.36
+attack_cooldown = 1.4
+attack_knockback = 4.2

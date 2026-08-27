@@ -15,6 +15,8 @@ put runtime resources under `source/` or `work/`; both are hidden from Godot by
   `runtime/environment/` contain directly loaded models and character textures.
 - `runtime/biomes/models/` and `runtime/biomes/paint/` contain the model/PNG
   pairs used by `PlantSpecies`.
+- `runtime/cities/models/` and `runtime/cities/paint/` contain authored building
+  GLBs and ten facade paints each. These are not wired into `PatchCity` yet.
 - `runtime/biomes/manifests/` records provenance, authored size, triangle
   budgets, collision hints, color-paint paths and paint styles.
 - `runtime/vat/` keeps each VAT mesh, EXR and JSON bundle together.
@@ -45,6 +47,10 @@ $blender = "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
 & $blender --background --factory-startup --python assets/source/blender/build_flower_tree.py
 & $blender --background --factory-startup --python assets/source/blender/build_biome_catalog.py
 
+# Rigged land fauna (skin-tree creatures + catalogue)
+& $blender --background --factory-startup --python assets/source/blender/build_fauna_creatures.py
+& $blender --background --factory-startup --python assets/source/build_fauna_catalog.py
+
 # MeshMaker processing
 & $blender --background --factory-startup --python assets/source/blender/build_landing.py
 & $blender --background --factory-startup --python assets/source/blender/build_reef_assets.py
@@ -53,6 +59,15 @@ $blender = "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
 # Terrain texture arrays and title art
 & $blender --background --factory-startup --python assets/source/blender/build_ground_textures.py
 & $blender --background --factory-startup --python assets/source/blender/build_title_art.py
+
+# Authored city buildings (GLB + ten night-window paints each)
+& $blender --background --factory-startup --python assets/source/blender/build_city_buildings.py
+
+# Walk-in civic specials (interior + exterior, then merged into buildings.json)
+& $blender --background --factory-startup --python assets/source/blender/build_city_specials.py
+
+# Five colour paints for each old procedural lot mass (rect, gable, taper…)
+& $blender --background --factory-startup --python assets/source/blender/build_city_variants.py
 ```
 
 The catalogue builder can also run with a normal Python interpreter because it

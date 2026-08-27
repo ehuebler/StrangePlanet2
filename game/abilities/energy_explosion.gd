@@ -31,6 +31,10 @@ var _tint := Color.WHITE
 var _life := LIFE
 var _massive := false
 var _nuclear := false
+## Nuclear bursts keep the flash, fireball and ground rings. The mushroom is
+## optional so a collapsing building can share that detonation without growing
+## a cloud.
+var _mushroom := true
 var _age := 0.0
 var _span := LIFE
 ## Where the burst was asked for. Held separately because [method Node.add_child]
@@ -58,7 +62,7 @@ var _smoke_materials: Array[ShaderMaterial] = []
 
 static func burst(world: Node, at: Vector3, radius: float,
 		tint: Color, duration := LIFE, massive := false,
-		nuclear := false) -> EnergyExplosion:
+		nuclear := false, mushroom := true) -> EnergyExplosion:
 	if world == null:
 		return null
 	var effect := EnergyExplosion.new()
@@ -67,6 +71,7 @@ static func burst(world: Node, at: Vector3, radius: float,
 	effect._life = clampf(duration, 0.12, 2.0)
 	effect._massive = massive
 	effect._nuclear = nuclear
+	effect._mushroom = mushroom
 	effect._span = effect._life * (SMOKE_SPAN if nuclear else 1.0)
 	effect._at = at
 	world.add_child(effect)
@@ -77,6 +82,12 @@ static func burst(world: Node, at: Vector3, radius: float,
 ## How long this burst stands in total, fireball and cloud together.
 func span() -> float:
 	return _span
+
+
+## Whether this nuclear burst grew the mushroom column. Building collapses keep
+## the fireball and ground rings and leave the cloud off.
+func has_cloud() -> bool:
+	return _nuclear and _mushroom
 
 
 func _ready() -> void:
@@ -107,7 +118,8 @@ func _ready() -> void:
 	add_child(_column)
 	_column.global_transform = Transform3D(_ground_frame(), _at)
 	_build_rings()
-	_build_cloud()
+	if _mushroom:
+		_build_cloud()
 	_bleach_local_view()
 
 
@@ -130,7 +142,8 @@ func _process(delta: float) -> void:
 		# share, because all of them outlast it.
 		_drive_flash()
 		_drive_rings()
-		_drive_cloud()
+		if _mushroom:
+			_drive_cloud()
 	if _age >= _span:
 		queue_free()
 
@@ -379,6 +392,8 @@ func _ground_frame() -> Basis:
 		var world_planet := world.planet()
 		if world_planet != null:
 			up = world_planet.up_at(_at)
+	elif _at.length_squared() > 0.01:
+		up = _at.normalized()
 	if up.length_squared() < 0.001:
 		up = Vector3.UP
 	up = up.normalized()

@@ -418,9 +418,8 @@ func _nausicaa_shots() -> void:
 
 
 ## Relocates the test target to the same dry patch selected for the camera
-## harness. The authored colony-ship spawn is intentionally coastal; stepping
-## around it for a framing shot can otherwise put a water-blocked ability in
-## the sea.
+## harness. Vacationer's Landing is intentionally coastal; stepping around it
+## for a framing shot can otherwise put a water-blocked ability in the sea.
 func _place_dummy(dummy: TrainingDummy, at: Vector3) -> void:
 	var direction := _planet.to_local(at).normalized()
 	var up := _planet.up_at(at)

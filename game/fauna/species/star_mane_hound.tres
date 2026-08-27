@@ -1,0 +1,87 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/star_mane_hound.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/star_mane_hound.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/star_mane_hound_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "star_mane_hound"
+display_name = "Star-Mane Hound"
+enabled = true
+disposition = 0
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Warm sand coat streaks, cream chest blaze, indigo ears and socks, gold mane marks, teal eye rings, and a pink tail tip"
+height = 0.8
+height_variation = 0.1
+variant_tint_a = Color(1.0, 0.94, 0.86, 1.0)
+variant_tint_b = Color(0.9, 0.96, 1.0, 1.0)
+saturation = 1.3
+brightness = 1.04
+biome_tint_strength = 0.12
+night_emission_color = Color(0.28, 0.9, 1.0, 1.0)
+night_emission_energy = 1.6
+night_emission_albedo = 0.46
+night_pulse_amount = 0.12
+night_pulse_speed = 0.22
+local_light_color = Color(0.34, 0.86, 1.0, 1.0)
+local_light_energy = 1.1
+local_light_range = 7.2
+local_light_height_share = 0.58
+collision_radius_share = 0.34
+collision_height_share = 0.8
+combat_radius_share = 0.46
+ground_layer = 1
+minimum_ground_claim = 0.04
+above_water = 4.0
+below = 360.0
+minimum_arid = 0.0
+maximum_arid = 0.82
+minimum_frost = 0.0
+maximum_frost = 0.74
+max_slope = 24.0
+steady_over = 2.0
+steady_within = 0.95
+global_population = false
+cell_size = 90.0
+spawn_chance = 0.16
+pack_min = 2
+pack_max = 3
+pack_radius = 6.0
+maximum_instances = 6
+spawn_within = 200.0
+despawn_beyond = 268.0
+random_seed = 20268210
+colony_count = 2
+colony_near = 22.0
+colony_far = 54.0
+health = 90.0
+health_per_metre = 16.0
+toughness = 0
+respawn_delay = 16.0
+walk_speed = 1.9
+run_speed = 7.0
+move_acceleration = 22.0
+turn_speed = 8.5
+wander_radius = 18.0
+wander_pause = 2.0
+notice_range = 15.0
+flee_range = 7.5
+physics_within = 45.0
+provoked_seconds = 8.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 1.12
+clip_blend = 0.14
+attack_damage = 10.0
+attack_range = 0.65
+attack_radius = 0.48
+attack_windup = 0.3
+attack_cooldown = 1.15
+attack_knockback = 4.8

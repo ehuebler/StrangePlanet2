@@ -27,6 +27,7 @@ enum Glyph {
 	CLOSE,
 	SETTINGS,
 	EXIT,
+	RESPAWN,
 	EMPTY_X,
 	STATS,
 }
@@ -119,6 +120,8 @@ func _draw() -> void:
 			_draw_settings()
 		Glyph.EXIT:
 			_draw_exit()
+		Glyph.RESPAWN:
+			_draw_respawn()
 		Glyph.EMPTY_X:
 			_draw_empty()
 		Glyph.STATS:
@@ -410,6 +413,22 @@ func _draw_exit() -> void:
 	]), _ink())
 
 
+func _draw_respawn() -> void:
+	_stroke(PackedVector2Array([
+		Vector2(50.0, 16.0),
+		Vector2(50.0, 60.0),
+	]), 6.5, _ink())
+	_polygon(PackedVector2Array([
+		Vector2(50.0, 72.0),
+		Vector2(32.0, 50.0),
+		Vector2(68.0, 50.0),
+	]), _ink())
+	_stroke(PackedVector2Array([
+		Vector2(20.0, 84.0),
+		Vector2(80.0, 84.0),
+	]), 6.0, _ink())
+
+
 func _draw_empty() -> void:
 	_outline_rect(Rect2(14.0, 14.0, 72.0, 72.0), 4.5, _ink())
 	_stroke(PackedVector2Array([
@@ -561,6 +580,8 @@ static func label_for(value: Glyph) -> String:
 			return "Settings"
 		Glyph.EXIT:
 			return "Exit"
+		Glyph.RESPAWN:
+			return "Respawn"
 		Glyph.EMPTY_X:
 			return "Empty"
 		Glyph.STATS:

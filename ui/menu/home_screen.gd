@@ -1378,6 +1378,11 @@ func _stock_editor(body_id: String) -> void:
 				and CharacterDB.apparel_fits(body_id, item_id) \
 				and not owned.has(item_id):
 			owned.append(item_id)
+	for item_id: String in CharacterDB.apparel_ids(body_id):
+		if not owned.has(item_id):
+			owned.append(item_id)
+	if owned.size() > _apparel_rail.size():
+		_apparel_rail = ItemContainer.new(owned.size())
 	for index in _apparel_rail.size():
 		_apparel_rail.set_item(index, owned[index] if index < owned.size() else "")
 	_stocking = false
@@ -1386,7 +1391,10 @@ func _stock_editor(body_id: String) -> void:
 ## Enough slots to show every apparel place at once. Empty tail slots disappear
 ## from the designer grid.
 func _catalogue_size() -> int:
-	return CharacterDB.BACKPACK_SLOTS + ItemDB.SLOT_ORDER.size()
+	var count := CharacterDB.BACKPACK_SLOTS + ItemDB.SLOT_ORDER.size()
+	for body_id: String in CharacterDB.body_ids():
+		count = maxi(count, CharacterDB.apparel_ids(body_id).size())
+	return count
 
 
 func _on_editor_changed() -> void:

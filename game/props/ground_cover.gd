@@ -59,7 +59,7 @@ extends SurfaceAnchor
 ## right. Grown with graphics/flora_range so a longer view does not turn into a
 ## quadratic pile of tiles.
 @export var tile_size := 34.0
-## Something the field should leave a gap around — the lander, a building — as a
+## Something the field should leave a gap around — a landmark, a building — as a
 ## node path, and how wide the gap is. Measured between the two anchors'
 ## [member SurfaceAnchor.direction] values rather than their placed positions,
 ## so it does not matter which readies first.
@@ -132,7 +132,7 @@ extends SurfaceAnchor
 ## spread]. A radius says where a field was allowed to grow; it does not say
 ## where the patch mask, terrain layer, slope, water, clearance and seeded
 ## candidate tests actually let it grow. Using the radius was what drew a violet
-## circle around the colony ship over bare ground.
+## circle around Vacationer's Landing over bare ground.
 ##
 ## Every luminous species in this field contributes automatically: a species is
 ## luminous when it has glowing patches or its material has night emission.
@@ -284,10 +284,10 @@ class Tile extends RefCounted:
 	## One MultiMesh per species, in the same order as [member species]. Empty
 	## until the tile has been applied; a species that grew nothing on this tile
 	## gets a null rather than an empty stand.
-	var stands: Array[MultiMeshInstance3D] = []
+	var stands: Array = []
 	## Optional nearby physics, aligned with [member stands]. Coral uses one
 	## StaticBody per tile/species and one cheap primitive per visible plant.
-	var collisions: Array[StaticBody3D] = []
+	var collisions: Array = []
 	## What the thread produced, dropped once it has been uploaded.
 	var buffers: Array[PackedFloat32Array] = []
 	## What each stand is currently drawing, aligned with [member stands] and
@@ -358,6 +358,8 @@ var _into_local := Transform3D.IDENTITY
 var _keep_outs := PackedVector3Array()
 var _keep_cos := 1.0
 var _keep_edge := 1.0
+var _block_centres := PackedVector3Array()
+var _block_coss := PackedFloat32Array()
 ## Patch mask per species, one field each so two species do not grow in and out
 ## of the same patches.
 var _patches: Array[FastNoiseLite] = []
@@ -578,10 +580,10 @@ func _replant() -> void:
 	_finished.clear()
 	for tile: Tile in _tiles.values():
 		for stand in tile.stands:
-			if stand != null:
+			if is_instance_valid(stand):
 				stand.queue_free()
 		for body in tile.collisions:
-			if body != null:
+			if is_instance_valid(body):
 				body.queue_free()
 	_tiles.clear()
 	_tile_list.clear()
@@ -632,8 +634,8 @@ func _exit_tree() -> void:
 func grown() -> int:
 	var standing := 0
 	for tile: Tile in _tiles.values():
-		for stand: MultiMeshInstance3D in tile.stands:
-			if stand != null:
+		for stand in tile.stands:
+			if is_instance_valid(stand):
 				standing += stand.multimesh.visible_instance_count
 	return standing
 
@@ -643,8 +645,8 @@ func grown() -> int:
 func planted() -> int:
 	var standing := 0
 	for tile: Tile in _tiles.values():
-		for stand: MultiMeshInstance3D in tile.stands:
-			if stand != null:
+		for stand in tile.stands:
+			if is_instance_valid(stand):
 				standing += stand.multimesh.instance_count
 	return standing
 
@@ -659,7 +661,7 @@ func grown_by_species() -> Dictionary:
 			standing[plant.resource_name] = 0
 	for tile: Tile in _tiles.values():
 		for index in tile.stands.size():
-			var stand := tile.stands[index] as MultiMeshInstance3D
+			var stand := _stand_of(tile, index)
 			var plant := species[index] as PlantSpecies
 			if stand == null or plant == null:
 				continue
@@ -694,7 +696,7 @@ func standing() -> Array[Transform3D]:
 	var found: Array[Transform3D] = []
 	for tile: Tile in _tiles.values():
 		for species_index in tile.stands.size():
-			var stand := tile.stands[species_index] as MultiMeshInstance3D
+			var stand := _stand_of(tile, species_index)
 			if stand == null:
 				continue
 			var buffer := _rows_of(tile, species_index, stand.multimesh)
@@ -715,7 +717,7 @@ func standing_by_species() -> Dictionary:
 			found[entry.resource_name] = []
 	for tile: Tile in _tiles.values():
 		for species_index in tile.stands.size():
-			var stand := tile.stands[species_index] as MultiMeshInstance3D
+			var stand := _stand_of(tile, species_index)
 			var plant := species[species_index] as PlantSpecies
 			if stand == null or plant == null:
 				continue
@@ -1022,10 +1024,10 @@ func _survey(eye: Vector3) -> void:
 		if tile.queued or eye.distance_to(tile.at) < _reach + _tile * 2.0:
 			continue
 		for stand in tile.stands:
-			if stand != null:
+			if is_instance_valid(stand):
 				stand.queue_free()
 		for body in tile.collisions:
-			if body != null:
+			if is_instance_valid(body):
 				body.queue_free()
 		_tiles.erase(cell)
 		_tile_list_stale = true
@@ -1197,6 +1199,26 @@ func _apply() -> void:
 		applied += 1
 
 
+func _stand_of(tile: Tile, index: int) -> MultiMeshInstance3D:
+	if tile == null or index < 0 or index >= tile.stands.size():
+		return null
+	var held: Variant = tile.stands[index]
+	if not is_instance_valid(held):
+		tile.stands[index] = null
+		return null
+	return held as MultiMeshInstance3D
+
+
+func _body_of(tile: Tile, index: int) -> StaticBody3D:
+	if tile == null or index < 0 or index >= tile.collisions.size():
+		return null
+	var held: Variant = tile.collisions[index]
+	if not is_instance_valid(held):
+		tile.collisions[index] = null
+		return null
+	return held as StaticBody3D
+
+
 ## Turns a grown tile's buffers into the nodes that draw them.
 func _raise(tile: Tile) -> void:
 	# A tile is raised again every time approaching it earns a finer sow, and
@@ -1205,7 +1227,8 @@ func _raise(tile: Tile) -> void:
 	# changes place — but the physics built from the old buffer knows nothing of
 	# the ones appended to it, so that is dropped and rebuilt by the next
 	# dressing pass.
-	for body in tile.collisions:
+	for index in tile.collisions.size():
+		var body := _body_of(tile, index)
 		if body != null:
 			body.queue_free()
 	tile.collisions.clear()
@@ -1222,7 +1245,7 @@ func _raise(tile: Tile) -> void:
 	for index in species.size():
 		var plant := species[index] as PlantSpecies
 		var buffer := tile.buffers[index] as PackedFloat32Array
-		var stand := tile.stands[index] as MultiMeshInstance3D
+		var stand := _stand_of(tile, index)
 		if plant == null or buffer.is_empty():
 			# A species can lose its footing on a re-sow the tile had it on
 			# before, so an empty buffer has to retire the stand rather than
@@ -1294,7 +1317,7 @@ func _dress(eye: Vector3) -> void:
 		# plant, and the nearest plant in the tile is nearer than its centre.
 		var nearest := maxf(tile.away - _tile * 0.71, 0.0)
 		for index in tile.stands.size():
-			var stand := tile.stands[index] as MultiMeshInstance3D
+			var stand := _stand_of(tile, index)
 			if stand == null:
 				continue
 			var plant := species[index] as PlantSpecies
@@ -1350,7 +1373,7 @@ func _dress(eye: Vector3) -> void:
 func _dress_collision(tile: Tile, index: int, plant: PlantSpecies,
 		stand: MultiMeshInstance3D, wanted: bool) -> void:
 	wanted = wanted and plant.collision_enabled
-	var current := tile.collisions[index] as StaticBody3D
+	var current := _body_of(tile, index)
 	if not wanted:
 		if current != null:
 			current.queue_free()
@@ -1457,7 +1480,7 @@ func resolve_flora_impact(collider: CollisionShape3D, impact_speed: float,
 	var tile := _tiles.get(cell) as Tile
 	if tile == null or species_index >= tile.stands.size():
 		return {}
-	var stand := tile.stands[species_index] as MultiMeshInstance3D
+	var stand := _stand_of(tile, species_index)
 	if stand == null or instance_index >= stand.multimesh.instance_count:
 		return {}
 
@@ -1619,7 +1642,7 @@ func apply_damage(hit: DamageHit) -> float:
 				continue
 			if plant.height < hit.min_plant_height:
 				continue
-			var stand := tile.stands[index] as MultiMeshInstance3D
+			var stand := _stand_of(tile, index)
 			if stand == null or not stand.visible:
 				continue
 			# Asked again with this species' own height in place of the field's
@@ -1856,7 +1879,7 @@ func _disable_collider(tile: Tile, species_index: int,
 		instance_index: int) -> void:
 	if species_index >= tile.collisions.size():
 		return
-	var body := tile.collisions[species_index] as StaticBody3D
+	var body := _body_of(tile, species_index)
 	if body == null:
 		return
 	for child in body.get_children():
@@ -1989,11 +2012,13 @@ func _retire(cell: Vector3i) -> void:
 	if tile == null:
 		return
 	for stand in tile.stands:
-		if stand != null:
+		if is_instance_valid(stand):
 			stand.queue_free()
 	for body in tile.collisions:
-		if body != null:
+		if is_instance_valid(body):
 			body.queue_free()
+	tile.stands.clear()
+	tile.collisions.clear()
 	_tiles.erase(cell)
 	_tile_list_stale = true
 	_dispatch_needed = true
@@ -2004,7 +2029,7 @@ func _hide_broken_now(cell: Vector3i, species_index: int,
 	var tile := _tiles.get(cell) as Tile
 	if tile == null or species_index >= tile.stands.size():
 		return
-	var stand := tile.stands[species_index] as MultiMeshInstance3D
+	var stand := _stand_of(tile, species_index)
 	if stand == null or instance_index >= stand.multimesh.instance_count:
 		return
 	var buffer := _rows_of(tile, species_index, stand.multimesh)
@@ -2649,11 +2674,58 @@ func _prepare_clearance() -> void:
 
 
 func _clearance_rejects(at: Vector3, random: float) -> bool:
+	if PatchCity.flora_covers(at):
+		return true
 	var cleared := 0.0
 	for keep_out in _keep_outs:
 		cleared = maxf(cleared,
 			smoothstep(_keep_edge, _keep_cos, at.dot(keep_out)))
 	return random > 1.0 - cleared
+
+
+func _city_blocks(at: Vector3) -> bool:
+	var toward := at.normalized()
+	for index in _block_centres.size():
+		if toward.dot(_block_centres[index]) >= _block_coss[index]:
+			return true
+	return false
+
+
+## Drops streamed tiles that overlap paved city ground so they sow again
+## without plants on the road or district pads.
+func replant_around(direction: Vector3, radius_m: float) -> void:
+	if _shape == null:
+		return
+	_since_survey = INF
+	_surveyed_at = Vector3.INF
+	if _tiles.is_empty():
+		return
+	var host := planet_host()
+	if host == null:
+		return
+	var at := host.to_global(
+		direction * (_radius + _shape.elevation(direction, _spacing)))
+	var reach := radius_m + _tile
+	var drop: Array[Vector3i] = []
+	for cell: Vector3i in _tiles.keys():
+		var tile := _tiles[cell] as Tile
+		if tile.at.distance_to(at) > reach:
+			continue
+		if _tile_hits_city(cell):
+			drop.append(cell)
+	for cell in drop:
+		_retire(cell)
+
+
+func _tile_hits_city(cell: Vector3i) -> bool:
+	for sample in [
+			Vector2(0.5, 0.5),
+			Vector2(0.2, 0.2), Vector2(0.8, 0.2),
+			Vector2(0.2, 0.8), Vector2(0.8, 0.8),
+	]:
+		if PatchCity.flora_covers(_direction_in_cell(cell, sample.x, sample.y)):
+			return true
+	return false
 
 
 # --- What the shaders are told ----------------------------------------------

@@ -234,8 +234,8 @@ func _test_fish_placement() -> void:
 	var least_clearance := INF
 	var nearest_eye := INF
 	var farthest_eye := 0.0
-	# Against the viewer's ground track rather than the colony ship: the ring the
-	# schools are sited in travels, and measuring from the ship would only be
+	# Against the viewer's ground track rather than Vacationer's Landing: the ring the
+	# schools are sited in travels, and measuring from the shore would only be
 	# asking whether the viewer had happened to stay next to it.
 	var eye := _planet.viewer_position().normalized()
 	for transform in points:

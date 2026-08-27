@@ -741,6 +741,16 @@ func elevation(direction: Vector3, spacing := 0.0) -> float:
 	return height - scars.depth_at(direction, spacing)
 
 
+## Height without the city flatten. District ramps have to meet the grass the
+## chunk actually draws; [method elevation] still reports the pad, which can sit
+## metres above that mesh and leave a collider in empty air.
+func natural_elevation(direction: Vector3, spacing := 0.0) -> float:
+	var height: float = _field.elevation(direction, spacing)
+	if not _native_volcano:
+		height = _volcano_height(direction, height, spacing)
+	return height - scars.depth_at(direction, spacing)
+
+
 ## The parts an elevation was made of: what the water is, how rough the ground is,
 ## how high it would have been dry. Surveys need this to tell a river from a lake,
 ## which cannot be done from the finished height alone. Built by the native field
@@ -865,6 +875,26 @@ func color_at(direction: Vector3, height: float, normal: Vector3) -> Color:
 			ground = cities[index].tint(direction, ground)
 			break
 	return scars.tint(direction, ground)
+
+
+## Biome colour without the city's zoning overlay.
+##
+## [method color_at] paints lawn and concrete across the town cap, which is
+## right for the pad itself and wrong for the slope that leaves it: a desert
+## ramp should still read as desert. Height and volcano and scars stay, so a
+## shore or a crater on that slope still looks like the country around it.
+func biome_color_at(direction: Vector3, spacing := 0.0) -> Color:
+	var up := direction.normalized()
+	var height: float = _field.elevation(up, spacing)
+	if not _native_volcano:
+		height = _volcano_height(up, height, spacing)
+	height -= scars.depth_at(up, spacing)
+	var ground: Color = _field.color_at(up, height, up)
+	if height <= 0.0:
+		return ground
+	if not _native_volcano:
+		ground = _volcano_color(up, ground)
+	return scars.tint(up, ground)
 
 
 ## Every tuning number the native field needs, by the name it has here.

@@ -528,7 +528,7 @@ func _dust_checks() -> void:
 ## because GeometryInstance3D defaults to casting until that dressing runs.
 func _cover_shadow_report() -> void:
 	var world := _planet.get_parent()
-	var ship := world.find_child("ColonyShip", true, false) as SurfaceAnchor
+	var ship := world.find_child("VacationersLanding", true, false) as SurfaceAnchor
 	if ship != null:
 		_stand_on(ship.direction)
 	await _wait(400)
@@ -2571,7 +2571,7 @@ func _waypoint_toggle_checks() -> void:
 	var expected := PackedStringArray([
 		"Arctic Ring Site",
 		"Bigfoot",
-		"Colony Ship",
+		"Vacationer's Landing",
 		"North Pole",
 		"Other Side",
 		"Ring Site I",
@@ -6504,7 +6504,7 @@ func _shimmer_checks(place: String) -> void:
 	var world := _planet.get_parent()
 	var cycle := world.find_child("CelestialCycle", true, false)
 	var sun := world.find_child("Sun", true, false) as DirectionalLight3D
-	var ship := world.find_child("ColonyShip", true, false) as Node3D
+	var ship := world.find_child("VacationersLanding", true, false) as Node3D
 	var material := Planet.SURFACE_MATERIAL
 	# Read rather than written down, so the rows that leave it alone put back
 	# whatever the project is actually shipping instead of a guess at it. The
@@ -6536,18 +6536,18 @@ func _shimmer_checks(place: String) -> void:
 	# and the only ground the flicker was reported on. So the body is moved to
 	# the greenest ground on the planet first.
 	#
-	# `colony` moves it to the ship instead, which is a different question with a
-	# different suspect list. Open grass anywhere on the planet is lit by one
-	# unobstructed light; the ship's shore is the only stretch of it standing in
-	# the shadow of a 26 m object, and it is the only place the flicker was
-	# reported. Comparing the two is most of the diagnosis.
+	# `colony` moves it to Vacationer's Landing instead, which is a different
+	# question with a different suspect list. Open grass anywhere on the planet
+	# is lit by one unobstructed light; the coastal shelf is a different biome
+	# mix and the only place the flicker was first reported. Comparing the two
+	# is most of the diagnosis.
 	if not place in ["grass", "far", "dunes"] and ship != null:
-		# Ten metres off the ship's own radial: clear of the legs, still well
-		# inside its shadow and inside the nearest shadow cascade, and roughly
-		# where the walking that was reported was being done. Stepped along a
-		# tangent and renormalized, because a direction is not a position and
-		# adding metres to its components would move it by however far the
-		# radius says rather than by ten.
+		# Ten metres off the landing radial: still on the coastal shelf, inside
+		# the nearest shadow cascade, and roughly where the walking that was
+		# reported was being done. Stepped along a tangent and renormalized,
+		# because a direction is not a position and adding metres to its
+		# components would move it by however far the radius says rather than
+		# by ten.
 		var at := (ship.get("direction") as Vector3).normalized()
 		var side := at.cross(Vector3.UP)
 		if side.length_squared() < 0.001:

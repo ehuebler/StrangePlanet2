@@ -97,6 +97,9 @@ func _animate(label: Label) -> Tween:
 ## One running total per target and direction: your damage to the boss and his
 ## to you are different numbers even when they land in the same instant.
 func _key(event: DamageNumberEvent) -> String:
+	if not event.merge_key.is_empty():
+		return "%s:%d:%d" % [
+			event.merge_key, event.source_peer, 1 if event.incoming else 0]
 	return "%d:%d:%d" % [
 		event.target_peer, event.source_peer, 1 if event.incoming else 0]
 
@@ -106,6 +109,6 @@ func _colour(event: DamageNumberEvent) -> Color:
 		return Color(0.55, 0.82, 1.0)
 	if event.critical:
 		return Color(1.0, 0.78, 0.2)
-	if event.incoming:
+	if event.incoming or event.structure:
 		return Color(1.0, 0.3, 0.25)
 	return Color(1.0, 0.95, 0.72)

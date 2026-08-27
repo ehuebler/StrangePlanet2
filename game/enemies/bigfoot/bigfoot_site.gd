@@ -9,7 +9,7 @@ const SITE_DIRECTION := Vector3(-0.959298134, 0.271219909, 0.078657165)
 ## Baked from dev/_bigfoot_site.gd against game/world.tscn's current
 ## PlanetShape and exact ForestGiants GroundCover species on 2026-08-11.
 const SURVEY_SUMMARY := (
-	"71.290 deg from ColonyShip; ForestGiants score 60.9%, habitat 98.8%, "
+	"71.290 deg from VacationersLanding; ForestGiants score 60.9%, habitat 98.8%, "
 	+ "patch 61.6%, dense samples 95.9%; elevation 28.4 m (23.3..31.5 m); "
 	+ "dry/usable 100%/100%; centre/average/p90/max slope "
 	+ "4.19/4.09/7.14/9.74 deg; 12 m footprint spread 1.80 m; "

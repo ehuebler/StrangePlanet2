@@ -24,7 +24,20 @@ const BODIES := {
 	},
 	"settler": {
 		"scene": "res://assets/runtime/characters/player_character_3.glb",
-		"apparel": ["c3_boots", "c3_tunic", "c3_hair", "c3_goggles"],
+		"apparel": [
+			"c3_boots", "c3_tunic", "c3_hair", "c3_goggles",
+			"c3_party_hat", "c3_bunny_ears", "c3_top_hat", "c3_crown", "c3_beanie",
+			"c3_cowboy_hat", "c3_propeller_cap", "c3_flower_crown", "c3_antlers",
+			"c3_halo", "c3_wizard_hat", "c3_sombrero", "c3_newsboy_cap", "c3_helmet",
+			"c3_pirate_hat", "c3_chef_toque", "c3_jester_hat", "c3_mushroom_cap",
+			"c3_antennae", "c3_visor", "c3_bow", "c3_horned_helm", "c3_fedora",
+			"c3_santa_hat", "c3_cat_ears",
+			"c3_beret", "c3_baseball_cap", "c3_sun_hat", "c3_hard_hat", "c3_ushanka",
+			"c3_turban", "c3_devil_horns", "c3_unicorn_horn", "c3_headphones",
+			"c3_tiara", "c3_bandana", "c3_rice_hat", "c3_laurel", "c3_nightcap",
+			"c3_deerstalker", "c3_frog_hood", "c3_rainbow", "c3_paper_crown",
+			"c3_space_helmet", "c3_cake_hat", "c3_leaf_wreath", "c3_mohawk",
+		],
 	},
 }
 

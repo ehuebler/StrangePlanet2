@@ -34,5 +34,8 @@ __pycache__/
 /bin/*.lib
 /bin/~*.TMP
 
-# Godot hot-reload copies of the checked-in GodotSteam runtime
-/addons/godotsteam/win64/~*.dll*
+# Baked patch cities — tens of GB, regenerable via dev/_bake_patch_cities.tscn
+/assets/runtime/cities/
+
+# Godot hot-reload copies of checked-in native binaries
+/bin/~*.dll*

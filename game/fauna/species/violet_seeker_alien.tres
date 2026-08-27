@@ -1,0 +1,86 @@
+[gd_resource type="Resource" script_class="FaunaSpecies" load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://game/fauna/fauna_species.gd" id="1_species"]
+[ext_resource type="PackedScene" path="res://assets/runtime/fauna/models/violet_seeker_alien.glb" id="2_model"]
+[ext_resource type="ShaderMaterial" path="res://game/fauna/materials/violet_seeker_alien.tres" id="3_material"]
+[ext_resource type="Texture2D" path="res://assets/runtime/biomes/paint/violet_seeker_alien_paint.png" id="4_paint"]
+
+[resource]
+script = ExtResource("1_species")
+model = ExtResource("2_model")
+material = ExtResource("3_material")
+paint_texture = ExtResource("4_paint")
+species_id = "violet_seeker_alien"
+display_name = "Violet Seeker"
+enabled = true
+disposition = 2
+move_set = 7
+locomotion = 0
+attack_style = 1
+paint_style = "Violet skin streaks, lavender belly blaze, teal eye discs, gold knuckle marks, indigo limb bands, and pink cranial membranes"
+height = 1.76
+height_variation = 0.08
+variant_tint_a = Color(0.92, 0.86, 1.0, 1.0)
+variant_tint_b = Color(0.86, 1.0, 1.0, 1.0)
+saturation = 1.38
+brightness = 1.05
+biome_tint_strength = 0.09
+night_emission_color = Color(0.28, 0.92, 1.0, 1.0)
+night_emission_energy = 2.0
+night_emission_albedo = 0.5
+night_pulse_amount = 0.15
+night_pulse_speed = 0.26
+local_light_color = Color(0.32, 0.88, 1.0, 1.0)
+local_light_energy = 1.35
+local_light_range = 9.0
+local_light_height_share = 0.78
+collision_radius_share = 0.24
+collision_height_share = 0.9
+combat_radius_share = 0.4
+ground_layer = 0
+minimum_ground_claim = 0.0
+above_water = 4.0
+below = 400.0
+minimum_arid = 0.0
+maximum_arid = 1.0
+minimum_frost = 0.0
+maximum_frost = 0.88
+max_slope = 26.0
+steady_over = 2.2
+steady_within = 1.0
+global_population = false
+cell_size = 110.0
+spawn_chance = 0.1
+pack_min = 1
+pack_max = 2
+pack_radius = 5.5
+maximum_instances = 4
+spawn_within = 210.0
+despawn_beyond = 278.0
+random_seed = 20268206
+colony_count = 1
+colony_near = 40.0
+colony_far = 72.0
+health = 140.0
+health_per_metre = 18.0
+toughness = 0
+respawn_delay = 20.0
+walk_speed = 2.2
+run_speed = 7.4
+move_acceleration = 22.0
+turn_speed = 8.0
+wander_radius = 18.0
+wander_pause = 1.5
+notice_range = 20.0
+flee_range = 0.0
+physics_within = 50.0
+skeletal_clips = true
+clip_attack = "Attack"
+clip_speed_scale = 1.1
+clip_blend = 0.14
+attack_damage = 16.0
+attack_range = 1.15
+attack_radius = 0.7
+attack_windup = 0.34
+attack_cooldown = 1.35
+attack_knockback = 7.0

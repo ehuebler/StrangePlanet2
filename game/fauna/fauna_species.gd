@@ -112,7 +112,7 @@ enum Move {
 @export_range(10.0, 2000.0) var spawn_within := 220.0
 @export_range(10.0, 3000.0) var despawn_beyond := 285.0
 @export var random_seed := 20260813
-## Guaranteed showcase population around the Colony Ship. It still requires dry,
+## Guaranteed showcase population around Vacationer's Landing. It still requires dry,
 ## walkable ground but deliberately ignores biome tint bands at this one site.
 @export_range(0, 32) var colony_count := 0
 @export_range(0.0, 500.0) var colony_near := 28.0

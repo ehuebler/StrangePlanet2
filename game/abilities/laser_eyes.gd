@@ -131,14 +131,16 @@ func _landing(from: Vector3) -> Dictionary:
 static func _surface(shooter: OnlinePlayer, from: Vector3,
 		to: Vector3) -> Dictionary:
 	var query := PhysicsRayQueryParameters3D.create(from, to)
-	var ignored: Array[RID] = [shooter.get_rid()]
+	var ignored := DamageHit.rid_list(shooter.get_rid())
 	var space := shooter.get_world_3d().direct_space_state
 	for _through in MAX_FLORA_PIERCED:
 		query.exclude = ignored
 		var hit := space.intersect_ray(query)
 		if hit.is_empty() or not _is_flora(hit):
 			return hit
-		ignored.append(hit["rid"])
+		var rid: RID = hit.get("rid", RID())
+		if rid.is_valid():
+			ignored.append(rid)
 	return {}
 
 

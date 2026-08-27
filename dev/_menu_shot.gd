@@ -165,18 +165,18 @@ func _report_home_controls() -> void:
 func _report_home_sun() -> void:
 	var cycle := _world.celestial_cycle
 	var sun := _world.find_child("Sun", true, false) as DirectionalLight3D
-	var ship := _world.find_child("ColonyShip", true, false) as Node3D
+	var landing := _world.find_child("VacationersLanding", true, false) as Node3D
 	var planet := _world.planet()
-	if cycle == null or sun == null or ship == null or planet == null:
-		push_error("_menu_shot: home sunset needs the cycle, sun, ship, and planet")
+	if cycle == null or sun == null or landing == null or planet == null:
+		push_error("_menu_shot: home sunset needs the cycle, sun, landing, and planet")
 		return
 	var expected := GameWorld.HOME_SUN_ADVANCE_SECONDS / cycle.period_seconds
-	var up := (ship.global_position - planet.global_position).normalized()
+	var up := (landing.global_position - planet.global_position).normalized()
 	var elevation := up.dot(sun.global_basis.z.normalized())
 	var phase := cycle.phase()
 	if phase < expected or phase > expected + 0.02 or absf(elevation) > 0.5:
 		push_error("_menu_shot: home sun did not open near the authored three-minute sunset")
-	print("_menu_shot: home sun phase=%.4f colony elevation=%+.3f" % [
+	print("_menu_shot: home sun phase=%.4f landing elevation=%+.3f" % [
 		phase, elevation])
 
 

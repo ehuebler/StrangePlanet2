@@ -1,6 +1,6 @@
 extends Node
 
-## Where the frame goes around the Colony Ship's fauna.
+## Where the frame goes around the fauna at Vacationer's Landing.
 ##
 ##     & $godot --path . dev/_fauna_perf_test.tscn
 ##
@@ -44,7 +44,7 @@ func _ready() -> void:
 	_planet = _world.find_child("Planet", true, false) as Planet
 	_spawner = _world.find_child(
 		"FaunaPopulations", true, false) as FaunaSpawner
-	_colony = _world.find_child("ColonyShip", true, false) as Node3D
+	_colony = _world.find_child("VacationersLanding", true, false) as Node3D
 	_player = get_tree().get_first_node_in_group(
 		"network_players") as OnlinePlayer
 	if _planet == null or _spawner == null or _colony == null \
@@ -55,7 +55,7 @@ func _ready() -> void:
 
 	_stand_at(_colony.global_position)
 	await _wait(SETTLE_FRAMES)
-	print("fauna_perf: %d fauna actors live at the Colony Ship"
+	print("fauna_perf: %d fauna actors live at Vacationer's Landing"
 		% _spawner.actor_count())
 
 	_price_cold_survey()

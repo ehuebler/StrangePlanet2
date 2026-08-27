@@ -395,7 +395,7 @@ func _build_apparel_page() -> VBoxContainer:
 	catalogue_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	catalogue_column.add_theme_constant_override(&"separation", 8)
 	var hint := _label(
-		"HOLD A TILE TO EQUIP OR UNEQUIP  //  NO WEAPONS IN THIS DESIGNER",
+		"HOLD A TILE TO EQUIP OR UNEQUIP  //  EVERY GARMENT FOR THIS BODY",
 		10,
 		GREEN_TEXT,
 		true

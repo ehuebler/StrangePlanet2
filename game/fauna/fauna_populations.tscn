@@ -5,10 +5,20 @@
 [ext_resource type="Resource" path="res://game/fauna/species/lumaquill_porcupine.tres" id="3_species"]
 [ext_resource type="Resource" path="res://game/fauna/species/prism_coil_slinky.tres" id="4_species"]
 [ext_resource type="Resource" path="res://game/fauna/species/aurora_fleece_alpaca.tres" id="5_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/tide_latch_crab.tres" id="6_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/prism_fin_dolphin.tres" id="7_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/glimmer_crest_bird.tres" id="8_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/lumen_hide_cow.tres" id="9_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/rift_hulk_monster.tres" id="10_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/violet_seeker_alien.tres" id="11_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/amber_stalker_alien.tres" id="12_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/glass_coil_octopus.tres" id="13_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/lantern_orb_spider.tres" id="14_species"]
+[ext_resource type="Resource" path="res://game/fauna/species/star_mane_hound.tres" id="15_species"]
 
 [node name="FaunaPopulations" type="Node3D"]
 script = ExtResource("1_spawner")
-species = Array[ExtResource("2_species_script")]([ExtResource("3_species"), ExtResource("4_species"), ExtResource("5_species")])
+species = Array[ExtResource("2_species_script")]([ExtResource("3_species"), ExtResource("4_species"), ExtResource("5_species"), ExtResource("6_species"), ExtResource("7_species"), ExtResource("8_species"), ExtResource("9_species"), ExtResource("10_species"), ExtResource("11_species"), ExtResource("12_species"), ExtResource("13_species"), ExtResource("14_species"), ExtResource("15_species")])
 survey_interval = 1.25
 initial_survey_delay = 1.5
 max_spawns_per_survey = 2

@@ -9,7 +9,7 @@ signal health_changed(current: float, maximum: float)
 @export var respawn_delay := 2.0
 ## Any upright site on the same planet. Offsets below are measured in that
 ## anchor's tangent plane, then settled back onto the procedural terrain.
-@export var anchor_path := NodePath("../ColonyShip")
+@export var anchor_path := NodePath("../VacationersLanding")
 @export var anchor_right_offset := 8.0
 @export var anchor_forward_offset := 0.0
 

@@ -239,7 +239,7 @@ func _floor_under(at: Vector3, planet: Planet, direction: Vector3,
 	# The player's own capsule is not the floor, and it is on the same layer the
 	# terrain is, so it has to be named rather than masked out.
 	if body != null:
-		query.exclude = [body.get_rid()]
+		query.exclude = DamageHit.rid_list(body.get_rid())
 	var hit := get_viewport().world_3d.direct_space_state.intersect_ray(query)
 	if hit.is_empty():
 		return "floor  NO COLLIDER   field %.1f m" % field
@@ -259,6 +259,8 @@ func _nearest_place(at: Vector3) -> String:
 	var closest: Landmark = null
 	var nearest := INF
 	for node in get_tree().get_nodes_in_group(Landmark.GROUP):
+		if not is_instance_valid(node):
+			continue
 		var landmark := node as Landmark
 		if landmark == null:
 			continue
