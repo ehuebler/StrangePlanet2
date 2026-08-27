@@ -498,8 +498,10 @@ func _expect_painted_city(city: PatchCity) -> void:
 	if glow_s != null and glow_l != null:
 		var warm := _as_color(glow_s.get_shader_parameter(&"fallback_glow"))
 		var cool := _as_color(glow_l.get_shader_parameter(&"fallback_glow"))
-		_expect(cool.b > warm.b,
-			"large windows glow a bit whiter than small ones")
+		var cool_sat := maxf(cool.r, maxf(cool.g, cool.b)) - minf(cool.r, minf(cool.g, cool.b))
+		var warm_sat := maxf(warm.r, maxf(warm.g, warm.b)) - minf(warm.r, minf(warm.g, warm.b))
+		_expect(cool_sat > warm_sat,
+			"large windows fall back to neon, not white office light")
 	var white_panes := 0
 	var neon_panes := 0
 	var neon_trim_faces := 0
@@ -532,8 +534,10 @@ func _expect_painted_city(city: PatchCity) -> void:
 				if absi(int(round(trim.a * 20.0)) - PatchCity.PAINT_NEON) == 0:
 					neon_trim_faces += 1
 				hull_index += hull_step
-	_expect(white_panes > 0, "skyscrapers still light white windows")
-	_expect(neon_panes > 0, "some skyscraper windows light neon colours")
+	_expect(white_panes * 2 < neon_panes,
+		"skyscraper windows are coloured, not white (%d white / %d neon)" % [
+			white_panes, neon_panes])
+	_expect(neon_panes > 0, "skyscraper windows light neon colours")
 	_expect(neon_trim_faces > 0, "skyscrapers carry neon trim bands")
 	var warm_house := 0
 	var house_seen := 0
@@ -1775,6 +1779,35 @@ func _expect_district_aprons(city: PatchCity, shape: PlanetShape) -> void:
 	var arrays := mesh.mesh.surface_get_arrays(0)
 	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 	_expect(verts.size() >= 48, "apron wraps the district rims (%d verts)" % verts.size())
+	var facing_out := 0
+	var facing_in := 0
+	var index_data: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var tri_count := index_data.size() / 3 if index_data.size() >= 3 else verts.size() / 3
+	var tri_step := maxi(1, int(tri_count / 80))
+	for tri in range(0, tri_count, tri_step):
+		var ia := 0
+		var ib := 0
+		var ic := 0
+		if index_data.size() >= 3:
+			ia = index_data[tri * 3]
+			ib = index_data[tri * 3 + 1]
+			ic = index_data[tri * 3 + 2]
+		else:
+			ia = tri * 3
+			ib = tri * 3 + 1
+			ic = tri * 3 + 2
+		if ic >= verts.size():
+			break
+		var a: Vector3 = verts[ia]
+		var b: Vector3 = verts[ib]
+		var c: Vector3 = verts[ic]
+		var mid := (a + b + c) * (1.0 / 3.0)
+		if (b - a).cross(c - a).dot(mid) >= 0.0:
+			facing_out += 1
+		else:
+			facing_in += 1
+	_expect(facing_out > 0 and facing_in > 0,
+		"apron is two-sided (%d out, %d in)" % [facing_out, facing_in])
 	var near_pad := 0
 	var near_ground := 0
 	var above_gap := 0

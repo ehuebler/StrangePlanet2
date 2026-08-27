@@ -158,13 +158,18 @@ const TYPE_TOWN_CENTER := 7
 const GROUND_TEXEL := 0.38
 const GROUND_TEX_MIN := 768
 const GROUND_TEX_MAX := 4096
-const LAMP_SPACING := 22.0
-const LAMP_KEEP := 9.5
+const LAMP_SPACING := 27.5
+const LAMP_KEEP := 11.9
 const LAMP_HEIGHT := 5.1
 const LAMP_LIGHTS := 32
 const LAMP_SEEK := 78.0
 const LAMP_HOLD := 1.6
-const LAMP_POOL_M := 13.0
+const LAMP_FADE := 5.5
+## Visual layer 3. Pooled street OmniLights skip this so hulls do not pop
+## when a light jumps to another post.
+const BUILDING_VISUAL_LAYER := 4
+const LAMP_LIGHT_MASK := 0xFFFFB
+const LAMP_POOL_M := 22.0
 const LAMP_MAP_MAX := 1024
 const MINIMAP_NEAR := 78.0
 const MINIMAP_FAR_ALT := 380.0
@@ -713,6 +718,9 @@ func _rebind_lamps() -> void:
 	for child in _lamps.get_children():
 		var light := child as OmniLight3D
 		if light != null:
+			light.light_specular = 0.0
+			light.shadow_enabled = false
+			light.light_cull_mask = LAMP_LIGHT_MASK
 			_lamp_lights.append(light)
 
 
@@ -732,14 +740,8 @@ func _refresh_baked_night_paint(shape: PlanetShape) -> void:
 			continue
 		if not building.has_method(&"refresh_facade"):
 			continue
-		var authored := false
-		var large := false
-		if building.has_method(&"uses_authored_design"):
-			authored = bool(building.call(&"uses_authored_design"))
-		if building.has_method(&"is_large"):
-			large = bool(building.call(&"is_large"))
-		if authored or large:
-			building.call(&"refresh_facade")
+		building.call(&"refresh_facade")
+	_bind_wall_lamp_maps()
 
 
 func _baked_night_paint_stale() -> bool:
@@ -779,7 +781,8 @@ func _baked_night_paint_stale() -> bool:
 				index += step
 		if seen >= 14:
 			break
-	return seen > 0 and (neon_trim == 0 or white_panes == 0 or colour_panes == 0)
+	return seen > 0 and (
+		neon_trim == 0 or colour_panes == 0 or white_panes > colour_panes)
 
 
 func _pack_tree() -> PackedScene:
@@ -1847,7 +1850,7 @@ func _emit_island_apron(st: SurfaceTool, shape: PlanetShape, island: PadIsland) 
 				var next := (index + 1) % n
 				if float(runs[index]) < 0.35 and float(runs[next]) < 0.35:
 					continue
-				_face_cols(
+				_face_cols_two_sided(
 					st, prev_top[index], prev_top[next], top_row[next], top_row[index],
 					prev_col[index], prev_col[next], col_row[next], col_row[index],
 					top_row[index])
@@ -1858,7 +1861,7 @@ func _emit_island_apron(st: SurfaceTool, shape: PlanetShape, island: PadIsland) 
 		var next := (index + 1) % n
 		if float(runs[index]) < 0.35 and float(runs[next]) < 0.35:
 			continue
-		_face_cols(
+		_face_cols_two_sided(
 			st, prev_top[index], prev_top[next], prev_bot[next], prev_bot[index],
 			prev_col[index], prev_col[next], prev_col[next], prev_col[index],
 			prev_top[index] - prev_bot[index])
@@ -3055,6 +3058,8 @@ func _assign_paint_styles() -> void:
 				row["paint_tint"] = small_tints[style]
 				row["paint_trim"] = Color(0.22, 0.14, 0.10)
 				_paint_variant_lot(row, rng)
+				if int(row.get("typology", 0)) >= TYPE_APARTMENT:
+					_paint_midrise_night(row, rng)
 	_ensure_sky_paint(rng)
 
 
@@ -3086,7 +3091,17 @@ func _paint_sky_lot(row: Dictionary, style: int, rng: RandomNumberGenerator) -> 
 	row["paint_neon"] = neons[pick]
 	row["paint_neon_alt"] = neons[(pick + 1 + rng.randi() % maxi(neons.size() - 1, 1)) % neons.size()]
 	row["night_trim"] = true
-	row["night_crown"] = rng.randf() < 0.52
+	row["night_crown"] = rng.randf() < 0.62
+
+
+func _paint_midrise_night(row: Dictionary, rng: RandomNumberGenerator) -> void:
+	var family := PAINT_SKY_DARK + rng.randi() % 4
+	var neons := _sky_paint_neons(family)
+	var pick := rng.randi() % neons.size()
+	row["paint_neon"] = neons[pick]
+	row["paint_neon_alt"] = neons[(pick + 1 + rng.randi() % maxi(neons.size() - 1, 1)) % neons.size()]
+	row["night_trim"] = rng.randf() < 0.58
+	row["night_crown"] = false
 
 
 func _ensure_sky_paint(rng: RandomNumberGenerator) -> void:
@@ -3717,6 +3732,7 @@ func _dress_buildings(shape: PlanetShape) -> void:
 	_paint_large = _make_paint_hook("CityPaintLarge", true)
 	_windows_small = _make_window_hook("CityWindowsSmall", false)
 	_windows_large = _make_window_hook("CityWindowsLarge", true)
+	_bind_wall_lamp_maps()
 	if is_instance_valid(_solid_buildings):
 		_solid_buildings.visible = false
 	if is_instance_valid(_solid_body):
@@ -3809,20 +3825,19 @@ func _dress_poly_facade(
 		var bays := clampi(int(round(run / pitch)), 1, 40)
 		var half := minf((win_w * 0.5) / run, 0.42)
 		var is_door := index == door_edge
-		if large:
-			if neon.a > 0.5:
-				var alt: Color = lot.get("paint_neon_alt", neon)
-				alt.a = neon.a
-				_emit_neon_trims(
-					hull, base_a, base_b, up_a, up_b, out3, lift, wall_h, run, neon, alt,
-					bool(lot.get("night_crown", false)))
-			else:
-				_emit_facade_span(
-					hull, base_a, base_b, up_a, up_b, out3,
-					0.5, lift + 0.0, 0.48, 0.52, trim, 0.03)
-				_emit_facade_span(
-					hull, base_a, base_b, up_a, up_b, out3,
-					0.5, lift + wall_h - 0.40, 0.48, 0.36, trim, 0.03)
+		if neon.a > 0.5:
+			var alt: Color = lot.get("paint_neon_alt", neon)
+			alt.a = neon.a
+			_emit_neon_trims(
+				hull, base_a, base_b, up_a, up_b, out3, lift, wall_h, run, neon, alt,
+				bool(lot.get("night_crown", false)))
+		elif large:
+			_emit_facade_span(
+				hull, base_a, base_b, up_a, up_b, out3,
+				0.5, lift + 0.0, 0.48, 0.52, trim, 0.03)
+			_emit_facade_span(
+				hull, base_a, base_b, up_a, up_b, out3,
+				0.5, lift + wall_h - 0.40, 0.48, 0.36, trim, 0.03)
 		if is_door:
 			_emit_facade_span(
 				hull, base_a, base_b, up_a, up_b, out3,
@@ -3842,7 +3857,8 @@ func _dress_poly_facade(
 
 
 func _lot_neon_trim(lot: Dictionary, large: bool) -> Color:
-	if not large:
+	var typology := int(lot.get("typology", 0))
+	if not large and typology < TYPE_APARTMENT:
 		return Color(0, 0, 0, 0)
 	if not bool(lot.get("night_crown", false)) and not bool(lot.get("night_trim", false)):
 		return Color(0, 0, 0, 0)
@@ -3869,17 +3885,17 @@ func _emit_neon_trims(
 	) -> void:
 	_emit_facade_span(
 		st, base_a, base_b, up_a, up_b, out3,
-		0.5, lift, 0.48, 0.22, neon, 0.06)
+		0.5, lift, 0.48, 0.28, neon, 0.08)
 	_emit_facade_span(
 		st, base_a, base_b, up_a, up_b, out3,
-		0.5, lift + wall_h - 0.22, 0.48, 0.22, neon, 0.06)
-	var band := 3.15 * 4.0
+		0.5, lift + wall_h - 0.28, 0.48, 0.28, neon, 0.08)
+	var band := 3.15 * 3.0
 	var y := lift + band
 	var use_alt := false
 	while y < lift + wall_h - 0.55:
 		_emit_facade_span(
 			st, base_a, base_b, up_a, up_b, out3,
-			0.5, y, 0.48, 0.11, alt if use_alt else neon, 0.055)
+			0.5, y, 0.48, 0.16, alt if use_alt else neon, 0.07)
 		use_alt = not use_alt
 		y += band
 	var vhalf := minf(0.09 / maxf(run, 0.2), 0.04)
@@ -3914,7 +3930,8 @@ func _lit_window_color(
 		_glass_col: Color
 	) -> Color:
 	var centre: Vector2 = lot.get("centre", Vector2.ZERO)
-	if not large:
+	var typology := int(lot.get("typology", 0))
+	if not large and typology < TYPE_APARTMENT:
 		# Houses and walk-ups: occupied rooms glow warm orange.
 		var house := _hash21(centre + Vector2(
 			float(story) * 2.11 + float(edge) * 0.37,
@@ -3927,19 +3944,21 @@ func _lit_window_color(
 	var roll := _hash21(centre + Vector2(
 		float(story) * 1.73 + float(edge) * 0.41,
 		float(bay) * 3.11))
-	if roll < 0.14:
+	if roll < 0.12:
 		return Color(0.10, 0.11, 0.13)
-	if roll < 0.68:
-		return Color(0.90, 0.94, 1.0)
-	if roll < 0.78:
-		return Color(1.0, 0.82, 0.56)
-	if roll < 0.90:
+	if roll < 0.22:
+		return Color(1.0, 0.58, 0.16)
+	if roll < 0.52:
 		var neon: Color = lot.get("paint_neon", Color(1.0, 0.18, 0.72))
 		neon.a = 1.0
 		return neon
-	var alt: Color = lot.get("paint_neon_alt", Color(0.18, 0.92, 1.0))
-	alt.a = 1.0
-	return alt
+	if roll < 0.78:
+		var alt: Color = lot.get("paint_neon_alt", Color(0.18, 0.92, 1.0))
+		alt.a = 1.0
+		return alt
+	var extra := _extra_neon_color(roll)
+	extra.a = 1.0
+	return extra
 
 
 func _extra_neon_color(roll: float) -> Color:
@@ -4144,7 +4163,7 @@ func _ensure_window_materials() -> void:
 		_window_large_mat.set_shader_parameter(&"night", 0.0)
 	_window_large_mat.shader = WINDOW_SHADER
 	_window_large_mat.set_shader_parameter(
-		&"fallback_glow", Color(0.88, 0.93, 1.0))
+		&"fallback_glow", Color(1.0, 0.28, 0.72))
 
 
 func _make_paint_hook(mesh_name: String, large: bool) -> MeshInstance3D:
@@ -4273,6 +4292,7 @@ func _solidify_buildings(shape: PlanetShape) -> void:
 	_solid_buildings = _commit_mesh(st, "CityBuildings", false)
 	if is_instance_valid(_solid_buildings):
 		_solid_buildings.sorting_offset = 0.0
+		_solid_buildings.layers = BUILDING_VISUAL_LAYER
 		_solid_body = _collide(_solid_buildings.mesh, "CityBuildingsBody")
 
 
@@ -4695,11 +4715,9 @@ func _bind_apron_material() -> void:
 	if not is_instance_valid(_apron):
 		_apron_mat = null
 		return
-	# The homemade apron shader re-graded the biome and skipped the ground
-	# photographs, so a desert ramp came out a flat darker (or lighter) card.
-	# Use the planet's surface so the bank is the same sand the eye is already
-	# standing on. Vertex normals stay planet-up so the slope is not painted
-	# as cliff rock.
+	# Planet ground photographs, not the homemade apron card. That shader
+	# culls back faces, so the mesh writes both windings; this only swaps
+	# the default StandardMaterial for the terrain look.
 	_apron_mat = SURFACE_MATERIAL.duplicate() as ShaderMaterial
 	_apron_mat.render_priority = 1
 	_apron.material_override = _apron_mat
@@ -4715,8 +4733,10 @@ func _bake_lamp_map() -> void:
 	var size := clampi(int(round(span_m / 1.15)), 256, LAMP_MAP_MAX)
 	var img := Image.create(size, size, false, Image.FORMAT_RGB8)
 	img.fill(Color.BLACK)
-	var radius_px := maxi(int(ceili(LAMP_POOL_M / span_m * float(size))), 3)
-	var warm := Color(1.0, 0.82, 0.52)
+	var radius_px := maxi(int(ceili(LAMP_POOL_M / span_m * float(size))), 4)
+	var inner := float(radius_px) * 0.42
+	var edge := 1.0 / (1.0 + (float(radius_px) / inner) * (float(radius_px) / inner))
+	var peak := 1.0 - edge
 	for uv in _lamp_uvs:
 		var cx := (uv.x - _ground_origin.x) / _ground_span.x * float(size)
 		var cy := (uv.y - _ground_origin.y) / _ground_span.y * float(size)
@@ -4724,20 +4744,18 @@ func _bake_lamp_map() -> void:
 		var x1 := clampi(int(ceil(cx)) + radius_px, 0, size - 1)
 		var y0 := clampi(int(floor(cy)) - radius_px, 0, size - 1)
 		var y1 := clampi(int(ceil(cy)) + radius_px, 0, size - 1)
-		var reach := float(radius_px)
 		for py in range(y0, y1 + 1):
 			for px in range(x0, x1 + 1):
 				var dx := float(px) + 0.5 - cx
 				var dy := float(py) + 0.5 - cy
-				var t := 1.0 - sqrt(dx * dx + dy * dy) / reach
-				if t <= 0.0:
+				var dist := sqrt(dx * dx + dy * dy)
+				if dist >= float(radius_px):
 					continue
-				var fall := t * t
+				var raw := 1.0 / (1.0 + (dist / inner) * (dist / inner))
+				var fall := (raw - edge) / maxf(peak, 0.001) * 0.38
 				var was := img.get_pixel(px, py)
-				img.set_pixel(px, py, Color(
-					maxf(was.r, warm.r * fall),
-					maxf(was.g, warm.g * fall),
-					maxf(was.b, warm.b * fall)))
+				var amount := minf(was.r + fall, 0.72)
+				img.set_pixel(px, py, Color(amount, amount, amount))
 	img.generate_mipmaps()
 	_lamp_map = ImageTexture.create_from_image(img)
 
@@ -4747,11 +4765,31 @@ func _bind_lamp_map(material: ShaderMaterial) -> void:
 		return
 	if _lamp_map == null:
 		_bake_lamp_map()
+	material.set_shader_parameter(&"map_span", _ground_span)
+	material.set_shader_parameter(&"map_origin", _ground_origin)
+	material.set_shader_parameter(&"city_east", _east)
+	material.set_shader_parameter(&"city_north", _north)
+	material.set_shader_parameter(&"city_radius", _radius)
 	if _lamp_map != null:
 		material.set_shader_parameter(&"lamp_map", _lamp_map)
 		material.set_shader_parameter(&"has_lamps", 1.0)
 	else:
 		material.set_shader_parameter(&"has_lamps", 0.0)
+
+
+func stamp_lamp_on_wall(material: ShaderMaterial) -> void:
+	_bind_lamp_map(material)
+
+
+func _bind_wall_lamp_maps() -> void:
+	_ensure_wall_materials()
+	_bind_lamp_map(_wall_small_mat)
+	_bind_lamp_map(_wall_large_mat)
+	for building in _buildings:
+		if building == null or not is_instance_valid(building):
+			continue
+		if building.has_method(&"wall_material"):
+			stamp_lamp_on_wall(building.call(&"wall_material") as ShaderMaterial)
 
 
 func _apply_city_night(night: float) -> void:
@@ -4931,10 +4969,12 @@ func _place_lamps(shape: PlanetShape) -> void:
 		var light := OmniLight3D.new()
 		light.light_color = Color(1.0, 0.86, 0.62)
 		light.light_energy = 0.0
-		light.omni_range = 28.0
-		light.omni_attenuation = 0.7
-		light.light_size = 0.45
+		light.omni_range = 30.0
+		light.omni_attenuation = 1.7
+		light.light_size = 0.85
+		light.light_specular = 0.0
 		light.shadow_enabled = false
+		light.light_cull_mask = LAMP_LIGHT_MASK
 		_lamps.add_child(light)
 		_lamp_lights.append(light)
 	if _ground_image != null:
@@ -4946,6 +4986,7 @@ func _place_lamps(shape: PlanetShape) -> void:
 			if paved != null:
 				_pavement_mat = paved
 				_bind_lamp_map(paved)
+	_bind_wall_lamp_maps()
 
 
 func _collect_lamp_posts() -> Array:
@@ -5042,14 +5083,14 @@ func _night_at(world: Vector3) -> float:
 	return 1.0 - smoothstep(-0.16, 0.12, up.dot(to_sun))
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if phase < PHASE_BUILT:
 		return
 	var origin := global_transform * (_up * _radius) if is_inside_tree() else _up * _radius
 	var night := _night_at(origin)
 	if _lamp_bulb_mat != null:
 		_lamp_bulb_mat.emission_energy_multiplier = night * 6.4
-		_retarget_lamp_lights(night)
+		_retarget_lamp_lights(night, delta)
 	_apply_city_night(night)
 	if phase >= PHASE_PAINTED:
 		if _window_small_mat != null:
@@ -5066,7 +5107,7 @@ func _process(_delta: float) -> void:
 				building.call(&"set_night", night)
 
 
-func _retarget_lamp_lights(night: float) -> void:
+func _retarget_lamp_lights(night: float, delta: float = 0.016) -> void:
 	if _lamp_lights.is_empty() or _lamp_spots.is_empty():
 		return
 	if _lamp_bind.size() != _lamp_lights.size():
@@ -5121,15 +5162,18 @@ func _retarget_lamp_lights(night: float) -> void:
 		_lamp_bind[slot] = pick
 		claimed[pick] = slot
 		next += 1
-	var energy := night * 5.6
+	var energy := night * 2.4
+	var step := maxf(delta, 0.0) * LAMP_FADE
 	for slot in _lamp_lights.size():
 		var light := _lamp_lights[slot]
 		var lamp_i := int(_lamp_bind[slot])
 		if lamp_i < 0:
-			light.light_energy = 0.0
+			light.light_energy = move_toward(light.light_energy, 0.0, step * 1.6)
 			continue
+		if light.position.distance_squared_to(_lamp_spots[lamp_i]) > 0.25:
+			light.light_energy = 0.0
 		light.position = _lamp_spots[lamp_i]
-		light.light_energy = energy
+		light.light_energy = move_toward(light.light_energy, energy, step)
 
 
 func _closer_lamp(p: Dictionary, q: Dictionary) -> bool:
@@ -6799,6 +6843,34 @@ func _paint_tri_uv(
 	st.set_normal(normal)
 	st.set_uv(uc)
 	st.add_vertex(c)
+
+
+func _face_cols_two_sided(
+		st: SurfaceTool,
+		a: Vector3,
+		b: Vector3,
+		c: Vector3,
+		d: Vector3,
+		ca: Color,
+		cb: Color,
+		cc: Color,
+		cd: Color,
+		outward: Vector3
+	) -> void:
+	# Planet ground uses `cull_back`. `_bind_apron_material` replaces the
+	# two-sided StandardMaterial, so the slope must exist as both windings.
+	# Keep the same planet-up normal on the back so the terrain shader still
+	# reads dirt, not cliff rock.
+	_face_cols(st, a, b, c, d, ca, cb, cc, cd, outward)
+	var aim := outward
+	if aim.length_squared() < 0.0001:
+		aim = a + b + c + d
+	if (b - a).cross(c - a).dot(aim) < 0.0:
+		_paint_tri_cols(st, a, c, d, ca, cc, cd, aim)
+		_paint_tri_cols(st, a, b, c, ca, cb, cc, aim)
+	else:
+		_paint_tri_cols(st, a, c, b, ca, cc, cb, aim)
+		_paint_tri_cols(st, a, d, c, ca, cd, cc, aim)
 
 
 func _face_cols(

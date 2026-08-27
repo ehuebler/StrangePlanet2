@@ -67,13 +67,14 @@ void fragment() {
 	if (has_lamps > 0.5) {
 		lamp = texture(lamp_map, city_uv).rgb;
 	}
-	float pool = clamp(dot(lamp, vec3(0.34, 0.50, 0.16)), 0.0, 1.0);
-	ALBEDO = base * mix(1.0, mix(0.26, 0.62, pool), night);
+	float amount = clamp(dot(lamp, vec3(0.33, 0.33, 0.34)), 0.0, 1.0);
+	// Night pad stays the painted road/walk colour. The lamp map is
+	// intensity only, so a pool brightens that colour instead of stamping
+	// a yellow disc over it.
+	ALBEDO = base * mix(1.0, 0.20, night);
 	ROUGHNESS = 0.92;
 	METALLIC = 0.03;
 	SPECULAR = 0.16;
-	// Mobile only applies a handful of OmniLights to this city-wide mesh, and
-	// the pooled lights jump between posts. Baked pools stay on the painted
-	// pad even when no real light is nearby.
-	EMISSION = lamp * night * 4.4;
+	vec3 light_col = vec3(1.0, 0.88, 0.70);
+	EMISSION = base * amount * night * light_col * 3.1;
 }

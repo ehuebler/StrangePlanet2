@@ -11,6 +11,13 @@ uniform float night : hint_range(0.0, 1.0) = 0.0;
 uniform float paving_wall : hint_range(0.0, 1.0) = 0.0;
 uniform sampler2D paint_tex : source_color, hint_default_white;
 uniform float use_paint : hint_range(0.0, 1.0) = 0.0;
+uniform sampler2D lamp_map : source_color, hint_default_black, filter_linear_mipmap, repeat_disable;
+uniform float has_lamps = 0.0;
+uniform vec2 map_span = vec2(400.0, 400.0);
+uniform vec2 map_origin = vec2(0.0);
+uniform vec3 city_east = vec3(1.0, 0.0, 0.0);
+uniform vec3 city_north = vec3(0.0, 0.0, 1.0);
+uniform float city_radius = 8000.0;
 instance uniform float ruin = 0.0;
 
 varying vec3 world_pos;
@@ -168,10 +175,24 @@ void fragment() {
 	RIM_TINT = 0.42;
 	vec3 glow = albedo * mix(0.12, 0.0, night) * mix(0.85, 1.2, sky);
 	if (style == 18) {
-		glow = base * mix(0.35, 6.8, night);
+		// Keep the night band below bloom-to-white so magenta/cyan stay that
+		// colour instead of reading as a white outline.
+		glow = base * mix(0.05, 2.6, night);
 	}
 	if (use_paint > 0.5) {
 		glow += paint.rgb * paint.a * mix(0.06, 0.0, night);
+	}
+	if (has_lamps > 0.5 && night > 0.01 && map_span.x > 4.0) {
+		vec3 q = normalize(world_pos);
+		vec2 uv = vec2(dot(q, city_east), dot(q, city_north)) * city_radius;
+		vec2 st = (uv - map_origin) / map_span;
+		if (st.x >= 0.0 && st.y >= 0.0 && st.x <= 1.0 && st.y <= 1.0) {
+			float amount = clamp(dot(texture(lamp_map, st).rgb, vec3(0.33)), 0.0, 1.0);
+			float h = length(world_pos) - city_radius;
+			float reach = 1.0 - smoothstep(2.5, 16.0, h);
+			float wall = 1.0 - abs(dot(n, q));
+			glow += albedo * amount * night * vec3(1.0, 0.88, 0.70) * mix(0.4, 1.8, wall) * reach;
+		}
 	}
 	EMISSION = glow;
 }

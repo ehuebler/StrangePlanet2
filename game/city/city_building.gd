@@ -45,6 +45,7 @@ func setup(city: PatchCity, index: int, lot: Dictionary, shape: PlanetShape) -> 
 	name = "Building_%d" % index
 	_rebuild_visual()
 	_make_collision()
+	_apply_visual_layers()
 
 
 func rebind(city: PatchCity, index: int, lot: Dictionary, shape: PlanetShape) -> void:
@@ -71,6 +72,9 @@ func rebind(city: PatchCity, index: int, lot: Dictionary, shape: PlanetShape) ->
 		if is_instance_valid(_glass):
 			_glass_mat = city.window_material_for(is_large())
 			_glass.material_override = _glass_mat
+		if is_instance_valid(_wall_mat):
+			city.stamp_lamp_on_wall(_wall_mat)
+	_apply_visual_layers()
 
 
 func health() -> float:
@@ -348,6 +352,9 @@ func _rebuild_visual() -> void:
 	_hull.mesh = hull_mesh
 	_wall_mat = _authored_wall_material(large) if used_authored else _variant_wall_material(large)
 	_hull.material_override = _wall_mat
+	if _city != null:
+		_city.stamp_lamp_on_wall(_wall_mat)
+	_apply_visual_layers()
 	if _hurt or _dead:
 		_set_ruin(1.0 if _dead else 0.82)
 	var glass_mesh := glass_st.commit()
@@ -363,6 +370,18 @@ func _rebuild_visual() -> void:
 		_glass.visible = not _dead
 	elif is_instance_valid(_glass):
 		_glass.visible = false
+
+
+func wall_material() -> ShaderMaterial:
+	return _wall_mat
+
+
+func _apply_visual_layers() -> void:
+	var mask := PatchCity.BUILDING_VISUAL_LAYER
+	if is_instance_valid(_hull):
+		_hull.layers = mask
+	if is_instance_valid(_glass):
+		_glass.layers = mask
 
 
 func _paint_wall_material(large: bool) -> ShaderMaterial:
