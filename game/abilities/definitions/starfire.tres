@@ -21,22 +21,22 @@ reaction_type = 0
 affects_players = false
 self_launch = false
 blast_occlusion = false
-animation = &"StarfireRight"
-alternate_animation = &"StarfireLeft"
-hover_animation = &"StarfireFloatRight"
-alternate_hover_animation = &"StarfireFloatLeft"
+animation = &"Fighting_Right_Jab"
+alternate_animation = &"Fighting_Left_Jab"
+hover_animation = &"Fighting_Right_Jab"
+alternate_hover_animation = &"Fighting_Left_Jab"
 held_animation = &""
 held_hover_animation = &""
 impact_animation = &""
 blocked_underwater = true
 allowed_stances = PackedInt32Array(0, 1, 2, 3)
 stats = {
-"damage": 1400.0,
-"impact": 2600.0,
+"damage": 350.0,
+"impact": 650.0,
 "speed": 95.0,
 "range": 70.0,
 "radius": 4.5,
-"cooldown": 0.28,
+"cooldown": 2.0,
 "projectile_radius": 0.36,
 "animation_duration": 0.32,
 "crater_radius": 3.0,

@@ -86,6 +86,9 @@ func start_single_player(game_mode := "story", duels_mode := "") -> void:
 		"duels_mode": (
 			sanitize_duels_mode(duels_mode) if selected_mode == "duels" else ""),
 	}
+	if selected_mode == "crawler":
+		CrawlerKit.clear_session()
+		CrawlerProgress.clear_session()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	players[1] = _sanitize_player_metadata(_local_look_metadata(1))
 	_set_status(SessionState.STARTING, "Starting single-player game...")
@@ -110,6 +113,9 @@ func host_game(options: Dictionary) -> void:
 	session_options["duels_mode"] = (
 		sanitize_duels_mode(str(options.get("duels_mode", "battle")))
 		if session_options["mode"] == "duels" else "")
+	if session_options["mode"] == "crawler":
+		CrawlerKit.clear_session()
+		CrawlerProgress.clear_session()
 	if not TextModerationScript.is_allowed(local_player_name) or not TextModerationScript.is_allowed(session_options["name"]):
 		_fail("Player and lobby names must use appropriate language.")
 		return
@@ -277,6 +283,9 @@ func _host_enet_test(options: Dictionary) -> void:
 	session_options["duels_mode"] = (
 		sanitize_duels_mode(str(options.get("duels_mode", "battle")))
 		if session_options["mode"] == "duels" else "")
+	if session_options["mode"] == "crawler":
+		CrawlerKit.clear_session()
+		CrawlerProgress.clear_session()
 
 	_enet_peer = ENetMultiplayerPeer.new()
 	var error := _enet_peer.create_server(port, max_players)
@@ -384,6 +393,7 @@ func update_lobby_metadata(changes: Dictionary) -> void:
 ## line, or a client that has just been dropped back to a fresh menu.
 func _open_world() -> void:
 	if not is_instance_valid(active_world):
+		LagTracker.note("session", "loading world scene")
 		var error := get_tree().change_scene_to_file(WORLD_SCENE)
 		if error != OK:
 			_fail("Could not load the game world (%s)." % error_string(error))
@@ -588,6 +598,7 @@ func _shared_session_options() -> Dictionary:
 		"duels_mode": str(session_options.get("duels_mode", "")),
 		"max_players": int(session_options.get("max_players", DEFAULT_MAX_PLAYERS)),
 		"visibility": str(session_options.get("visibility", "public")),
+		"crawler_cities": session_options.get("crawler_cities", []),
 	}
 
 

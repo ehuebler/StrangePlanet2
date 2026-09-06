@@ -4,8 +4,8 @@ extends RefCounted
 ## Every item the game can put in a slot.
 ##
 ## `kind` explicitly separates apparel, ordinary items, weapons and abilities.
-## `slot` remains the body slot an apparel item occupies and matches the keys in
-## Wardrobe.APPAREL. Container filters call [method accepts], so body equipment,
+## `slot` remains the wearable slot an apparel item occupies. Only hats remain.
+## Container filters call [method accepts], so body equipment,
 ## the numbered hotbar, ability buttons and the backpack all share these rules.
 ## `scene` is the .glb, worn on the body or put in the hands and also rendered
 ## into the item's icon; `tint` stands in for the icon until that render lands.
@@ -18,6 +18,7 @@ const KIND_APPAREL := "apparel"
 const KIND_ITEM := "item"
 const KIND_WEAPON := "weapon"
 const KIND_ABILITY := "ability"
+const KIND_MODIFIER := "modifier"
 
 ## Container filter ids. WEAPON is retained for old rack containers; HOTBAR is
 ## the broader numbered-slot rule and accepts both weapons and ordinary items.
@@ -34,38 +35,6 @@ const ITEMS := {
 		"slot": "hat",
 		"scene": "res://assets/runtime/apparel/apparel_hat.glb",
 		"tint": Color(0.9023, 0.7954, 0.4978),
-	},
-	"flight_goggles": {
-		"title": "Flight Goggles",
-		"description": "Brass rims on a webbing strap. Worn on the brow, and they tuck under a hat rather than fighting it.",
-		"kind": KIND_APPAREL,
-		"slot": "goggles",
-		"scene": "res://assets/runtime/apparel/apparel_goggles.glb",
-		"tint": Color(0.5271, 0.4014, 0.2216),
-	},
-	"rust_long_sleeve": {
-		"title": "Rust Long Sleeve",
-		"description": "Heavy cotton, cuffs to the wrist. The dye has faded unevenly, which is most of its charm.",
-		"kind": KIND_APPAREL,
-		"slot": "long_sleeve",
-		"scene": "res://assets/runtime/apparel/apparel_long_sleeve.glb",
-		"tint": Color(0.7906, 0.5459, 0.522),
-	},
-	"denim_trousers": {
-		"title": "Denim Trousers",
-		"description": "Stiff blue workwear, turned up at the ankle so the hem clears your shoes.",
-		"kind": KIND_APPAREL,
-		"slot": "pants",
-		"scene": "res://assets/runtime/apparel/apparel_pants.glb",
-		"tint": Color(0.5021, 0.5639, 0.6682),
-	},
-	"leather_shoes": {
-		"title": "Leather Shoes",
-		"description": "Scuffed brown leather on a flat sole. Quiet on floorboards, loud on gravel.",
-		"kind": KIND_APPAREL,
-		"slot": "shoes",
-		"scene": "res://assets/runtime/apparel/apparel_shoes.glb",
-		"tint": Color(0.4614, 0.41, 0.3811),
 	},
 	"c3_hair": {
 		"title": "Settler Hair",
@@ -90,6 +59,30 @@ const ITEMS := {
 		"slot": "hat",
 		"scene": "res://assets/runtime/apparel/apparel_c3_bunny_ears.glb",
 		"tint": Color(0.96, 0.72, 0.78),
+	},
+	"crawler_gale_hat": {
+		"title": "Gale Cap",
+		"description": "A city-made propeller cap. Flight time and footwork jump the moment it sits on.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_propeller_cap.glb",
+		"tint": Color(0.18, 0.46, 0.92),
+	},
+	"crawler_ward_hat": {
+		"title": "Ward Halo",
+		"description": "A pale city halo. A thin iridescent bubble takes one hit, then comes back after a short wait.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_halo.glb",
+		"tint": Color(0.72, 0.90, 1.0),
+	},
+	"crawler_luck_hat": {
+		"title": "Fortune Cap",
+		"description": "A city-made jester cap. Luck jumps the moment it sits on.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_jester_hat.glb",
+		"tint": Color(0.18, 0.78, 0.42),
 	},
 	"c3_top_hat": {
 		"title": "Top Hat",
@@ -451,30 +444,6 @@ const ITEMS := {
 		"scene": "res://assets/runtime/apparel/apparel_c3_mohawk.glb",
 		"tint": Color(0.74, 0.14, 0.44),
 	},
-	"c3_goggles": {
-		"title": "Settler Goggles",
-		"description": "Smoked slate lenses on a wide band. Cut for the settler's skull, which is a different shape entirely.",
-		"kind": KIND_APPAREL,
-		"slot": "goggles",
-		"scene": "res://assets/runtime/apparel/apparel_c3_goggles.glb",
-		"tint": Color(0.2412, 0.3106, 0.4183),
-	},
-	"c3_tunic": {
-		"title": "Settler Tunic",
-		"description": "Capped at the shoulder and flared at the hem, over bare legs.",
-		"kind": KIND_APPAREL,
-		"slot": "long_sleeve",
-		"scene": "res://assets/runtime/apparel/apparel_c3_tunic.glb",
-		"tint": Color(0.25, 0.26, 0.34),
-	},
-	"c3_boots": {
-		"title": "Settler Boots",
-		"description": "Heavy soles and a cuff at mid-shin. A pair, and they clear each other.",
-		"kind": KIND_APPAREL,
-		"slot": "shoes",
-		"scene": "res://assets/runtime/apparel/apparel_c3_boots.glb",
-		"tint": Color(0.10, 0.11, 0.17),
-	},
 	"sword": {
 		"title": "Drill Sword",
 		"description": "Brass furniture on a leather-wrapped grip. Held two-handed, blade up, and cut across the body from right to left.",
@@ -512,6 +481,8 @@ const STAT_ORDER := ["damage", "player_damage", "impact", "speed", "duration",
 	"crater_radius", "crater_depth", "crater_warp",
 	"projectile_radius", "beam_radius", "paint_radius", "paint_spacing",
 	"chain_interval",
+	"size", "beam_width", "impact_radius", "slots",
+	"wobble", "wobble_cone_degrees",
 	"wall_width", "wall_height", "wall_thickness", "fade_duration",
 	"explosion_duration", "animation_duration", "apex_time"]
 const STAT_LABELS := {
@@ -542,6 +513,12 @@ const STAT_LABELS := {
 	"paint_radius": "Paint Radius",
 	"paint_spacing": "Paint Spacing",
 	"chain_interval": "Blast Step",
+	"size": "Size",
+	"beam_width": "Beam Width",
+	"impact_radius": "Impact Radius",
+	"slots": "Modifier Slots",
+	"wobble": "Wobble",
+	"wobble_cone_degrees": "Wobble Cone",
 	"wall_width": "Wall Width",
 	"wall_height": "Wall Height",
 	"wall_thickness": "Wall Thickness",
@@ -577,6 +554,11 @@ const STAT_UNITS := {
 	"paint_radius": " m",
 	"paint_spacing": " m",
 	"chain_interval": " s",
+	"size": " x",
+	"slots": "",
+	"beam_width": " x",
+	"impact_radius": " m",
+	"wobble_cone_degrees": "°",
 	"wall_width": " m",
 	"wall_height": " m",
 	"wall_thickness": " m",
@@ -586,38 +568,45 @@ const STAT_UNITS := {
 	"apex_time": " s",
 }
 
-## The body slots the equipment column shows, top to bottom.
-const SLOT_ORDER := ["hat", "goggles", "long_sleeve", "pants", "shoes"]
+## The only wearable slot. Hats sit on the head; everything else was retired.
+const SLOT_ORDER := ["hat"]
 
 const ATTACK_SWING := "swing"
 const ATTACK_SHOOT := "shoot"
 
 ## Shown on an equipment slot that has nothing in it yet.
 const SLOT_LABELS := {
-	"hat": "Head",
-	"goggles": "Eyes",
-	"long_sleeve": "Body",
-	"pants": "Legs",
-	"shoes": "Feet",
+	"hat": "Hat",
 }
 
 
 static func has_item(id: String) -> bool:
-	return ITEMS.has(id) or AbilityCatalog.has(id)
+	if CrawlerCatalog.is_token(id):
+		return CrawlerCatalog.has(id)
+	return ITEMS.has(id) or AbilityCatalog.has(id) or CrawlerCatalog.has(id)
 
 
 static func title(id: String) -> String:
+	if CrawlerCatalog.has(id):
+		var labeled := CrawlerCatalog.title_of(id)
+		if not labeled.is_empty():
+			return labeled
 	var definition := ability_definition(id)
 	if definition != null:
 		return definition.title
-	return String(_field(id, "title", id))
+	return String(_field(_catalog_key(id), "title", _catalog_key(id)))
 
 
-static func description(id: String) -> String:
+static func description(id: String, host_id := "", size_rank := -1) -> String:
+	if CrawlerCatalog.has(id) and (
+			CrawlerCatalog.is_modifier(id) or CrawlerCatalog.is_modifier_token(id)):
+		return CrawlerCatalog.description_of(id, host_id, size_rank)
 	var definition := ability_definition(id)
 	if definition != null:
 		return definition.description
-	return String(_field(id, "description", ""))
+	if CrawlerCatalog.has(id):
+		return CrawlerCatalog.description_of(id, host_id, size_rank)
+	return String(_field(_catalog_key(id), "description", ""))
 
 
 ## The body slot this item is worn in, or "" if it cannot be worn.
@@ -628,7 +617,9 @@ static func slot_of(id: String) -> String:
 ## Explicit catalogue classification. The fallback keeps an older external item
 ## table parseable, but every item shipped in [constant ITEMS] declares a kind.
 static func kind_of(id: String) -> String:
-	if AbilityCatalog.has(id):
+	if CrawlerCatalog.is_modifier_token(id) or CrawlerCatalog.is_modifier(id):
+		return KIND_MODIFIER
+	if CrawlerCatalog.is_ability_token(id) or AbilityCatalog.has(_catalog_key(id)):
 		return KIND_ABILITY
 	var explicit := String(_field(id, "kind", ""))
 	if not explicit.is_empty():
@@ -675,7 +666,16 @@ static func accepts_backpack(id: String) -> bool:
 static func accepts(filter: String, id: String) -> bool:
 	if id.is_empty():
 		return true
+	if filter.begins_with(CrawlerCatalog.FILTER_MOD):
+		var ability := filter.substr(CrawlerCatalog.FILTER_MOD.length())
+		if ability.begins_with(":"):
+			ability = ability.substr(1)
+		if kind_of(id) != KIND_MODIFIER:
+			return false
+		return ability.is_empty() or CrawlerCatalog.compatible(id, ability)
 	match filter:
+		CrawlerCatalog.FILTER_KIT:
+			return CrawlerCatalog.is_token(id) and CrawlerCatalog.has(id)
 		"":
 			return has_item(id)
 		HOTBAR:
@@ -717,7 +717,7 @@ static func ability_ids() -> PackedStringArray:
 
 ## Complete authored definition, shared by runtime, menu, and effect factories.
 static func ability_definition(id: String) -> AbilityDefinition:
-	return AbilityCatalog.definition(id)
+	return AbilityCatalog.definition(_catalog_key(id))
 
 
 ## The script that implements an ability, or "" for anything that is not one.
@@ -745,7 +745,13 @@ static func ability_profile(id: String) -> String:
 
 static func ability_icon(id: String) -> Texture2D:
 	var definition := ability_definition(id)
-	return definition.icon if definition != null else null
+	if definition != null and definition.icon != null:
+		return definition.icon
+	return CrawlerCatalog.icon(id)
+
+
+static func _catalog_key(id: String) -> String:
+	return CrawlerCatalog.catalog_id(id) if CrawlerCatalog.is_token(id) else id
 
 
 ## The same numbers written out for a menu, one line each, in a fixed order.
@@ -753,29 +759,58 @@ static func ability_icon(id: String) -> Texture2D:
 ## Label and value are separated by a tab so a caller can lay them out in two
 ## columns without parsing anything back out of the string.
 static func stat_lines(id: String) -> PackedStringArray:
-	var stats := stats_of(id)
+	return stat_lines_from(stats_of(id))
+
+
+static func stat_lines_from(stats: Dictionary, base: Dictionary = {}) -> PackedStringArray:
 	var lines := PackedStringArray()
 	if stats.is_empty():
 		return lines
 	var written := {}
 	for key: String in STAT_ORDER:
-		if not stats.has(key):
+		if not stats.has(key) or not _is_stat_number(stats[key]):
 			continue
 		written[key] = true
 		lines.append("%s\t%s" % [STAT_LABELS.get(key, key.capitalize()),
-			_stat_value(stats, key)])
+			format_boosted(base, stats, key)])
 	# Anything the table above does not know about, so an ability declaring a
 	# stat nobody has thought of yet still shows it rather than hiding it.
-	for key: String in stats:
-		if written.has(key) or key.ends_with("_unit"):
+	for key: Variant in stats:
+		var name := str(key)
+		if written.has(name) or name.ends_with("_unit") or not _is_stat_number(stats[key]):
 			continue
-		lines.append("%s\t%s" % [key.capitalize(), _stat_value(stats, key)])
+		lines.append("%s\t%s" % [STAT_LABELS.get(name, name.capitalize()),
+			format_boosted(base, stats, name)])
 	return lines
+
+
+static func format_boosted(base_stats: Dictionary, live_stats: Dictionary,
+		key: String) -> String:
+	if not live_stats.has(key) or not _is_stat_number(live_stats[key]):
+		return ""
+	if base_stats.is_empty() or not base_stats.has(key) \
+			or not _is_stat_number(base_stats[key]):
+		return _stat_value(live_stats, key)
+	var shown := _stat_value(base_stats, key)
+	var delta := float(live_stats[key]) - float(base_stats[key])
+	if is_zero_approx(delta):
+		return shown
+	var bit := "%d" % int(round(delta)) if is_equal_approx(delta, round(delta)) \
+		else "%.1f" % delta
+	if delta > 0.0:
+		bit = "+" + bit
+	return "%s (%s)" % [shown, bit]
+
+
+static func _is_stat_number(value: Variant) -> bool:
+	return typeof(value) == TYPE_FLOAT or typeof(value) == TYPE_INT
 
 
 ## One stat as it reads on screen. Whole numbers lose their decimal point, since
 ## "1200 /s" is a damage figure and "1200.0 /s" is a debug print.
 static func _stat_value(stats: Dictionary, key: String) -> String:
+	if not _is_stat_number(stats.get(key, null)):
+		return ""
 	var amount := float(stats[key])
 	var written := "%d" % int(round(amount)) if is_equal_approx(
 		amount, round(amount)) else "%.1f" % amount

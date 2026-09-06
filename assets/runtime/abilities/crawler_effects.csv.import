@@ -1,0 +1,19 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://srj41t586axv"
+
+[deps]
+
+files=["res://assets/runtime/abilities/crawler_effects.ability.translation", "res://assets/runtime/abilities/crawler_effects.stat.translation", "res://assets/runtime/abilities/crawler_effects.op.translation", "res://assets/runtime/abilities/crawler_effects.value.translation"]
+
+source_file="res://assets/runtime/abilities/crawler_effects.csv"
+dest_files=["res://assets/runtime/abilities/crawler_effects.ability.translation", "res://assets/runtime/abilities/crawler_effects.stat.translation", "res://assets/runtime/abilities/crawler_effects.op.translation", "res://assets/runtime/abilities/crawler_effects.value.translation"]
+
+[params]
+
+compress=1
+delimiter=0
+unescape_keys=false
+unescape_translations=true

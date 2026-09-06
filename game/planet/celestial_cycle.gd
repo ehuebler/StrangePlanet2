@@ -335,6 +335,77 @@ func _veil_depths(camera: Camera3D) -> Vector2:
 	return depths
 
 
+## Direction toward the sun at a given phase, in world space. Phase zero is
+## noon over [member noon_anchor]; the orbit then turns about the frost axis.
+func sun_direction_at(phase_value: float) -> Vector3:
+	var angle := fposmod(phase_value, 1.0) * TAU * orbit_direction
+	if _noon_to_sun.length_squared() < 0.0001:
+		return _to_sun
+	return (Basis(_pole, angle) * _noon_to_sun).normalized()
+
+
+## Local sun elevation in degrees. Positive is above the horizon at [param world_up].
+func local_elevation_degrees(world_up: Vector3) -> float:
+	if world_up.length_squared() < 0.0001 or _to_sun.length_squared() < 0.0001:
+		return 0.0
+	return rad_to_deg(asin(clampf(
+		world_up.normalized().dot(_to_sun), -1.0, 1.0)))
+
+
+## Phase that puts the sun at [param elevation_degrees] for [param world_up].
+## Evening (descending sun) is the default, so a spawn opens at dusk rather
+## than at the matching dawn.
+func phase_for_local_elevation(
+		world_up: Vector3, elevation_degrees: float, evening := true) -> float:
+	return solve_phase_for_elevation(
+		_pole, _noon_to_sun, world_up, elevation_degrees, orbit_direction,
+		evening)
+
+
+## Closed-form dusk/dawn solver. Exposed so tests can check it without a live
+## planet: A cos θ + B sin θ = sin(elevation) on the equatorial orbit.
+static func solve_phase_for_elevation(
+		pole: Vector3, noon_to_sun: Vector3, world_up: Vector3,
+		elevation_degrees: float, orbit_dir: float,
+		evening := true) -> float:
+	if pole.length_squared() < 0.0001 or noon_to_sun.length_squared() < 0.0001 \
+			or world_up.length_squared() < 0.0001:
+		return 0.0
+	var axis := pole.normalized()
+	var noon := noon_to_sun.normalized()
+	noon -= axis * noon.dot(axis)
+	if noon.length_squared() < 0.0001:
+		return 0.0
+	noon = noon.normalized()
+	var up := world_up.normalized()
+	var east := axis.cross(noon)
+	if east.length_squared() < 0.0001:
+		return 0.0
+	east = east.normalized()
+	var along := up.dot(noon)
+	var across := up.dot(east)
+	var reach := sqrt(along * along + across * across)
+	if reach < 0.0001:
+		return 0.0
+	var target := clampf(sin(deg_to_rad(elevation_degrees)), -reach, reach)
+	var alpha := atan2(across, along)
+	var delta := acos(clampf(target / reach, -1.0, 1.0))
+	var angle_a := alpha + delta
+	var angle_b := alpha - delta
+	var deriv_a := -along * sin(angle_a) + across * cos(angle_a)
+	var pick := angle_a
+	var turning := 1.0 if orbit_dir >= 0.0 else -1.0
+	if evening:
+		if deriv_a * turning > 0.0:
+			pick = angle_b
+	elif deriv_a * turning < 0.0:
+		pick = angle_b
+	var phase_value := pick / TAU
+	if orbit_dir < 0.0:
+		phase_value = -phase_value
+	return fposmod(phase_value, 1.0)
+
+
 ## Normalized 0..1 position in the sixteen-minute day. Used only to synchronize
 ## a client when it joins; after that every peer advances by the same delta.
 func phase() -> float:

@@ -543,6 +543,7 @@ func _process(delta: float) -> void:
 		_collision_micros = 0.0
 		_frame_micros = float(Time.get_ticks_usec() - started)
 		_update_micros = _update_micros * 0.9 + _frame_micros * 0.1
+		_report_lag()
 		return
 	# Read before it is zeroed: it is the interval since the last walk, which is
 	# what the viewer's velocity has to be measured against. `delta` is a frame,
@@ -585,6 +586,7 @@ func _process(delta: float) -> void:
 	# Rolling average rather than the last frame: mesh handoffs make single frames
 	# swing by an order of magnitude, and the average is what costs frame rate.
 	_update_micros = _update_micros * 0.9 + _frame_micros * 0.1
+	_report_lag()
 
 
 # --- Public surface queries -------------------------------------------------
@@ -846,6 +848,17 @@ func statistics() -> Dictionary:
 		"lod_hz": _lod_walk_rate,
 		"lead": _lead_length,
 	}
+
+
+func _report_lag() -> void:
+	if Engine.is_editor_hint():
+		return
+	var ms := _frame_micros / 1000.0
+	LagTracker.set_gauge("terrain", ms)
+	if _apply_micros >= 4000.0 or _requests.size() >= 24:
+		LagTracker.note_throttled("terrain", "terrain_storm",
+			"apply %.1f ms  requests %d  visible %d" % [
+				_apply_micros / 1000.0, _requests.size(), _visible.size()], 0.4)
 
 
 # --- The planet frame -------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Build ten rigged land-fauna creatures from connected organic skin-trees.
+"""Build the rigged land-fauna creatures from connected organic skin-trees.
 
 Run from the project root with Blender 5.1:
 
@@ -1509,6 +1509,8 @@ def dog() -> CreatureSpec:
         animations, roughness=0.60)
 
 
+from build_crawler_creatures import knell_bell, rift_oculus
+
 CREATURES = (
     crab(),
     dolphin(),
@@ -1520,6 +1522,8 @@ CREATURES = (
     octopus(),
     spider(),
     dog(),
+    knell_bell(),
+    rift_oculus(),
 )
 CREATURE_BY_NAME = {spec.name: spec for spec in CREATURES}
 

@@ -49,8 +49,8 @@ func _ready() -> void:
 
 
 func _check_containers_and_hud() -> void:
-	_expect(_player.hotbar.size() == 3, "player exposes three numbered slots")
-	_expect(_player.abilities.size() == 2, "player exposes two ability slots")
+	_expect(_player.hotbar.size() == 3, "player still keeps a leftover item row")
+	_expect(_player.abilities.size() == 4, "player exposes four ability slots")
 	_expect(_player.weapons == _player.hotbar, "weapons remains a hotbar alias")
 
 	var slots: Array[ItemSlot] = []
@@ -60,11 +60,11 @@ func _check_containers_and_hud() -> void:
 	var badges := PackedStringArray()
 	for slot in slots:
 		badges.append(slot.badge)
-	_expect(badges == PackedStringArray(["LMB", "RMB", "1", "2", "3"]),
-		"HUD order is LMB, RMB, 1, 2, 3")
-	_expect(slots[0].container == _player.abilities \
-		and slots[2].container == _player.hotbar,
-		"HUD binds ability and hotbar containers separately")
+	_expect(badges == PackedStringArray(["1", "2", "3", "4"]),
+		"HUD order is 1, 2, 3, 4")
+	_expect(slots.size() == 4 and slots[0].container == _player.abilities
+		and slots[3].container == _player.abilities,
+		"HUD binds every tile to the ability container")
 
 
 func _check_selection_and_holster() -> void:
@@ -116,7 +116,7 @@ func _check_persistence() -> void:
 	_player.holster()
 	_player.backpack.set_item(0, "c3_hair")
 	_expect(_player.equip_ability("laser_eyes", 1),
-		"public ability equip accepts a real power in RMB")
+		"public ability equip accepts a real power in slot 2")
 	await get_tree().process_frame
 	await get_tree().process_frame
 	var stored := CharacterDB.load_look()
@@ -125,9 +125,9 @@ func _check_persistence() -> void:
 		"hotbar changes persist")
 	_expect(CharacterDB.backpack_items(stored, CharacterDB.BACKPACK_SLOTS)[0] \
 		== "c3_hair", "backpack changes persist")
-	_expect(CharacterDB.ability_items(stored, 2)
-		== PackedStringArray(["", "laser_eyes"]),
-		"ability assignments persist independently from the hotbar")
+	_expect(CharacterDB.ability_items(stored, 4)
+		== PackedStringArray(["", "laser_eyes", "", ""]),
+		"ability assignments persist independently from leftover items")
 
 
 func _expect(condition: bool, message: String) -> void:

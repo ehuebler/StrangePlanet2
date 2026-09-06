@@ -2,13 +2,17 @@ class_name CombatHud
 extends Control
 
 ## Local combat HUD coordinator: boss bar, transient statuses, parry readiness,
-## and mob damage flash hooks. Drawing lives in child components.
+## incoming hit log, and mob damage flash hooks. Drawing lives in child
+## components.
 
 var _player: Node3D
 var _coordinates: CoordinatePlate
 var _boss_bar: BossBar
 var _status_layer: StatusChipLayer
 var _parry: ParryIndicator
+var _crawler_vitals: CrawlerVitalsPlate
+var _entering: CrawlerEnteringNote
+var _hit_log: HitLog
 
 var _menu_open := false
 var _session_engaged := false
@@ -37,6 +41,16 @@ func configure(player: Node3D, _hud: CanvasLayer,
 		(_weapon_bar as WeaponBar).add_vitals(_parry)
 	else:
 		add_child(_parry)
+	if CrawlerRules.active():
+		_crawler_vitals = CrawlerVitalsPlate.new()
+		_crawler_vitals.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_crawler_vitals)
+		_entering = CrawlerEnteringNote.new()
+		_entering.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_entering)
+	_hit_log = HitLog.new()
+	_hit_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_hit_log)
 	if _player != null:
 		if _player.has_signal(&"status_changed") \
 				and not _player.status_changed.is_connected(_on_status_changed):
@@ -50,10 +64,18 @@ func configure(player: Node3D, _hud: CanvasLayer,
 		if _player.has_signal(&"parry_blocked") \
 				and not _player.parry_blocked.is_connected(_on_parry_blocked):
 			_player.parry_blocked.connect(_on_parry_blocked)
+		if _player.has_method(&"combat_feedback"):
+			var feedback: Variant = _player.call(&"combat_feedback")
+			if feedback is CombatFeedback:
+				var stream := feedback as CombatFeedback
+				if not stream.damage_number.is_connected(_on_damage_number):
+					stream.damage_number.connect(_on_damage_number)
 
 
 func set_menu_open(open: bool) -> void:
 	_menu_open = open
+	if _hit_log != null:
+		_hit_log.set_suppressed(open)
 	if open:
 		_set_boss_boundary(false)
 
@@ -73,11 +95,18 @@ func refresh(delta: float) -> void:
 			_status_layer.visible = false
 		if _parry != null:
 			_parry.visible = false
+		if _crawler_vitals != null:
+			_crawler_vitals.visible = false
+		if _hit_log != null:
+			_hit_log.set_suppressed(true)
 		return
 	_poll_boss(delta)
 	_sync_statuses()
 	if _parry != null:
 		_parry.refresh(_player)
+	if _crawler_vitals != null:
+		_crawler_vitals.refresh(_player)
+	_place_hit_log()
 
 
 func boss_bar() -> BossBar:
@@ -90,6 +119,34 @@ func status_layer() -> StatusChipLayer:
 
 func parry_indicator() -> ParryIndicator:
 	return _parry
+
+
+func city_counter() -> CrawlerCityCounter:
+	return null
+
+
+func city_siege_bar() -> CrawlerCitySiegeBar:
+	return null
+
+
+func hit_log() -> HitLog:
+	return _hit_log
+
+
+func show_entering(place: String, gems := 0) -> void:
+	if _entering == null:
+		_entering = CrawlerEnteringNote.new()
+		_entering.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_entering)
+	_entering.present(place, gems)
+
+
+func entering_text() -> String:
+	return _entering.current_text() if _entering != null else ""
+
+
+func entering_bonus() -> String:
+	return _entering.bonus_text() if _entering != null else ""
 
 
 func _sync_statuses() -> void:
@@ -203,3 +260,19 @@ func _on_parry_started() -> void:
 func _on_parry_blocked(_perfect: bool, _hit: DamageHit) -> void:
 	if _parry != null and _player != null and not _menu_open:
 		_parry.refresh(_player)
+
+
+func _on_damage_number(event: DamageNumberEvent) -> void:
+	if _hit_log == null or event == null or not event.incoming or event.amount <= 0.0:
+		return
+	_hit_log.record(event.source_name, event.amount, event.ability_name)
+
+
+func _place_hit_log() -> void:
+	if _hit_log == null:
+		return
+	_hit_log.set_suppressed(_menu_open)
+	var lift := 0.0
+	if _coordinates != null and _coordinates.visible:
+		lift = _coordinates.size.y + 8.0
+	_hit_log.set_floor_lift(lift)

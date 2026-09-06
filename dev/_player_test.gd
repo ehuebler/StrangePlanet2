@@ -327,7 +327,7 @@ func _dust_checks() -> void:
 			push_error("player_test: dust check could not find the character skeleton")
 		else:
 			for index in 2:
-				var foot := skeleton.find_bone(PlayerDust.FOOT_BONES[index])
+				var foot := CharacterRig.find_bone(skeleton, PlayerDust.FOOT_BONES[index])
 				if foot < 0:
 					push_error("player_test: dust check could not find foot %d" % index)
 					continue
@@ -5560,8 +5560,9 @@ func _clip_report() -> void:
 	await _wait(20)
 	var animator: AnimationPlayer = _player.animator
 	var skeleton: Skeleton3D = _player.character.find_child("Skeleton3D", true, false)
-	var feet := [skeleton.find_bone("LeftFoot"), skeleton.find_bone("RightFoot")]
-	var hips := skeleton.find_bone("Hips")
+	var feet := [CharacterRig.find_bone(skeleton, &"LeftFoot"),
+		CharacterRig.find_bone(skeleton, &"RightFoot")]
+	var hips := CharacterRig.find_bone(skeleton, &"Hips")
 	for clip in animator.get_animation_list():
 		var length := animator.get_animation(clip).length
 		var lowest := [1.0e9, 1.0e9]

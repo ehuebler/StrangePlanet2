@@ -40,6 +40,8 @@ func _ready() -> void:
 	_build()
 	if _journal != null:
 		_journal.completed.connect(_on_completed)
+		if not _journal.claimed.is_connected(_on_claimed):
+			_journal.claimed.connect(_on_claimed)
 	var first := _visible_ids()
 	_select(first[0] if not first.is_empty() else "")
 
@@ -136,8 +138,14 @@ func _fill_list() -> void:
 		return
 	for id in ids:
 		var done := _journal != null and _journal.is_done(id)
+		var waiting := _journal != null and _journal.can_claim(id)
+		var mark := ""
+		if waiting:
+			mark = "[claim]  "
+		elif done:
+			mark = "[done]  "
 		var button := MenuWidgets.button(
-			"%s%s" % ["[done]  " if done else "", JournalDB.title_of(id)],
+			"%s%s" % [mark, JournalDB.title_of(id)],
 			AuroraSurface.Style.PRIMARY if id == _selected else AuroraSurface.Style.BUTTON)
 		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -158,7 +166,9 @@ func _select(id: String) -> void:
 
 	_detail.add_child(MenuWidgets.heading(JournalDB.title_of(id).to_upper(), 24))
 	var done := _journal != null and _journal.is_done(id)
-	_detail.add_child(_status_line(JournalDB.category_of(id), done))
+	var waiting := _journal != null and _journal.can_claim(id)
+	_detail.add_child(_status_line(JournalDB.category_of(id), done, waiting,
+		_journal != null and _journal.is_claimed(id)))
 	_detail.add_child(AuroraSurface.rule())
 	_detail.add_child(_paragraph(JournalDB.summary_of(id), 16, PALETTE.text_primary))
 	var detail := JournalDB.detail_of(id)
@@ -171,14 +181,32 @@ func _select(id: String) -> void:
 			"Get within %d m of the %s waypoint." % [
 				roundi(JournalDB.within_of(id)), JournalDB.title_of(id)],
 			13, PALETTE.text_muted))
+	var needed := JournalDB.kills_of(id)
+	if needed > 0:
+		var have := _journal.kills() if _journal != null else 0
+		_detail.add_child(_paragraph(
+			"Kills %d / %d." % [mini(have, needed), needed],
+			13, PALETTE.text_muted))
 	var reward := JournalDB.reward_of(id)
 	if not reward.is_empty():
 		_detail.add_child(_paragraph("Reward: %s" % reward, 13, PALETTE.text_muted))
+	if waiting:
+		var claim := MenuWidgets.button("Claim gems", AuroraSurface.Style.PRIMARY)
+		claim.name = "JournalClaim_%s" % id
+		claim.pressed.connect(_claim_selected)
+		_detail.add_child(claim)
 
 
-func _status_line(category: String, done: bool) -> Control:
+func _status_line(category: String, done: bool, waiting := false, taken := false) -> Control:
 	var label := Label.new()
-	label.text = "%s    %s" % [category, "COMPLETE" if done else "IN PROGRESS"]
+	var state := "IN PROGRESS"
+	if waiting:
+		state = "UNCLAIMED"
+	elif taken:
+		state = "CLAIMED"
+	elif done:
+		state = "COMPLETE"
+	label.text = "%s    %s" % [category, state]
 	label.add_theme_font_size_override(&"font_size", 13)
 	label.add_theme_color_override(&"font_color",
 		PALETTE.secondary if done else PALETTE.text_muted)
@@ -194,7 +222,18 @@ func _paragraph(text: String, font_size: int, colour: Color) -> Label:
 	return label
 
 
+func _claim_selected() -> void:
+	if _journal != null and _journal.claim(_selected):
+		_select(_selected)
+
+
 func _on_completed(id: String) -> void:
+	_fill_list()
+	if id == _selected:
+		_select(id)
+
+
+func _on_claimed(id: String) -> void:
 	_fill_list()
 	if id == _selected:
 		_select(id)

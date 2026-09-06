@@ -187,7 +187,7 @@ func _run() -> void:
 
 	await _check_hero(menu)
 	await _check_apparel(menu)
-	await _check_items_and_abilities(menu)
+	await _check_hero_abilities(menu)
 	await _check_data_settings_and_admin(menu)
 	await _check_graphics_toggle_rows(menu)
 	await _check_isolated_leave_hold()
@@ -381,15 +381,18 @@ func _check_hero(menu: GameMenu) -> void:
 		"Hero owns a CharacterPreview control")
 	var character_frame := page.find_child(
 		"CharacterFrame", true, false) as Control
-	var apparel_frame := page.find_child("ApparelFrame", true, false) as Control
+	var hat_slot := page.find_child("HatSlot", true, false) as RedItemSlot
 	var hotbar_frame := page.find_child("HotbarFrame", true, false) as Control
-	_expect(character_frame != null and apparel_frame != null
-		and hotbar_frame != null
-		and apparel_frame.get_global_rect().position.x
-			>= character_frame.get_global_rect().end.x
+	var ability_library := page.find_child(
+		"AbilityLibraryFrame", true, false) as Control
+	_expect(character_frame != null and hat_slot != null
+		and hotbar_frame != null and ability_library != null
+		and hat_slot.badge == "HAT"
 		and hotbar_frame.get_global_rect().position.x
-			>= character_frame.get_global_rect().end.x,
-		"Hero places horizontal Apparel and Hotbar rows right of the character screen")
+			>= character_frame.get_global_rect().end.x - 8.0
+		and ability_library.get_global_rect().position.x
+			>= character_frame.get_global_rect().end.x - 8.0,
+		"Hero keeps the hat tile on the portrait and the ability column to the right")
 
 	var stat_rows := page.find_child("StatRows", true, false)
 	_expect(stat_rows != null
@@ -429,28 +432,27 @@ func _check_hero(menu: GameMenu) -> void:
 	var badges := PackedStringArray()
 	for slot: RedItemSlot in hotbar_slots:
 		badges.append(slot.badge)
-	_expect(hotbar_slots.size() == 5
-		and badges == PackedStringArray(["LMB", "RMB", "1", "2", "3"]),
-		"Hero exposes five logical LMB/RMB/1/2/3 tiles")
-	var apparel_root := page.find_child("ApparelSlots", true, false) as Control
-	_expect(_children_have_even_horizontal_gaps(apparel_root)
-		and _children_have_even_horizontal_gaps(hotbar_root),
-		"Hero Apparel and Hotbar icons use even horizontal spacing")
-	var empty_icons_centred := apparel_root != null
-	if apparel_root != null:
-		for child: Node in apparel_root.get_children():
-			if child is RedItemSlot:
-				var empty_glyph := child.find_child(
-					"EmptyGlyph_*", true, false) as Control
-				empty_icons_centred = empty_icons_centred \
-					and _centres_match(child as Control, empty_glyph)
-	_expect(empty_icons_centred,
-		"Hero empty Apparel glyphs are centered in their slots")
+	_expect(hotbar_slots.size() == 4
+		and badges == PackedStringArray(["1", "2", "3", "4"]),
+		"Hero exposes four numbered ability tiles")
+	_expect(_children_have_even_horizontal_gaps(hotbar_root),
+		"Hero hotbar icons use even horizontal spacing")
+	var empty_glyph := (
+		hat_slot.find_child("EmptyGlyph_hat", true, false) as Control
+		if hat_slot != null else null
+	)
+	_expect(hat_slot != null and empty_glyph != null
+		and _centres_match(hat_slot, empty_glyph),
+		"Hero empty hat glyph is centered in its slot")
+	_expect(menu.find_child("TabItems", true, false) == null
+		and menu.find_child("TabAbilities", true, false) == null,
+		"Items and Abilities tabs are gone")
+	var hats_tab := menu.find_child("TabApparel", true, false) as Button
+	_expect(hats_tab != null and hats_tab.text == "HATS",
+		"Apparel tab is now labeled Hats")
 	for tab_name: String in [
 		"TabHero",
 		"TabApparel",
-		"TabItems",
-		"TabAbilities",
 		"TabData",
 	]:
 		var tab_button := menu.find_child(tab_name, true, false) as Button
@@ -489,9 +491,8 @@ func _check_apparel(menu: GameMenu) -> void:
 	menu.show_tab(GameMenu.Tab.APPAREL)
 	await _wait_frames(4)
 	var page := _active_page(menu) as RedCataloguePage
-	if not _expect(page != null, "Apparel routes to RedCataloguePage"):
+	if not _expect(page != null, "Hats routes to RedCataloguePage"):
 		return
-
 	var owned := _owned_slots(page)
 	var listed: PackedStringArray = PackedStringArray()
 	for slot: RedItemSlot in owned:
@@ -499,27 +500,14 @@ func _check_apparel(menu: GameMenu) -> void:
 		if not listed_id.is_empty() and not listed.has(listed_id):
 			listed.append(listed_id)
 	_expect(listed.has("c3_hair"),
-		"Apparel still lists the physically owned garment")
+		"Hats still lists the physically owned garment")
 	_expect(listed.has("c3_party_hat") and listed.has("c3_bunny_ears"),
-		"Apparel lists body-wardrobe hats that are not in the backpack")
+		"Hats lists body-wardrobe hats that are not in the backpack")
 	var hair_owned := _red_slot(page, _player.backpack, 0)
 	_expect(hair_owned != null and hair_owned.item_id() == "c3_hair",
 		"physically owned Settler Hair keeps its backpack slot in the catalogue")
-	var filter_row := page.find_child(
-		"CatalogueFilters", true, false) as Control
-	var filters_centred := filter_row != null
-	if filter_row != null:
-		for child: Node in filter_row.get_children():
-			if not child is Button:
-				continue
-			var lane := child.find_child("GlyphLane", true, false) as Control
-			var glyph := child.find_child("Glyph", true, false) as Control
-			filters_centred = filters_centred and lane != null \
-				and glyph != null \
-				and lane.get_global_rect().encloses(glyph.get_global_rect()) \
-				and _centres_match(lane, glyph)
-	_expect(filters_centred and _children_have_even_horizontal_gaps(filter_row),
-		"catalogue filter icons are centered and evenly spaced")
+	_expect(page.find_child("CatalogueFilterFrame", true, false) == null,
+		"Hats catalogue has no slot-filter bar")
 	var detail_frame := page.find_child(
 		"PersistentDetailFrame", true, false) as Control
 	var detail_scroll := page.find_child(
@@ -535,7 +523,7 @@ func _check_apparel(menu: GameMenu) -> void:
 	_expect(detail_frame != null and equip_action != null and drop_action != null
 		and detail_frame.get_global_rect().encloses(equip_action.get_global_rect())
 		and detail_frame.get_global_rect().encloses(drop_action.get_global_rect()),
-		"Apparel keeps Equip and Drop visible inside the persistent detail panel")
+		"Hats keeps Equip and Drop visible inside the persistent detail panel")
 	_expect(equip_action != null and drop_action != null
 		and equip_action.size.y <= 36.0 and drop_action.size.y <= 36.0,
 		"catalogue Equip and Drop actions stay compact")
@@ -545,7 +533,7 @@ func _check_apparel(menu: GameMenu) -> void:
 		and detail_scroll.get_global_rect().encloses(detail_state.get_global_rect())
 		and detail_scroll.get_global_rect().encloses(
 			detail_description.get_global_rect()),
-		"Apparel shows selected item identity and detail without scrolling")
+		"Hats shows selected item identity and detail without scrolling")
 	var total_before := _count_physical("c3_hair")
 	var backpack_slot := _red_slot(page, _player.backpack, 0)
 	_expect(backpack_slot != null, "owned backpack garment has a RedItemSlot")
@@ -561,9 +549,9 @@ func _check_apparel(menu: GameMenu) -> void:
 	await _wait_frames(3)
 	var worn_index := _player.equipment.find("c3_hair")
 	_expect(worn_index >= 0 and _player.backpack.find("c3_hair") < 0,
-		"shift-clicking backpack apparel equips it")
+		"shift-clicking backpack hat equips it")
 	_expect(_count_physical("c3_hair") == total_before,
-		"equipping apparel preserves total ownership")
+		"equipping a hat preserves total ownership")
 
 	var worn_slot := _red_slot(page, _player.equipment, worn_index)
 	_expect(worn_slot != null and worn_slot.equipped,
@@ -574,121 +562,60 @@ func _check_apparel(menu: GameMenu) -> void:
 	await _wait_frames(3)
 	_expect(_player.equipment.find("c3_hair") < 0
 		and _player.backpack.find("c3_hair") >= 0,
-		"shift-clicking worn apparel returns it to the backpack")
+		"shift-clicking worn hat returns it to the backpack")
 	_expect(_count_physical("c3_hair") == total_before,
-		"stowing apparel preserves total ownership")
+		"stowing a hat preserves total ownership")
 	await _capture("menu_apparel")
 
 
-func _check_items_and_abilities(menu: GameMenu) -> void:
-	_player.hotbar.clear()
+func _check_hero_abilities(menu: GameMenu) -> void:
 	_player.abilities.clear()
-	_player.backpack.clear()
-	_player.backpack.set_item(0, "sword")
-	_player.hotbar.set_item(2, "laser_rifle")
-	menu.show_tab(GameMenu.Tab.ITEMS)
+	menu.show_tab(GameMenu.Tab.HERO)
 	await _wait_frames(4)
-	var page := _active_page(menu) as RedCataloguePage
-	if not _expect(page != null, "Items routes to RedCataloguePage"):
-		return
-	await _capture("menu_items")
-
-	_expect(_owned_slots(page).size() == 2,
-		"Items lists only owned hotbar and backpack entries")
-	var weapons_filter := page.find_child("Filter_weapon", true, false) as Button
-	var items_filter := page.find_child("Filter_item", true, false) as Button
-	_expect(weapons_filter != null and items_filter != null,
-		"Items exposes Weapons and Items filters")
-	if weapons_filter != null:
-		weapons_filter.pressed.emit()
-		await _wait_frames(2)
-		_expect(page.selected_filter() == ItemDB.KIND_WEAPON
-			and _owned_slots(page).size() == 2,
-			"Weapons filter keeps owned weapons")
-	items_filter = page.find_child("Filter_item", true, false) as Button
-	if items_filter != null:
-		items_filter.pressed.emit()
-		await _wait_frames(2)
-		_expect(page.selected_filter() == ItemDB.KIND_ITEM
-			and _owned_slots(page).is_empty(),
-			"Items filter excludes weapons when no ordinary item is owned")
-		items_filter = page.find_child("Filter_item", true, false) as Button
-		if items_filter != null:
-			items_filter.pressed.emit()
-			await _wait_frames(2)
-	_expect(page.selected_filter().is_empty() and _owned_slots(page).size() == 2,
-		"pressing the active filter restores All")
-
-	var sword_slot := _red_slot(page, _player.backpack, 0)
-	_expect(sword_slot != null, "backpack sword is selectable")
-	if sword_slot != null:
-		sword_slot.picked.emit(sword_slot)
-	await _wait_frames(2)
-	for index in 3:
-		var target := page.find_child(
-			"TargetSlot%d" % (index + 1), true, false) as Button
-		_expect(target != null, "Items exposes target %d" % (index + 1))
-		if target != null:
-			target.pressed.emit()
-			_expect(page.target_slot() == index,
-				"target %d selects numbered slot %d" % [index + 1, index + 1])
-			await _wait_frames(1)
-
-	# Slot three already contains a rifle. The transfer must swap, never delete.
-	var sword_count := _count_physical("sword")
-	var rifle_count := _count_physical("laser_rifle")
-	var equip := page.find_child("EquipAction", true, false) as HoldActionButton
-	_expect(equip != null and equip.hold_duration > 0.0
-		and not equip.completed.get_connections().is_empty(),
-		"hold-to-equip action is wired to the catalogue")
-	if equip != null:
-		equip.completed.emit()
-	await _wait_frames(3)
-	_expect(_player.hotbar.get_item(2) == "sword"
-		and _player.backpack.get_item(0) == "laser_rifle",
-		"equipping into an occupied target swaps losslessly")
-	_expect(_count_physical("sword") == sword_count
-		and _count_physical("laser_rifle") == rifle_count,
-		"numbered-slot transfer preserves both items")
-
-	_player.abilities.clear()
-	menu.show_tab(GameMenu.Tab.ABILITIES)
-	await _wait_frames(4)
-	page = _active_page(menu) as RedCataloguePage
-	if not _expect(page != null, "Abilities routes without crashing"):
+	var page := _active_page(menu) as RedHeroPage
+	if not _expect(page != null, "Hero hosts the ability loadout"):
 		return
 	await _capture("menu_abilities")
-	var targets := page.find_child("TargetButtons", true, false)
-	var target_labels := PackedStringArray()
-	if targets != null:
-		for child: Node in targets.get_children():
-			if child is Button:
-				target_labels.append((child as Button).text)
-	_expect(target_labels == PackedStringArray(["LMB", "RMB"]),
-		"Abilities keeps LMB and RMB targets with empty assignments")
+
+	var library := page.find_child("AbilityLibrarySlots", true, false)
+	var library_slots: Array[RedItemSlot] = []
+	if library != null:
+		for child: Node in library.get_children():
+			if child is RedItemSlot:
+				library_slots.append(child as RedItemSlot)
+	var expected := PackedStringArray([
+		"laser_eyes", "meteor_punch", "starfire", "grapple",
+		"nuke", "lasso", "wall", "nausicaa",
+	])
 	if ItemDB.ability_ids().is_empty():
-		var empty_title := page.find_child("EmptyStateTitle", true, false) as Label
-		var empty_body := page.find_child("EmptyStateBody", true, false) as Label
-		_expect(empty_title != null and empty_title.visible
-			and empty_title.text.contains("STANDBY")
-			and empty_body != null and empty_body.text.contains("LMB")
-			and empty_body.text.contains("RMB"),
-			"Abilities presents the polished empty-library state")
-	else:
-		var expected := PackedStringArray([
-			"laser_eyes", "meteor_punch", "starfire", "grapple",
-			"nuke", "lasso", "wall", "nausicaa",
-		])
-		var all_icons := true
-		for id: String in expected:
-			all_icons = all_icons and ItemDB.ability_icon(id) != null
-		_expect(ItemDB.ability_ids() == expected
-			and _owned_slots(page).size() == expected.size()
-			and all_icons,
-			"Abilities presents all eight generated definitions with menu icons")
-		_expect("\n".join(ItemDB.stat_lines("wall")).contains(
-			"Wall Width\t8 m"),
-			"new authored stats use their catalogue labels and units")
+		_expect(library_slots.is_empty(), "empty ability catalogue stays empty")
+		return
+	var listed := PackedStringArray()
+	for slot: RedItemSlot in library_slots:
+		listed.append(slot.item_id())
+	_expect(ItemDB.ability_ids() == expected and listed == expected,
+		"Hero lists every known ability as a library tile")
+	_expect(page.find_child("EquipAction", true, false) == null
+		and page.find_child("DropAction", true, false) == null,
+		"Hero ability column has no equip or drop buttons")
+	_expect("\n".join(ItemDB.stat_lines("wall")).contains(
+		"Wall Width\t8 m"),
+		"new authored stats use their catalogue labels and units")
+
+	var first := library_slots[0] if not library_slots.is_empty() else null
+	if first != null:
+		var assigned_id := first.item_id()
+		first.picked.emit(first)
+		await _wait_frames(1)
+		var title := page.find_child(
+			"AbilityDescriptionTitle", true, false) as Label
+		_expect(title != null and title.text.contains(
+			ItemDB.title(assigned_id).to_upper()),
+			"clicking a library tile fills the description box")
+		_shift_click(first)
+		await _wait_frames(2)
+		_expect(_player.abilities.get_item(0) == assigned_id,
+			"shift-clicking a library tile assigns the first empty hotbar slot")
 
 
 func _check_data_settings_and_admin(menu: GameMenu) -> void:
@@ -739,10 +666,14 @@ func _check_data_settings_and_admin(menu: GameMenu) -> void:
 
 	menu.show_tab(GameMenu.Tab.ADMIN)
 	await _wait_frames(2)
-	var blank := _active_page(menu)
-	_expect(blank != null and blank.name == "AdminBlank"
-		and blank.get_child_count() == 0 and blank.get_script() == null,
-		"AdminBlank is a truly blank Control")
+	var admin := _active_page(menu)
+	_expect(admin != null and admin is AdminPage and admin.name == "AdminPage",
+		"Admin routes to AdminPage with the lag tracker")
+	if admin != null:
+		_expect(_panel_button(admin, "EXPORT") != null
+			and _panel_button(admin, "OPEN FOLDER") != null
+			and _panel_button(admin, "LAST 30S") != null,
+			"Admin lag tracker exposes export, folder, and window controls")
 
 
 ## The two atmosphere toggles on the shared Display page.
@@ -844,7 +775,7 @@ func _display_toggle(panel: SettingsPanel, label_text: String) -> Button:
 	return null
 
 
-func _panel_button(panel: SettingsPanel, text: String) -> Button:
+func _panel_button(panel: Node, text: String) -> Button:
 	for node: Node in panel.find_children("*", "Button", true, false):
 		var button := node as Button
 		if button != null and button.text == text:
@@ -936,28 +867,28 @@ func _check_drop_round_trip(menu: GameMenu) -> void:
 	_player.equipment.clear()
 	_player.hotbar.clear()
 	_player.backpack.clear()
-	_player.backpack.set_item(0, "sword")
-	menu.show_tab(GameMenu.Tab.ITEMS)
+	_player.backpack.set_item(0, "c3_hair")
+	menu.show_tab(GameMenu.Tab.APPAREL)
 	await _wait_frames(3)
 	var page := _active_page(menu) as RedCataloguePage
-	if not _expect(page != null, "Drop check opens the Items catalogue"):
+	if not _expect(page != null, "Drop check opens the Hats catalogue"):
 		return
 	var source := _red_slot(page, _player.backpack, 0)
 	if source != null:
 		source.picked.emit(source)
 	await _wait_frames(1)
-	var before := _count_physical("sword")
+	var before := _count_physical("c3_hair")
 	var drop := page.find_child("DropAction", true, false) as Button
 	_expect(drop != null and not drop.disabled,
-		"selected physical item enables Drop")
+		"selected physical hat enables Drop")
 	if drop != null:
 		drop.pressed.emit()
 	await _wait_frames(2)
 	var snapshots := _world.pickup_snapshots()
-	_expect(_count_physical("sword") == before - 1
+	_expect(_count_physical("c3_hair") == before - 1
 		and _player.backpack.get_item(0).is_empty()
 		and snapshots.size() == 1,
-		"Drop removes exactly one source item through GameWorld")
+		"Drop removes exactly one source hat through GameWorld")
 	if snapshots.is_empty():
 		return
 	var pickup_id := int((snapshots[0] as Dictionary).get("pickup_id", 0))
@@ -983,14 +914,18 @@ func _check_drop_round_trip(menu: GameMenu) -> void:
 	_player.set_physics_process(false)
 	var up := dropped.global_basis.y.normalized()
 	var side := dropped.global_basis.x.normalized()
-	var back := dropped.global_basis.z.normalized()
 	_player.global_position = dropped.global_position + side
-	var target := dropped.global_position + up * 0.40
-	_player.camera.global_position = target + back * 1.45 + up * 0.08
+	# Look down onto the pickup box so terrain behind the drop cannot occlude
+	# the ray. Zero the spring so the arm cannot pull the camera off the aim.
+	var saved_spring := _player.camera_arm.spring_length
+	_player.camera_arm.spring_length = 0.0
+	var target := dropped.global_position + up * 0.41
+	_player.camera.global_position = dropped.global_position + up * 1.35
 	_player.camera.look_at(target, up)
 	await get_tree().physics_frame
 	_expect(_player._interact_target() == dropped,
 		"player interaction ray resolves the dropped pickup")
+	_player.camera_arm.spring_length = saved_spring
 
 	var interact := InputEventKey.new()
 	interact.keycode = KEY_E
@@ -998,12 +933,12 @@ func _check_drop_round_trip(menu: GameMenu) -> void:
 	interact.pressed = true
 	_expect(interact.is_action_pressed(&"interact"), "physical E maps to interact")
 	_player._unhandled_input(interact)
-	var after_pickup := _count_physical("sword")
+	var after_pickup := _count_physical("c3_hair")
 	_expect(_world.pickup_node(pickup_id) == null
 		and after_pickup == before,
-		"E interaction returns exactly one item")
+		"E interaction returns exactly one hat")
 	_player._unhandled_input(interact)
-	_expect(_count_physical("sword") == after_pickup,
+	_expect(_count_physical("c3_hair") == after_pickup,
 		"duplicate E cannot grant the pickup twice")
 	await _wait_frames(2)
 

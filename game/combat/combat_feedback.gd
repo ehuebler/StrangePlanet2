@@ -36,6 +36,7 @@ var _blast_material: ShaderMaterial
 var _blast_strength := 0.0
 var _blast_left := 0.0
 var _numbers: DamageNumberLayer
+var _hit_marker: HitMarker
 var _shake_strength := 0.0
 var _shake_left := 0.0
 var _shake_span := 0.0
@@ -76,6 +77,15 @@ func configure(camera: Camera3D, hud: CanvasLayer) -> void:
 	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_flash.color = Color(0.82, 0.02, 0.03, 0.0)
 	_hud.add_child(_flash)
+	_hit_marker = HitMarker.new()
+	_hit_marker.name = "HitMarker"
+	# Lives on the reticle so a menu or death that hides the crosshair also
+	# hides the confirmation sitting on it.
+	var reticle := _hud.get_node_or_null("Reticle") as Control
+	if reticle != null:
+		reticle.add_child(_hit_marker)
+	else:
+		_hud.add_child(_hit_marker)
 	_numbers = DamageNumberLayer.new()
 	_numbers.name = "DamageNumbers"
 	_hud.add_child(_numbers)
@@ -86,17 +96,20 @@ func _exit_tree() -> void:
 
 
 ## Actual damage: red flash, shake, and an incoming number.
-func damage_taken(amount: float, at: Vector3, source_peer := 0) -> void:
+func damage_taken(amount: float, at: Vector3, source_peer := 0,
+		source_name := "", ability_name := "") -> void:
 	if amount <= 0.0:
 		return
 	if _flash != null:
-		_flash.color.a = maxf(_flash.color.a, clampf(0.12 + amount / 180.0, 0.16, 0.55))
+		_flash.color.a = maxf(_flash.color.a, clampf(0.28 + amount / 90.0, 0.34, 0.78))
 	shake(clampf(0.28 + amount / 75.0, 0.32, 1.0), DAMAGE_SHAKE_TIME)
 	var event := DamageNumberEvent.new()
 	event.amount = amount
 	event.world_position = at
 	event.incoming = true
 	event.source_peer = source_peer
+	event.source_name = _resolve_source_name(source_peer, source_name)
+	event.ability_name = ability_name.strip_edges()
 	_show_number(event)
 
 
@@ -132,18 +145,77 @@ func parry_feedback(perfect: bool, at := Vector3.ZERO) -> void:
 	_show_number(event, "PERFECT" if perfect else "BLOCK")
 
 
+func dodge_feedback(at := Vector3.ZERO) -> void:
+	if at == Vector3.ZERO:
+		return
+	var event := DamageNumberEvent.new()
+	event.amount = 1.0
+	event.world_position = at
+	event.blocked = true
+	_show_number(event, "DODGE")
+
+
 func outgoing_damage(amount: float, at: Vector3, target_peer := 0,
-		critical := false, structure := false, merge_key := "") -> void:
+		critical := false, structure := false, merge_key := "",
+		killed := false) -> void:
 	if amount <= 0.0:
 		return
+	if _hit_marker != null:
+		_hit_marker.flash(killed, critical)
 	var event := DamageNumberEvent.new()
 	event.amount = amount
 	event.world_position = at
 	event.target_peer = target_peer
 	event.critical = critical
 	event.structure = structure
+	event.killed = killed
 	event.merge_key = merge_key
 	_show_number(event)
+
+
+func hit_marker_remaining() -> float:
+	return _hit_marker.remaining() if _hit_marker != null else 0.0
+
+
+func hit_marker_is_kill() -> bool:
+	return _hit_marker != null and _hit_marker.is_kill()
+
+
+func _resolve_source_name(source_peer: int, named: String) -> String:
+	var clean := named.strip_edges()
+	if not clean.is_empty():
+		return clean
+	if source_peer > 0:
+		return String(NetworkManager.get_player_metadata(source_peer).get(
+			"name", "Player"))
+	return ""
+
+
+func loot_gained(gold: float, xp: float, at: Vector3, gems := 0.0) -> void:
+	if gold > 0.0:
+		var gold_event := DamageNumberEvent.new()
+		gold_event.amount = gold
+		gold_event.kind = DamageNumberEvent.Kind.GOLD
+		gold_event.world_position = at
+		gold_event.screen_offset = Vector2(-28.0, 8.0)
+		gold_event.merge_key = "loot-gold"
+		_show_number(gold_event)
+	if xp > 0.0:
+		var xp_event := DamageNumberEvent.new()
+		xp_event.amount = xp
+		xp_event.kind = DamageNumberEvent.Kind.XP
+		xp_event.world_position = at
+		xp_event.screen_offset = Vector2(26.0, -16.0)
+		xp_event.merge_key = "loot-xp"
+		_show_number(xp_event)
+	if gems > 0.0:
+		var gem_event := DamageNumberEvent.new()
+		gem_event.amount = gems
+		gem_event.kind = DamageNumberEvent.Kind.GEM
+		gem_event.world_position = at
+		gem_event.screen_offset = Vector2(0.0, -34.0)
+		gem_event.merge_key = "loot-gem"
+		_show_number(gem_event)
 
 
 ## Called by movement contacts. Slow brushes are silent; a sprint and a flight

@@ -568,6 +568,7 @@ class BuildContext:
     glass: bmesh.types.BMesh = field(default=None)
     facades: list = field(default_factory=list)
     windows: list = field(default_factory=list)
+    masses: list = field(default_factory=list)
     wall_top: float = 0.0
     roof_top: float = 0.0
 
@@ -658,10 +659,25 @@ def _register_profile_facades(ctx, profile, z0, z1):
 # Massing
 # --------------------------------------------------------------------------
 
+def _point_in_profile(profile, x, y):
+    inside = False
+    count = len(profile)
+    for i in range(count):
+        x1, y1 = profile[i][0], profile[i][1]
+        x2, y2 = profile[(i + 1) % count][0], profile[(i + 1) % count][1]
+        if (y1 > y) != (y2 > y):
+            at = (x2 - x1) * (y - y1) / ((y2 - y1) if abs(y2 - y1) > 1.0e-9 else 1.0e-9) + x1
+            if x < at:
+                inside = not inside
+    return inside
+
+
 def prism(ctx, profile, z0, z1, region=REGION_WALL, register=None):
     profile = [_as_xy(point) for point in profile]
     faces = add_loft_profile(ctx.hull, profile, z0, z1, region=region)
     _touch_top(ctx, z1, wall=region in (REGION_WALL, REGION_BASE))
+    if region in (REGION_WALL, REGION_BASE):
+        ctx.masses.append({"profile": profile, "z0": z0, "z1": z1})
     if register is None:
         register = region == REGION_WALL
     if register:
@@ -1228,6 +1244,22 @@ def _window_frame(ctx, origin, right, up, outward, width, height):
         )
 
 
+def _window_inside_other_mass(ctx, origin, height):
+    """Skip panes that sit in the overlap of a box and a drum."""
+    x, y = float(origin.x), float(origin.y)
+    z0 = float(origin.z)
+    z1 = z0 + float(height)
+    hits = 0
+    for mass in ctx.masses:
+        if mass["z1"] < z0 + 0.08 or mass["z0"] > z1 - 0.08:
+            continue
+        if _point_in_profile(mass["profile"], x, y):
+            hits += 1
+            if hits >= 2:
+                return True
+    return False
+
+
 def dress_windows(ctx):
     recipe = ctx.recipe
     if not getattr(recipe, "auto_windows", True):
@@ -1258,6 +1290,8 @@ def dress_windows(ctx):
                 width = (u1 - u0) * facade.width
                 height = (v1 - v0) * facade.height
                 if width < 0.18 or height < 0.22:
+                    continue
+                if _window_inside_other_mass(ctx, origin, height):
                     continue
                 door = _door_uv_range(recipe, facade)
                 if door is not None:

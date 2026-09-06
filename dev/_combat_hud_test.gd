@@ -122,6 +122,14 @@ func _check_compact_player_hud() -> void:
 		_player._unhandled_input(tilde)
 		_expect(not info.visible, "second tilde hides the info plate")
 
+	var log := (_player.combat_hud() as CombatHud).hit_log() \
+		if _player.combat_hud() is CombatHud else null
+	_expect(log != null and is_equal_approx(log.anchor_top, 1.0)
+			and is_equal_approx(log.anchor_right, 1.0),
+		"hit log sits in the bottom-right")
+	_expect(log != null and not log.visible and not log.has_rows(),
+		"hit log stays hidden until something lands")
+
 	var mini := _player.find_child("CityMinimap", true, false) as Control
 	_expect(mini != null, "circular city mini-map sits in the HUD")
 	if mini != null:
@@ -134,12 +142,10 @@ func _check_compact_player_hud() -> void:
 	_expect(weapon_bar != null, "themed weapon bar exists")
 	if weapon_bar != null:
 		var slots := weapon_bar.find_children("*", "ItemSlot", true, false)
-		var themed := slots.size() == (
-			OnlinePlayer.ABILITY_SLOTS + OnlinePlayer.HOTBAR_SLOTS
-		)
+		var themed := slots.size() == OnlinePlayer.ABILITY_SLOTS
 		for node: Node in slots:
 			themed = themed and (node as ItemSlot).hud_style
-		_expect(themed, "all five hotbar squares use the red HUD style")
+		_expect(themed, "all four ability squares use the red HUD style")
 
 		_player.abilities.set_item(0, "nuke")
 		await get_tree().process_frame
@@ -284,6 +290,8 @@ func _check_parry_indicator() -> void:
 	indicator.refresh(_player)
 	_expect(is_equal_approx(indicator.shield_share(), 1.0),
 		"ready shield bar is full")
+	_expect(is_equal_approx(indicator.juke_share(), 1.0),
+		"ready juke bar is full")
 	_expect(indicator.find_children("*", "Label", true, false).is_empty(),
 		"shield HUD has no F or ready text")
 
@@ -306,11 +314,18 @@ func _check_parry_indicator() -> void:
 	indicator.refresh(_player)
 	_expect(absf(indicator.health_share() - 0.4) < 0.01,
 		"health bar sits under shield and tracks player health")
+	var juke := indicator.find_child("JukeBar", true, false) as ProgressBar
 	var shield := indicator.find_child("ShieldBar", true, false) as ProgressBar
 	var health := indicator.find_child("HealthBar", true, false) as ProgressBar
-	_expect(shield != null and health != null
+	_expect(juke != null and shield != null and health != null
+		and juke.get_index() < shield.get_index()
 		and shield.get_index() < health.get_index(),
-		"shield bar is directly above health")
+		"juke sits above the blue bar, which sits above health")
+	_player._juke_cooldown_left = _player.juke_cooldown() * 0.4
+	indicator.refresh(_player)
+	_expect(absf(indicator.juke_share() - 0.6) < 0.02,
+		"juke bar grows through dash regeneration")
+	_player._juke_cooldown_left = 0.0
 	_player.stats.set_health(maximum)
 
 
@@ -358,9 +373,23 @@ func _check_local_feedback() -> void:
 
 	_count = 0
 	_player.combat_feedback().damage_number.connect(_count_number)
-	_player.combat_feedback().damage_taken(12.0, _player.global_position, 0)
+	_player.combat_feedback().damage_taken(
+		12.0, _player.global_position, 0, "Rammer")
 	await get_tree().process_frame
 	_expect(_count == 1, "local damage number signal fires once")
+	_expect(_player.combat_feedback().hit_marker_remaining() <= 0.0,
+		"taking a hit does not flash a hit marker")
+	var hits := (_player.combat_hud() as CombatHud).hit_log() \
+		if _player.combat_hud() is CombatHud else null
+	_expect(hits != null and hits.visible and hits.lines().size() == 1
+			and hits.lines()[0] == "Rammer  12",
+		"the hit log names the attacker and the damage")
+	_player.combat_feedback().damage_taken(
+		9.0, _player.global_position, 0, "Ranger", "Ranger Shot")
+	await get_tree().process_frame
+	_expect(hits != null and hits.lines().size() == 2
+			and hits.lines()[1] == "Ranger  9",
+		"each hit appends a new log line")
 	_player.combat_feedback().outgoing_damage(
 		42.0, _player.global_position, 0, false, true, "lot")
 	await get_tree().process_frame
@@ -373,6 +402,33 @@ func _check_local_feedback() -> void:
 				continue
 			red = label.get_theme_color(&"font_color") == Color(1.0, 0.3, 0.25)
 	_expect(red, "building damage pops a red number")
+	_expect(_player.combat_feedback().hit_marker_remaining() > 0.0,
+		"landing a hit flashes an X on the reticle")
+	_expect(not _player.combat_feedback().hit_marker_is_kill(),
+		"a non-lethal hit stays a white marker")
+	_player.combat_feedback().outgoing_damage(
+		9.0, _player.global_position, 0, false, false, "mob", true)
+	_expect(_player.combat_feedback().hit_marker_is_kill(),
+		"a killing blow turns the marker gold")
+	_expect(_player.combat_feedback().hit_marker_remaining() > HitMarker.HIT_TIME,
+		"a kill marker holds longer than a regular hit")
+	_player.combat_feedback().loot_gained(8.0, 12.0, _player.global_position)
+	await get_tree().process_frame
+	var gold := false
+	var xp := false
+	if layer != null:
+		for child in layer.get_children():
+			var label := child as Label
+			if label == null:
+				continue
+			var colour := label.get_theme_color(&"font_color")
+			if label.text == "$8" and colour.r > 0.85 and colour.g > 0.65:
+				gold = true
+			if label.text == "+12" and colour.b > 0.7:
+				xp = true
+	_expect(gold, "kills float a golden $ amount")
+	_expect(xp, "kills float blue XP")
+	await _check_number_jiggle(layer as DamageNumberLayer)
 	remote.queue_free()
 
 
@@ -431,6 +487,49 @@ func _check_death_screen() -> void:
 	_expect(remote.death_screen() == null,
 		"nobody is shown anyone else's death")
 	remote.queue_free()
+
+
+func _check_number_jiggle(layer: DamageNumberLayer) -> void:
+	if layer == null or _player.camera == null:
+		_expect(false, "damage numbers can jiggle")
+		return
+	var spots: Array[Vector2] = []
+	for i in 5:
+		var event := DamageNumberEvent.new()
+		event.amount = 3.0 + float(i)
+		event.world_position = _player.global_position + Vector3(4.0, 1.0, 0.0)
+		event.merge_key = "jiggle-%d" % i
+		layer.show_event(event, _player.camera)
+		var label := _number_label(layer, event.caption())
+		if label != null:
+			spots.append(label.position)
+	var spread := false
+	for i in spots.size():
+		for j in range(i + 1, spots.size()):
+			if spots[i].distance_to(spots[j]) > 2.0:
+				spread = true
+	_expect(spread, "hits peel off the body in different spots")
+	var wobble := _number_label(layer, "3")
+	if wobble == null:
+		_expect(false, "a popped number jiggles as it rises")
+		return
+	var start := wobble.position
+	for _frame in 4:
+		await get_tree().process_frame
+	_expect(is_instance_valid(wobble) and (
+			absf(wobble.position.x - start.x) > 0.4
+			or absf(wobble.rotation) > 0.01),
+		"a popped number jiggles as it rises")
+
+
+func _number_label(layer: Node, text: String) -> Label:
+	if layer == null:
+		return null
+	for child in layer.get_children():
+		var label := child as Label
+		if label != null and label.text == text:
+			return label
+	return null
 
 
 var _count := 0

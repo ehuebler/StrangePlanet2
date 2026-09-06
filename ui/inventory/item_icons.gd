@@ -30,7 +30,12 @@ var _draining := false
 
 
 static func cached(id: String) -> Texture2D:
-	return _cache.get(id, null)
+	var texture: Texture2D = _cache.get(id, null)
+	if texture != null:
+		return texture
+	if CrawlerCatalog.is_token(id):
+		return _cache.get(CrawlerCatalog.catalog_id(id), null)
+	return null
 
 
 func _ready() -> void:
@@ -62,7 +67,7 @@ func _ready() -> void:
 ## Renders any of `ids` that are not cached yet, in the background.
 func request(ids: Array) -> void:
 	for id_variant in ids:
-		var id := String(id_variant)
+		var id := CrawlerCatalog.catalog_id(String(id_variant))
 		if id.is_empty() or _cache.has(id) or _queue.has(id):
 			continue
 		_queue.append(id)
@@ -85,7 +90,7 @@ func _render(id: String) -> Texture2D:
 	# Abilities carry deliberately authored vector glyphs in their generated
 	# definitions. They need no viewport frame and remain crisp in both the HUD
 	# and the larger Tab-menu record.
-	var ability_icon := ItemDB.ability_icon(id)
+	var ability_icon := ItemDB.ability_icon(CrawlerCatalog.catalog_id(id))
 	if ability_icon != null:
 		return ability_icon
 	var garment := _load_garment(ItemDB.scene_path(id))

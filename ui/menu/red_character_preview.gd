@@ -11,6 +11,9 @@ extends TextureRect
 const VIEW_SIZE := Vector2(230.0, 320.0)
 const SUPERSAMPLE := 3
 const SPIN_PER_PIXEL := 0.01
+const BOB_HEIGHT := 0.22
+const BOB_PIXELS := 11.0
+const BOB_RATE := 0.72
 
 var _equipment: ItemContainer
 var _body_id := CharacterDB.DEFAULT_BODY
@@ -23,6 +26,10 @@ var _camera: Camera3D
 var _worn: Dictionary = {}
 var _spin := -0.42
 var _dragging := false
+var _bob_time := 0.0
+## When true the portrait recenters itself and adds a visible 2D hover so a
+## parent CenterContainer or animation track cannot hide the float.
+var hover_in_frame := false
 ## Portraits in roster cards use the same renderer in a shorter frame.
 var view_size := VIEW_SIZE
 ## Orthographic room around the body, expressed as a share of body height.
@@ -39,13 +46,20 @@ func configure(equipment: ItemContainer, body_id: String, skin_id: String,
 	_tints = tints.duplicate(true)
 
 
+func _init() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
+
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	custom_minimum_size = view_size
 	expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	mouse_default_cursor_shape = Control.CURSOR_DRAG
 	_build()
+	set_process(true)
+	set_physics_process(false)
 	if _equipment != null and not _equipment.changed.is_connected(refresh):
 		_equipment.changed.connect(refresh)
 
@@ -69,6 +83,19 @@ func _gui_input(event: InputEvent) -> void:
 		if is_instance_valid(_pivot):
 			_pivot.basis = Basis(Vector3.UP, _spin)
 		accept_event()
+
+
+func _process(delta: float) -> void:
+	_bob_time += delta
+	var wave := sin(_bob_time * TAU * BOB_RATE)
+	if is_instance_valid(_pivot):
+		# Lift the whole figure, not the posed skeleton. Float writes the body
+		# transform every frame, so bobbing the character node itself never shows.
+		_pivot.position.y = wave * BOB_HEIGHT
+	if hover_in_frame:
+		var parent := get_parent() as Control
+		if parent != null:
+			position = (parent.size - size) * 0.5 + Vector2(0.0, wave * BOB_PIXELS)
 
 
 func refresh() -> void:
@@ -100,9 +127,11 @@ func set_tints(tints: Dictionary) -> void:
 
 func _build() -> void:
 	_viewport = SubViewport.new()
+	_viewport.process_mode = Node.PROCESS_MODE_ALWAYS
 	_viewport.size = Vector2i(view_size * SUPERSAMPLE)
 	_viewport.transparent_bg = true
 	_viewport.own_world_3d = true
+	_viewport.handle_input_locally = true
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	add_child(_viewport)
 	texture = _viewport.get_texture()
@@ -118,6 +147,7 @@ func _build() -> void:
 	var packed := CharacterDB.scene(_body_id)
 	_character = packed.instantiate() as Node3D if packed != null else Node3D.new()
 	_pivot.add_child(_character)
+	CharacterRig.normalize_body(_character)
 	SurfaceSkin.apply(_character, true)
 	SurfaceSkin.set_body_texture(_character,
 		CharacterDB.skin_texture(_body_id, _skin_id))
@@ -142,10 +172,14 @@ func _play_float() -> void:
 	for node in _character.find_children("*", "AnimationPlayer", true, false):
 		animator = node as AnimationPlayer
 		break
-	if animator == null or not animator.has_animation("Float"):
+	if animator == null:
 		return
-	animator.get_animation("Float").loop_mode = Animation.LOOP_LINEAR
-	animator.play("Float")
+	animator.process_mode = Node.PROCESS_MODE_ALWAYS
+	CharacterRig.prepare(animator, CharacterDB.extra_animation_paths(_body_id))
+	var clip := CharacterRig.resolve_clip(animator, "Float")
+	if not animator.has_animation(clip):
+		return
+	animator.play(clip)
 
 
 func _paint() -> void:

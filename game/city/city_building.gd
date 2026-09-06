@@ -395,6 +395,11 @@ func _authored_wall_material(large: bool) -> ShaderMaterial:
 	var design := String(_lot.get("design", ""))
 	var style := CityBuildingCatalog.paint_style_name(_lot)
 	var paint := CityBuildingCatalog.paint_texture(design, style)
+	if paint == null:
+		for other in CityBuildingCatalog.PAINT_STYLES:
+			paint = CityBuildingCatalog.paint_texture(design, other)
+			if paint != null:
+				break
 	if paint != null:
 		material.set_shader_parameter(&"paint_tex", paint)
 		material.set_shader_parameter(&"use_paint", 1.0)
@@ -406,6 +411,11 @@ func _variant_wall_material(large: bool) -> ShaderMaterial:
 	var variant := int(_lot.get("variant", 0))
 	var style := CityBuildingCatalog.variant_paint_style_name(_lot)
 	var paint := CityBuildingCatalog.variant_paint_texture(variant, style)
+	if paint == null:
+		for other in CityBuildingCatalog.VARIANT_PAINT_STYLES:
+			paint = CityBuildingCatalog.variant_paint_texture(variant, other)
+			if paint != null:
+				break
 	if paint != null:
 		material.set_shader_parameter(&"paint_tex", paint)
 		material.set_shader_parameter(&"use_paint", 1.0)
@@ -413,8 +423,14 @@ func _variant_wall_material(large: bool) -> ShaderMaterial:
 
 
 func _set_ruin(amount: float) -> void:
-	if is_instance_valid(_hull):
-		_hull.set_instance_shader_parameter(&"ruin", amount)
+	if _wall_mat != null:
+		_wall_mat.set_shader_parameter(&"ruin", amount)
+
+
+func set_collision_enabled(on: bool) -> void:
+	if is_instance_valid(_body):
+		_body.collision_layer = 1 if on else 0
+		_body.collision_mask = 1 if on else 0
 
 
 func _flash() -> void:
@@ -515,7 +531,7 @@ func _lot_box_xform() -> Transform3D:
 		along = Vector2.RIGHT
 	along = along.normalized()
 	var up := _city._from_uv(centre).normalized()
-	var origin := _city._deck_mark(_shape, up, PatchCity.STREET_LIFT) + up * (height * 0.5)
+	var origin := _city._lot_deck_mark(_shape, _lot, centre, height * 0.5)
 	var east := _city._from_uv(centre + along).normalized() - up
 	if east.length_squared() < 0.0001:
 		east = Vector3.RIGHT
@@ -530,8 +546,7 @@ func _lot_box_xform() -> Transform3D:
 
 func _mark_at(along_stories: float) -> Vector3:
 	var centre: Vector2 = _lot.get("centre", Vector2.ZERO)
-	var up := _city._from_uv(centre).normalized()
-	return _city._deck_mark(_shape, up, PatchCity.STREET_LIFT) + up * (along_stories * 3.15)
+	return _city._lot_deck_mark(_shape, _lot, centre, along_stories * 3.15)
 
 
 func _smoke_xform(along_height: float) -> Transform3D:

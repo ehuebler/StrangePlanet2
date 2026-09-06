@@ -80,7 +80,7 @@ func _ready() -> void:
 	if target == Vector3.INF:
 		_expect(false, "found a streamed plant to aim at")
 	else:
-		_check_cover_damage(target, _planet.up_at(target))
+		_check_cover_damage(player, target, _planet.up_at(target))
 	_check_break_keys()
 	if target != Vector3.INF:
 		await _check_regrow(target)
@@ -197,7 +197,7 @@ func _check_fields_registered() -> void:
 
 ## The part that needs real plants: a volume placed over live ground has to find
 ## the instances nothing else can, and take them down.
-func _check_cover_damage(at: Vector3, up: Vector3) -> void:
+func _check_cover_damage(player: OnlinePlayer, at: Vector3, up: Vector3) -> void:
 	var before := _standing_total()
 	_expect(before > 0, "there is streamed cover to damage (%d)" % before)
 	if before == 0:
@@ -205,16 +205,30 @@ func _check_cover_damage(at: Vector3, up: Vector3) -> void:
 	# A beam first, drawn along the ground rather than aimed at a point on it,
 	# because damaging along its length is the half of the requirement a point
 	# hit would not prove. Enormous on purpose: this is a check that the query
-	# reaches the plants, not a check of the balance.
+	# reaches the plants, not a check of the balance. Applied through Laser
+	# Eyes so a cheaper landing ray still leaves the same cut.
 	var across := _across(up)
-	var beam := DamageHit.beam(at + up - across * SWEEP_LENGTH,
-		at + up + across * SWEEP_LENGTH, SWEEP_RADIUS, 100000.0)
+	var from := at + up - across * SWEEP_LENGTH
+	var toward := at + up + across * SWEEP_LENGTH
+	LaserEyes.apply_effect(
+		player, "laser_eyes", from, from, toward, true,
+		SWEEP_RADIUS, 1.0, 0.0, true)
+	# One authored tick may only char a rock. The follow-up is the same
+	# corridor at a dose that will fell whatever is actually standing there.
+	var beam := DamageHit.beam(from, toward, SWEEP_RADIUS, 100000.0)
+	beam.plant_break_effects = false
 	var cut := _apply_everywhere(beam)
 	var after_beam := _standing_total()
-	_expect(cut > 0.0, "a beam along the ground cut something (%.0f)" % cut)
+	_expect(cut > 0.0 or after_beam < before,
+		"a beam along the ground cut something (%.0f, %d of %d)" % [
+			cut, before - after_beam, before])
 	_expect(after_beam < before,
 		"plants with no colliders fell to it (%d of %d)" % [
 			before - after_beam, before])
+	var past := LaserEyes._surface(player, at + up * 3.0, at - up * 4.0)
+	if not past.is_empty():
+		_expect(not LaserEyes._is_flora(past),
+			"the landing ray passes through flora colliders")
 
 	var blast := DamageHit.area(at, BLAST_RADIUS, 100000.0, 0.0)
 	var absorbed := _apply_everywhere(blast)

@@ -360,6 +360,57 @@
       "file_size_bytes": 1329892,
       "paint_size_bytes": 126146
     },
+    "cinder_plate_rhino": {
+      "name": "cinder_plate_rhino",
+      "display_name": "Cinder-Plate Rhino",
+      "category": "land_fauna",
+      "form": "rhino",
+      "seed": 20268134,
+      "generator": "assets/source/blender/build_rhino.py",
+      "source_sculpt": "assets/source/meshmaker/rhino.blend",
+      "work_blend": "assets/work/rhino_rigged.blend",
+      "glb": "assets/runtime/fauna/models/cinder_plate_rhino.glb",
+      "color_paint": "assets/runtime/biomes/paint/cinder_plate_rhino_paint.png",
+      "close_preview": "assets/previews/fauna/cinder_plate_rhino_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/cinder_plate_rhino_gameplay.png",
+      "authored_height": 1.850883,
+      "triangle_count": 8000,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.52,
+        "height": 1.1,
+        "centre": [
+          0.0,
+          0.66,
+          0.0
+        ]
+      },
+      "color_paint_style": "pebbled slate-violet hide, broad grey-blue plate strata over the back and flanks, banded amber horn, near-black hooves, dusty rose belly, and mip-safe molten ember seams carried in PNG alpha",
+      "emission_style": "plate seams and horn base glow like cooling slag after sunset",
+      "emission_strength": 1.9,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/cinder_plate_rhino_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 20,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Paw",
+          "Charge",
+          "Gore",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1756200,
+      "paint_size_bytes": 105714
+    },
     "rift_hulk_monster": {
       "name": "rift_hulk_monster",
       "display_name": "Rift-Hulk Monster",
@@ -647,6 +698,102 @@
       },
       "file_size_bytes": 1093816,
       "paint_size_bytes": 118787
+    },
+    "knell_bell": {
+      "name": "knell_bell",
+      "display_name": "Knell-Bell",
+      "category": "land_fauna",
+      "form": "bell",
+      "seed": 20260951,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/knell_bell_rigged.blend",
+      "glb": "assets/runtime/fauna/models/knell_bell.glb",
+      "color_paint": "assets/runtime/biomes/paint/knell_bell_paint.png",
+      "close_preview": "assets/previews/fauna/knell_bell_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/knell_bell_gameplay.png",
+      "authored_height": 2.4,
+      "triangle_count": 6100,
+      "collision_hint": {
+        "shape": "capsule",
+        "radius": 0.88,
+        "height": 2.2,
+        "centre": [
+          0.0,
+          1.1,
+          0.0
+        ]
+      },
+      "color_paint_style": "Wine hide streaks, ember rim bands, gold lip rings, cream mouth blaze, magenta clapper spots, and lime crown discs",
+      "emission_style": "crown knob and clapper glow after sunset",
+      "emission_strength": 1.7,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/knell_bell_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 28,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1404328,
+      "paint_size_bytes": 111546
+    },
+    "rift_oculus": {
+      "name": "rift_oculus",
+      "display_name": "Rift-Oculus",
+      "category": "land_fauna",
+      "form": "oculus",
+      "seed": 20260952,
+      "generator": "assets/source/blender/build_fauna_creatures.py",
+      "work_blend": "assets/work/rift_oculus_rigged.blend",
+      "glb": "assets/runtime/fauna/models/rift_oculus.glb",
+      "color_paint": "assets/runtime/biomes/paint/rift_oculus_paint.png",
+      "close_preview": "assets/previews/fauna/rift_oculus_close.png",
+      "gameplay_distance_preview": "assets/previews/fauna/rift_oculus_gameplay.png",
+      "authored_height": 2.05,
+      "triangle_count": 6464,
+      "collision_hint": {
+        "shape": "sphere",
+        "radius": 0.82,
+        "height": 1.64,
+        "centre": [
+          0.0,
+          1.02,
+          0.0
+        ]
+      },
+      "color_paint_style": "Cream sclera blaze, indigo iris rings, black pupil disc, pink lid streaks, violet wing bands, and red optic veins",
+      "emission_style": "iris ring and wing-edge glow after sunset",
+      "emission_strength": 1.8,
+      "runtime_contract": {
+        "mesh_node": "Character",
+        "vertex_colour": "COLOR_0 semantic region colors",
+        "color_paint_uv": "TEXCOORD_0",
+        "emission_mask": "assets/runtime/biomes/paint/rift_oculus_paint.png alpha; never transparency",
+        "ground_axis": "Godot/glTF +Y",
+        "forward_axis": "Godot local -Z",
+        "skins": 1,
+        "bones": 21,
+        "animations": [
+          "Idle",
+          "Walk",
+          "Run",
+          "Attack",
+          "HitReact",
+          "Defeat"
+        ]
+      },
+      "file_size_bytes": 1023428,
+      "paint_size_bytes": 110584
     }
   }
 }

@@ -67,11 +67,33 @@ static func global_rest(skeleton: Skeleton3D, bone: int) -> Transform3D:
 ## Where a grip should sit inside the given hand, in skeleton space.
 static func grip_point(skeleton: Skeleton3D, bone: int) -> Vector3:
 	var rest := global_rest(skeleton, bone)
-	# A leaf bone has no child to measure against, but its own rest translation is
-	# the offset from its parent, and this rig's hand and forearm are the same
-	# length. Local +Y runs along the bone, which is how Blender exports joints.
-	var length: float = skeleton.get_bone_rest(bone).origin.length()
-	return rest.origin + rest.basis.y.normalized() * (length * GRIP_ALONG_HAND)
+	var along := _bone_along(skeleton, bone)
+	if along.length_squared() < 0.0001:
+		# A leaf bone has no child to measure against; the authored humanoid
+		# hands run along local +Y the way Blender exports them.
+		var length: float = skeleton.get_bone_rest(bone).origin.length()
+		along = rest.basis.y.normalized() * length
+	return rest.origin + along.normalized() * (along.length() * GRIP_ALONG_HAND)
+
+
+## Direction and length of `bone`, taken from a child joint when the rig has
+## one. Mixamo hands have finger bones and do not run along +Y.
+static func _bone_along(skeleton: Skeleton3D, bone: int) -> Vector3:
+	var rest := global_rest(skeleton, bone)
+	var preferred := -1
+	var fallback := -1
+	for index in skeleton.get_bone_count():
+		if skeleton.get_bone_parent(index) != bone:
+			continue
+		if fallback < 0:
+			fallback = index
+		if skeleton.get_bone_name(index).begins_with("middle"):
+			preferred = index
+			break
+	var child := preferred if preferred >= 0 else fallback
+	if child < 0:
+		return Vector3.ZERO
+	return global_rest(skeleton, child).origin - rest.origin
 
 
 ## Local transform for a weapon parented to `bone`'s attachment: puts the grip at
@@ -94,7 +116,7 @@ static func equip(character: Node, hand: String, weapon: String, source := "") -
 	if not HANDS.has(hand):
 		push_error("Weapons: unknown hand '%s'" % hand)
 		return null
-	var bone := skeleton.find_bone(HANDS[hand])
+	var bone := CharacterRig.find_bone(skeleton, StringName(HANDS[hand]))
 	if bone < 0:
 		push_error("Weapons: no '%s' bone on %s" % [HANDS[hand], skeleton.name])
 		return null
@@ -126,7 +148,7 @@ static func equip(character: Node, hand: String, weapon: String, source := "") -
 	var mount := BoneAttachment3D.new()
 	mount.name = NODE_PREFIX + hand
 	skeleton.add_child(mount)
-	mount.bone_name = HANDS[hand]
+	mount.bone_name = String(CharacterRig.bone_name(skeleton, StringName(HANDS[hand])))
 	mount.add_child(mesh)
 	mesh.transform = grip_transform(skeleton, bone)
 	return mesh

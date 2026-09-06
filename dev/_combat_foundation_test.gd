@@ -6,6 +6,7 @@ extends Node
 
 const PLAYER := preload("res://game/player/player.tscn")
 const TEST_CYCLE := preload("res://dev/_multiplayer_test_cycle.gd")
+const JUKE_GHOST := preload("res://game/player/juke_afterimage.gd")
 
 var _failures := 0
 var _saved_players: Dictionary
@@ -111,6 +112,7 @@ func _ready() -> void:
 	_check_input(player)
 	_check_parry_health_and_feedback(player, enemy)
 	_check_death_snapshot_respawn(world_a, player, enemy)
+	_check_juke(world_a, player, enemy)
 	_check_grab_follow_and_throw(world_a, player, enemy)
 
 	world_b.queue_free()
@@ -436,6 +438,76 @@ func _check_death_snapshot_respawn(world: GameWorld, player: OnlinePlayer,
 	_expect(not player.is_dead() and is_equal_approx(player.health(), 37.0)
 		and player.has_status(CombatStatuses.FLIGHTLESS),
 		"late-join combat snapshot applies health/status over defaults")
+
+
+func _check_juke(world: GameWorld, player: OnlinePlayer,
+		enemy: TestEnemy) -> void:
+	player.apply_held("")
+	player._juke_left = 0.0
+	player._juke_cooldown_left = 0.0
+	Input.action_press("move_left")
+	_expect(player.request_juke(), "empty hands can start a juke")
+	Input.action_release("move_left")
+	_expect(player.juke_active(), "juke opens an invulnerable window")
+	var left := -player.camera.global_basis.x
+	_expect(player.juke_direction().dot(left) > 0.7,
+		"holding A jukes left")
+	var ghosts := 0
+	for child: Node in world.get_children():
+		if child.get_script() == JUKE_GHOST:
+			ghosts += 1
+	_expect(ghosts > 0, "a juke leaves a transparent afterimage")
+	var hp := player.health()
+	var poke := DamageHit.impact(player.combat_position(), 1.2, 18.0)
+	poke.faction = DamageHit.Faction.ENEMY
+	poke.target_peer = player.peer_id
+	poke.set_source(enemy)
+	poke.status = CombatStatuses.FLIGHTLESS
+	poke.status_duration = 2.0
+	_expect(is_zero_approx(player.apply_damage(poke)),
+		"a juke takes no damage")
+	_expect(is_equal_approx(player.health(), hp),
+		"a juke keeps the hit points")
+	var before := player.global_position
+	player._juke_move(0.05)
+	_expect(player.global_position.distance_to(before) > 0.8,
+		"a juke rushes the body a few metres")
+	player._tick_combat(OnlinePlayer.JUKE_TIME)
+	player._juke_cooldown_left = 0.0
+	var along := player._juke_wish_direction()
+	var carried := along * 18.0
+	player.velocity = carried
+	_expect(player.request_juke(), "a moving body can still juke")
+	player._juke_move(0.016)
+	var burst := OnlinePlayer.JUKE_DISTANCE / OnlinePlayer.JUKE_TIME
+	_expect(player.velocity.dot(along) > burst + 12.0,
+		"juke adds onto existing run or flight speed")
+	player._tick_combat(OnlinePlayer.JUKE_TIME)
+	_expect(not player.juke_active(), "the juke window ends")
+	_expect(player.apply_damage(poke) > 0.0, "hits land after a juke")
+	_expect(not player.request_juke(), "juke cooldown is host-validated")
+	player._tick_combat(OnlinePlayer.JUKE_COOLDOWN)
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_RIGHT
+	mouse.pressed = true
+	_expect(mouse.is_action_pressed(&"aim") and not player._weapon_can_aim(),
+		"right click is juke when no rifle is sighted")
+	var aim := InputEventAction.new()
+	aim.action = &"aim"
+	aim.pressed = true
+	player._unhandled_input(aim)
+	_expect(player.juke_active(), "the aim action starts a juke")
+	player._tick_combat(OnlinePlayer.JUKE_TIME + OnlinePlayer.JUKE_COOLDOWN)
+	player.apply_held("laser_rifle")
+	_expect(player._weapon_can_aim(),
+		"a drawn rifle still uses right click to aim")
+	player._unhandled_input(aim)
+	_expect(not player.juke_active(),
+		"a sighted rifle does not start a juke")
+	player.apply_held("")
+	player.stats.set_health(player.maximum_health())
+	player._juke_left = 0.0
+	player._juke_cooldown_left = 0.0
 
 
 func _check_grab_follow_and_throw(world: GameWorld,

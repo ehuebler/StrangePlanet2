@@ -1,0 +1,16 @@
+kind,level,title,patches,health,damage,speed,cap,agro,spawn,attack,agro_range,deagro_range,spawn_min,spawn_max,flyer_ceiling,engage_min,engage_max,standoff_min,standoff_max,shot_speed,shot_ball,shot_hit,aim_seconds,charge_from,charge_mul,ram_top,ram_accel,fire,xp,notes
+ranger,1,Ranger,Tide Margin 4:near;Tide Margin 4:far;*,70,14,42,11,leash,ahead,standoff,58,140,90,240,16,20,52,24,42,24,0.62,1.45,1.0,0,0,0,0,1.35,16,Waits ahead of the run. Holds a wide standoff off the crown and lobs a glowing purple orb after a one-second aim.
+ranger,2,Ranger,Tide Margin 4:near;Tide Margin 4:far;*,90,17,50,11,leash,ahead,standoff,62,145,90,240,23,20,68,26,50,28,0.54,1.32,0.95,0,0,0,0,1.20,28,Longer standoff and a slightly quicker orb. Many bells can share a pack.
+ranger,3,Ranger,Tide Margin 4:near;Tide Margin 4:far;*,115,21,58,14,leash,ahead,standoff,66,150,90,240,30,20,84,28,58,32,0.48,1.20,0.90,0,0,0,0,1.05,44,Harder tiles pack more bells. Orbs stay large and close faster.
+ranger,4,Ranger,Tide Margin 4:near;Tide Margin 4:far;*,145,26,66,14,leash,ahead,standoff,70,155,90,240,37,20,100,30,66,36,0.44,1.10,0.85,0,0,0,0,0.92,64,Hard-patch bells still throw a purple orb from farther out.
+rhino,1,Rhino,Tide Margin 4:near;Tide Margin 4:far;*,130,20,7,9,leash,ahead,charge,36,110,90,240,0,0,0,0,0,0,0,0,0,20,2.2,0,0,3.2,20,Meteor strike only. Lines up on a slow target. Matches a runner with lag then cuts ahead into the intercept. Backs off if the player is too close.
+rhino,2,Rhino,Tide Margin 4:near;Tide Margin 4:far;*,155,24,8,9,leash,ahead,charge,38,115,90,240,0,0,0,0,0,0,0,0,0,22,2.3,0,0,3.0,34,Same meteor. Closes the lead a little sooner and hits harder.
+rhino,3,Rhino,Tide Margin 4:near;Tide Margin 4:far;*,185,28,10,11,leash,ahead,charge,40,120,90,240,0,0,0,0,0,0,0,0,0,24,2.4,0,0,2.8,52,Starts the meteor from farther out and keeps the lagged frame.
+rhino,4,Rhino,Tide Margin 4:near;Tide Margin 4:far;*,220,34,12,12,leash,ahead,charge,42,125,90,240,0,0,0,0,0,0,0,0,0,26,2.5,0,0,2.6,76,Hard patches field a crowd of chargers. Meteor comes out faster.
+rammer,1,Rammer,Tide Margin 4:far;*,48,22,12,9,leash,ahead,ram,36,110,90,240,8,0,0,0,0,0,0,0,0,0,0,24,10,0.93,14,Waits ahead of travel and winds up from a stop into a dive once the player closes.
+rammer,2,Rammer,Tide Margin 4:far;*,58,26,14,9,leash,ahead,ram,38,115,90,240,9,0,0,0,0,0,0,0,0,0,0,28,11,0.88,24,Appears a bit farther out on a fast run and reaches a higher ram speed.
+rammer,3,Rammer,Tide Margin 4:far;*,70,31,16,10,leash,ahead,ram,40,120,90,240,10,0,0,0,0,0,0,0,0,0,0,32,12,0.82,38,Faster wind-up. Many eyeballs can share a pack.
+rammer,4,Rammer,Tide Margin 4:far;*,84,37,18,10,leash,ahead,ram,42,125,90,240,11,0,0,0,0,0,0,0,0,0,0,36,13,0.76,56,Hard-patch rams hit harder and finish the dive sooner.
+rift_hulk,1,Rift-Hulk,,220,28,11,1,leash,ground,slam,28,90,16,32,0,0,0,0,0,0,0,0,0,0,0,0,0,1.35,36,Box brute. Not called by field patches.
+rift_hulk,2,Rift-Hulk,,280,34,12,1,leash,ground,slam,30,95,16,34,0,0,0,0,0,0,0,0,0,0,0,0,0,1.20,58,Tougher slam. Still a box spawn only.
+rift_hulk,3,Rift-Hulk,,350,42,13,1,leash,ground,slam,32,100,16,36,0,0,0,0,0,0,0,0,0,0,0,0,0,1.05,88,Late-box hulk. Field patches still do not call it.

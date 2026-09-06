@@ -906,6 +906,7 @@ func _on_preview_input(event: InputEvent) -> void:
 func _new_model() -> Node3D:
 	var packed := CharacterDB.scene(_body_id)
 	var model: Node3D = packed.instantiate() if packed != null else Node3D.new()
+	CharacterRig.normalize_body(model)
 	SurfaceSkin.apply(model, true)
 	SurfaceSkin.set_body_texture(model, CharacterDB.skin_texture(_body_id, _skin_id))
 	_play_idle(model)
@@ -928,10 +929,13 @@ func _play_idle(character: Node) -> void:
 	for node in character.find_children("*", "AnimationPlayer", true, false):
 		animator = node as AnimationPlayer
 		break
-	if animator == null or not animator.has_animation("Idle"):
+	if animator == null:
 		return
-	animator.get_animation("Idle").loop_mode = Animation.LOOP_LINEAR
-	animator.play("Idle")
+	CharacterRig.prepare(animator, CharacterDB.extra_animation_paths(_body_id))
+	var clip := CharacterRig.resolve_clip(animator, "Idle")
+	if not animator.has_animation(clip):
+		return
+	animator.play(clip)
 
 
 # --- Small parts ------------------------------------------------------------

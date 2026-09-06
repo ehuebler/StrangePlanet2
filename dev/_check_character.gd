@@ -7,6 +7,8 @@ extends SceneTree
 ## without autoloads, and CharacterDB reaches SettingsManager to load the saved
 ## look, so importing it here fails to compile before the first line runs.
 
+const CharacterRigScript := preload("res://game/player/character_rig.gd")
+
 const BODIES := {
 	"astronaut": "res://assets/runtime/characters/player_character.glb",
 	"settler": "res://assets/runtime/characters/player_character_3.glb",
@@ -83,15 +85,19 @@ func _check(path: String) -> void:
 			func(i: int) -> String: return skeleton.get_bone_name(i)))
 
 	if skeleton != null:
-		var ankle := skeleton.get_bone_global_rest(skeleton.find_bone("LeftFoot")).origin
-		var toe := skeleton.get_bone_global_rest(skeleton.find_bone("LeftToes")).origin
+		var ankle := skeleton.get_bone_global_rest(
+			CharacterRigScript.find_bone(skeleton, &"LeftFoot")).origin
+		var toe := skeleton.get_bone_global_rest(
+			CharacterRigScript.find_bone(skeleton, &"LeftToes")).origin
 		print("RESULT ankle=", ankle, " toe=", toe)
 		# Godot's -Z is forward, so the toes have to sit in front of the ankle.
 		print("RESULT faces_forward=", toe.z < ankle.z)
 		# And the left hand has to be on the left, which in Godot is +X.
 		print("RESULT left_hand_x=",
-			skeleton.get_bone_global_rest(skeleton.find_bone("LeftHand")).origin.x)
-		var nose := skeleton.get_bone_global_rest(skeleton.find_bone("Head")).origin
+			skeleton.get_bone_global_rest(
+				CharacterRigScript.find_bone(skeleton, &"LeftHand")).origin.x)
+		var nose := skeleton.get_bone_global_rest(
+			CharacterRigScript.find_bone(skeleton, &"Head")).origin
 		print("RESULT head_at=", nose)
 
 	for child in skeleton.get_children():
@@ -114,10 +120,14 @@ func _poses(root: Node, skeleton: Skeleton3D) -> void:
 		print("RESULT: no AnimationPlayer")
 		return
 	print("RESULT clips=", player.get_animation_list())
+	var authored_seams := player.has_animation("JumpRise")
+	CharacterRigScript.prepare(player)
 	for clip_name in POSED:
-		if not player.has_animation(clip_name):
+		var resolved := CharacterRigScript.resolve_clip(player, clip_name)
+		if not player.has_animation(resolved):
 			print("RESULT pose ", clip_name, " MISSING")
 			continue
+		clip_name = resolved
 		var clip := player.get_animation(clip_name)
 		# A quarter of the way in. Every cycle here is symmetric about its
 		# midpoint, so phase 0 and phase 0.5 are the two frames where the arms
@@ -132,7 +142,8 @@ func _poses(root: Node, skeleton: Skeleton3D) -> void:
 			% [clip_name, rad_to_deg(atan2(hips.z - neck.z, neck.y - hips.y)),
 				hips.z - hand.z, hand.y - hips.y]
 			+ "   feet %+.2f / %+.2f under hips" % [left.y - hips.y, right.y - hips.y])
-	_seams(skeleton, player)
+	if authored_seams:
+		_seams(skeleton, player)
 
 
 ## How far the hands jump, relative to the chest, where one clip hands over to the
@@ -167,7 +178,7 @@ func _in_chest(skeleton: Skeleton3D, clip: Animation, time: float, bone_name: St
 ## untracked bone keeps its rest and a tracked one replaces it outright.
 func _posed(skeleton: Skeleton3D, clip: Animation, time: float, bone_name: String) -> Transform3D:
 	var chain: Array[int] = []
-	var index := skeleton.find_bone(bone_name)
+	var index := CharacterRigScript.find_bone(skeleton, StringName(bone_name))
 	while index >= 0:
 		chain.push_front(index)
 		index = skeleton.get_bone_parent(index)

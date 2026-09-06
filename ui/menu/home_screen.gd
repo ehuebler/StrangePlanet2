@@ -20,7 +20,7 @@ signal handed_over
 
 const PALETTE: UIPalette = preload("res://ui/themes/ui_palette.tres")
 
-enum View { HOME, ONLINE, SETTINGS, CHARACTER }
+enum View { HOME, ONLINE, SETTINGS, CHARACTER, UPGRADES, ACHIEVEMENTS }
 
 ## Camera poses, in the spawn point's frame: metres from the spawn, then degrees
 ## of yaw and pitch (positive is up) off its facing, and the field of view. The
@@ -83,7 +83,8 @@ const SKY_OUTLINE := Color(0.02, 0.01, 0.03, 0.92)
 ## Side of the pencil beside the name field, in pixels.
 const PENCIL_SIZE := 34.0
 
-## What New Game opens onto. The identifier is stored in
+## Mode cards remain for Online host setup. The home Start Game button
+## launches crawler directly. The identifier is stored in
 ## NetworkManager.session_options even before the modes grow different rules, so
 ## save files and future mode systems do not have to infer it from a button label.
 const MODES: Array[Dictionary] = [
@@ -123,7 +124,6 @@ const PLANET_TITLE_GRID := Vector2i(32, 18)
 ## Clear enough of coarse terrain LOD to avoid z-fighting, but still hundreds of
 ## metres beneath the cloud deck so weather naturally crosses in front of it.
 const PLANET_TITLE_CLEARANCE := 32.0
-const PLANET_TITLE_FADE_TIME := 0.55
 const HOME_RED := Color("ef151f")
 const HOME_RED_BRIGHT := Color("ff3445")
 const HOME_RED_TEXT := Color("ff9ca4")
@@ -189,6 +189,7 @@ var _back: Button
 var _screen_host: MarginContainer
 var _screen: Control
 var _notice: Label
+var _gems: Label
 var _fade: ColorRect
 var _move: Tween
 var _background_fade: Tween
@@ -403,6 +404,7 @@ func _spawn_preview() -> void:
 	_preview = packed.instantiate() as Node3D
 	_preview.name = "PreviewCharacter"
 	add_child(_preview)
+	CharacterRig.normalize_body(_preview)
 	SurfaceSkin.apply(_preview, true)
 	_dress_preview()
 	_preview.global_position = frame.origin
@@ -414,10 +416,13 @@ func _spawn_preview() -> void:
 		_face_camera()
 	# The spawn hangs in orbit with nothing under it, so the body that stands
 	# there is floating, and so is the one the player takes over.
-	var animator := _preview.get_node_or_null("AnimationPlayer") as AnimationPlayer
-	if animator != null and animator.has_animation("Float"):
-		animator.get_animation("Float").loop_mode = Animation.LOOP_LINEAR
-		animator.play("Float")
+	var animator := CharacterRig.animator_of(_preview)
+	if animator != null:
+		CharacterRig.prepare(animator, CharacterDB.extra_animation_paths(
+			str(_look.get("body", CharacterDB.DEFAULT_BODY))))
+		var clip := CharacterRig.resolve_clip(animator, "Float")
+		if animator.has_animation(clip):
+			animator.play(clip)
 
 
 ## Re-dresses the figure from scratch every time, garments and all. A tint
@@ -540,7 +545,7 @@ func _build_overlay() -> void:
 	_menu.offset_top = -(MENU_ROW_HEIGHT + MENU_ROW_INSET)
 	_menu.offset_bottom = -MENU_ROW_INSET
 	_menu.alignment = BoxContainer.ALIGNMENT_CENTER
-	_menu.add_theme_constant_override("separation", 14)
+	_menu.add_theme_constant_override("separation", 8)
 	_root.add_child(_menu)
 	_fill_menu_row()
 	_build_mode_panel()
@@ -566,6 +571,19 @@ func _build_overlay() -> void:
 	_notice.visible = false
 	_root.add_child(_notice)
 
+	_gems = _sky_label("0 GEMS", 22)
+	_gems.name = "HomeGemCounter"
+	_gems.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_gems.offset_left = -240.0
+	_gems.offset_top = 18.0
+	_gems.offset_right = -36.0
+	_gems.offset_bottom = 52.0
+	_gems.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_gems.add_theme_color_override("font_color", HOME_GREEN_TEXT)
+	_gems.visible = false
+	_root.add_child(_gems)
+	_refresh_gem_counter()
+
 	# There is no boot sheet any more: the first thing the game shows is this
 	# scene, and it fades up out of the dark the starfield is already made of.
 	_fade = ColorRect.new()
@@ -586,13 +604,28 @@ func _fill_menu_row() -> void:
 	var actions: Array[Dictionary] = [
 		{
 			"name": "HomeNewGame",
-			"label": "New Game",
-			"callback": func() -> void: _pick_mode(true),
+			"label": "Start Game",
+			"callback": func() -> void: start_new_game("crawler"),
 		},
 		{
 			"name": "HomeOnline",
 			"label": "Online",
 			"callback": func() -> void: show_view(View.ONLINE),
+		},
+		{
+			"name": "HomeSandbox",
+			"label": "Sandbox",
+			"callback": func() -> void: start_new_game("sandbox"),
+		},
+		{
+			"name": "HomeUpgrades",
+			"label": "Upgrades",
+			"callback": func() -> void: show_view(View.UPGRADES),
+		},
+		{
+			"name": "HomeAchievements",
+			"label": "Achieve",
+			"callback": func() -> void: show_view(View.ACHIEVEMENTS),
 		},
 		{
 			"name": "HomeSettings",
@@ -614,7 +647,7 @@ func _fill_menu_row() -> void:
 			bool(action.get("destructive", false))
 		)
 		button.name = String(action["name"])
-		button.custom_minimum_size = Vector2(190.0, 50.0)
+		button.custom_minimum_size = Vector2(124.0, 50.0)
 		button.add_theme_font_size_override(
 			&"font_size", HOME_ACTION_FONT_SIZE)
 		_menu.add_child(button)
@@ -1202,8 +1235,32 @@ func _home_style(
 	return box
 
 
+func _refresh_gem_counter() -> void:
+	if _gems == null:
+		return
+	_gems.text = "%d GEMS" % CrawlerMeta.gems()
+	_gems.visible = _view == View.CHARACTER or _view == View.UPGRADES \
+		or _view == View.ACHIEVEMENTS
+
+
+func _pose_view(view: View) -> View:
+	match view:
+		View.ONLINE, View.UPGRADES, View.ACHIEVEMENTS:
+			return View.ONLINE
+		View.SETTINGS:
+			return View.SETTINGS
+		_:
+			return View.HOME
+
+
+func _planet_overlay(view: View) -> bool:
+	return view == View.ONLINE or view == View.UPGRADES \
+		or view == View.ACHIEVEMENTS
+
+
 func _transition_framed_background(view: View) -> bool:
-	var framed := view == View.ONLINE or view == View.SETTINGS
+	var framed := view == View.ONLINE or view == View.SETTINGS \
+		or view == View.UPGRADES or view == View.ACHIEVEMENTS
 	if _background_fade != null and _background_fade.is_valid():
 		_background_fade.kill()
 	if not framed:
@@ -1240,9 +1297,9 @@ func show_view(view: View) -> void:
 	if _handover_target != null:
 		return
 	_view = view
-	# Character editing keeps the HOME camera; the other views each have a pose.
-	var pose_view := View.HOME if view == View.CHARACTER else view
-	_apply_pose(pose_view, false)
+	# Character editing keeps the HOME camera. Upgrades and achievements
+	# share the Online planet pose so those pages turn to the globe first.
+	_apply_pose(_pose_view(view), false)
 	_set_notice("", false)
 	if is_instance_valid(_screen):
 		_screen.queue_free()
@@ -1287,7 +1344,7 @@ func show_view(view: View) -> void:
 		EDITOR_TOP
 		if editing
 		else 36.0
-		if view == View.ONLINE
+		if _planet_overlay(view)
 		else 92.0
 		if view == View.SETTINGS
 		else TITLE_BAND
@@ -1303,6 +1360,16 @@ func show_view(view: View) -> void:
 			settings.configure(false)
 			settings.closed.connect(func() -> void: show_view(View.HOME))
 			_screen = settings
+		View.UPGRADES:
+			var upgrades := MetaUpgradesPanel.new()
+			upgrades.closed.connect(func() -> void: show_view(View.HOME))
+			upgrades.gems_changed.connect(_refresh_gem_counter)
+			_screen = upgrades
+		View.ACHIEVEMENTS:
+			var achievements := AchievementsPanel.new()
+			achievements.closed.connect(func() -> void: show_view(View.HOME))
+			achievements.gems_changed.connect(_refresh_gem_counter)
+			_screen = achievements
 		View.CHARACTER:
 			_screen = _character_editor()
 	if _screen != null:
@@ -1314,12 +1381,13 @@ func show_view(view: View) -> void:
 			1.0,
 			SCREEN_FADE_TIME
 		).set_delay(SCREEN_FADE_DELAY).set_trans(Tween.TRANS_SINE)
+	_refresh_gem_counter()
 
 
 # --- The character editor -----------------------------------------------------
 #
 # The designer has the same visual and container contracts as the in-game Hero
-# and Apparel pages, but not their combat concerns. There is no weapon editor,
+# and Hats pages, but not their combat concerns. There is no weapon editor,
 # hotbar or stats here; the live figure beside the panel is already the preview.
 
 
@@ -1345,6 +1413,8 @@ func _character_editor() -> Control:
 		NetworkManager.saved_player_name()
 	)
 	_designer.skin_picked.connect(_on_skin_picked)
+	_designer.body_picked.connect(_on_body_picked)
+	_designer.hat_unlocked.connect(_on_hat_unlocked)
 	_designer.tint_picked.connect(_on_tint_picked)
 	_designer.tint_cleared.connect(_on_tint_cleared)
 	_designer.name_entered.connect(_rename)
@@ -1425,9 +1495,12 @@ func _capture_worn() -> void:
 	var available_apparel := PackedStringArray()
 	for index in _apparel_rail.size():
 		var item_id := _apparel_rail.get_item(index)
-		if not item_id.is_empty() and not in_use.has(item_id) \
-				and not available_apparel.has(item_id):
-			available_apparel.append(item_id)
+		if item_id.is_empty() or in_use.has(item_id) \
+				or available_apparel.has(item_id):
+			continue
+		if ItemDB.is_apparel(item_id) and not CrawlerMeta.owns_hat(item_id, _look):
+			continue
+		available_apparel.append(item_id)
 
 	var backpack: Array = []
 	for item_id: String in CharacterDB.backpack_items(
@@ -1447,10 +1520,36 @@ func _capture_worn() -> void:
 	CharacterDB.save_look(_look)
 
 
-## There is no body picker any more: [method CharacterDB.playable_ids] offers one
-## body, so a picker would be a single button that does nothing. The texture row
-## is not that picker: both choices remain this body and therefore keep its
-## clothes and physical measurements.
+func _on_body_picked(body_id: String) -> void:
+	var clean := CharacterDB.sanitize_body(body_id)
+	if clean == str(_look.get("body", CharacterDB.DEFAULT_BODY)):
+		return
+	_look["body"] = clean
+	_look["skin"] = CharacterDB.default_skin(clean)
+	var worn: Dictionary = (_look.get("worn", {}) as Dictionary).duplicate()
+	for slot: String in worn.keys():
+		if not CharacterDB.apparel_fits(clean, str(worn[slot])):
+			worn.erase(slot)
+	_look["worn"] = worn
+	CharacterDB.save_look(_look)
+	_stock_editor(clean)
+	if is_instance_valid(_designer):
+		_designer.configure(
+			_worn_slots,
+			_apparel_rail,
+			clean,
+			str(_look.get("skin", CharacterDB.default_skin(clean))),
+			_look.get("tints", {}),
+			NetworkManager.saved_player_name()
+		)
+	_spawn_preview()
+
+
+func _on_hat_unlocked(_item_id: String) -> void:
+	_capture_worn()
+	_refresh_gem_counter()
+
+
 func _on_skin_picked(skin_id: String) -> void:
 	var body_id := CharacterDB.sanitize_body(str(_look.get("body", CharacterDB.DEFAULT_BODY)))
 	_look["skin"] = CharacterDB.sanitize_skin(body_id, skin_id)
@@ -1505,7 +1604,7 @@ func _on_steam_invite_received(
 # --- Handing over ------------------------------------------------------------
 
 
-func start_new_game(game_mode := "story", duels_mode := "") -> void:
+func start_new_game(game_mode := "crawler", duels_mode := "") -> void:
 	if _handover_target != null or _awaiting_player or _warming:
 		return
 	# The player starts exactly where the character they have been looking at was
@@ -1514,6 +1613,10 @@ func start_new_game(game_mode := "story", duels_mode := "") -> void:
 	CharacterDB.save_look(_look)
 	_world().override_local_spawn(_preview.global_transform)
 	_world().override_local_look(_look)
+	# Crawler drops the home chrome before warm-up so Start Game is not sitting
+	# on a still-visible mode panel for a second.
+	if NetworkManager.sanitize_game_mode(game_mode) == CrawlerRules.MODE_ID:
+		_dismiss_overlay()
 	# Before the session rather than after it, because the point is to be holding
 	# the player still while this happens. Once a session exists the world is
 	# theirs and every millisecond of it is a frame they are flying in.
@@ -1542,6 +1645,11 @@ func _on_session_started() -> void:
 
 
 func _dismiss_overlay() -> void:
+	_picking_mode = false
+	if _mode_panel != null:
+		_mode_panel.visible = false
+	if is_instance_valid(_name_row):
+		_name_row.visible = false
 	_menu.visible = false
 	_back.visible = false
 	# The framed artwork is a sibling of the lobby panel, so removing the panel
@@ -1551,13 +1659,10 @@ func _dismiss_overlay() -> void:
 	if is_instance_valid(_screen):
 		_screen.queue_free()
 		_screen = null
+	if is_instance_valid(_title):
+		_title.visible = false
 	if _title_material != null:
-		create_tween().tween_property(
-			_title_material,
-			"albedo_color",
-			Color(1.0, 1.0, 1.0, 0.0),
-			PLANET_TITLE_FADE_TIME
-		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		_title_material.albedo_color = Color(1.0, 1.0, 1.0, 0.0)
 	_notice.visible = false
 
 
@@ -1572,6 +1677,8 @@ func _begin_handover(player: OnlinePlayer) -> void:
 		_preview.visible = false
 		_preview.queue_free()
 	player.visible = true
+	if player.has_method(&"play_spawn_arrival"):
+		player.call(&"play_spawn_arrival")
 	if _move != null and _move.is_valid():
 		_move.kill()
 	_handover_from = _camera.global_transform

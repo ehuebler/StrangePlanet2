@@ -148,6 +148,7 @@ var _heads: Array[Transform3D] = []
 var _trunk_stand: MultiMeshInstance3D
 var _head_stand: MultiMeshInstance3D
 var _tree_colliders: Array = []
+var _collision_body: StaticBody3D
 var _broken_trees: Dictionary = {}
 ## A sphere around every trunk in the colony, in this node's own space, so one
 ## comparison can tell an ability aimed anywhere else on the planet that it has
@@ -470,6 +471,7 @@ func _raise_collision() -> void:
 		body.add_child(crown_collider)
 		colliders.append(crown_collider)
 		_tree_colliders[index] = colliders
+	_collision_body = body
 	add_child(body, false, Node.INTERNAL_MODE_BACK)
 
 
@@ -522,6 +524,15 @@ func health_for(visual_height: float) -> float:
 ## against sixteen-metre trunks standing over the colony.
 func impact_threshold(visual_height: float) -> float:
 	return health_for(visual_height) / PlantSpecies.HEALTH_PER_BREAK_SPEED
+
+
+## The one body that owns every trunk and crown shape. See
+## [method GroundCover.collision_rids].
+func collision_rids() -> Array[RID]:
+	var rids: Array[RID] = []
+	if is_instance_valid(_collision_body):
+		rids.append(_collision_body.get_rid())
+	return rids
 
 
 ## Ability damage contract, shared with [GroundCover] through

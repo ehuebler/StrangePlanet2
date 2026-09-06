@@ -44,6 +44,13 @@ const ABILITY_DISPLAY_NAMES := {
 	"parry_reflect": "Parry Reflection",
 	"starfire": "Starfire",
 	"wall": "Wall",
+	"crawler_ranger_shot": "Ranger Shot",
+	"crawler_ram": "Rammer",
+	"crawler_rhino_meteor": "Meteor Strike",
+	"crawler_hulk_slam": "Slam",
+	"fauna_body_slap": "Body Slam",
+	"fauna_quills": "Quills",
+	"fauna_spit": "Spit",
 }
 
 enum Shape {
@@ -222,16 +229,19 @@ static func cylinder(from: Vector3, to: Vector3, cylinder_radius: float,
 	return hit
 
 
-func set_source(source: Node, peer := -1) -> DamageHit:
-	if source == null:
-		return self
-	var world := game_world_of(source)
-	if world != null:
-		source_path = world.get_path_to(source)
+func set_source(source: Variant, peer := -1) -> DamageHit:
 	if peer >= 0:
 		source_peer = peer
-	elif source.has_method(&"combat_peer_id"):
-		source_peer = int(source.call(&"combat_peer_id"))
+	# Projectiles can outlive the body that threw them. A typed Node argument
+	# rejects a freed instance before this body runs, so the check lives here.
+	if source == null or not is_instance_valid(source) or not source is Node:
+		return self
+	var node := source as Node
+	var world := game_world_of(node)
+	if world != null:
+		source_path = world.get_path_to(node)
+	if peer < 0 and node.has_method(&"combat_peer_id"):
+		source_peer = int(node.call(&"combat_peer_id"))
 	return self
 
 
@@ -394,19 +404,13 @@ func affects_combatant(combatant: Node) -> bool:
 		if not combatant.has_method(&"combat_peer_id") \
 				or int(combatant.call(&"combat_peer_id")) != target_peer:
 			return false
-	var point := Vector3.ZERO
-	if combatant.has_method(&"combat_position"):
-		point = combatant.call(&"combat_position") as Vector3
-	elif combatant is Node3D:
-		point = (combatant as Node3D).global_position
-	else:
-		return false
+	var box := _combatant_aabb(combatant)
+	if box.size.length_squared() > 0.0001:
+		return reaches_aabb(box)
+	var point := _combatant_position(combatant)
 	if not point.is_finite():
 		return false
-	var bounds := 0.0
-	if combatant.has_method(&"combat_radius"):
-		bounds = maxf(float(combatant.call(&"combat_radius")), 0.0)
-	return reaches(point, bounds)
+	return reaches(point, _combatant_radius(combatant))
 
 
 func centre() -> Vector3:
@@ -452,13 +456,21 @@ func damage_at(point: Vector3) -> float:
 ## untouched and can still be offered to every other target and flora field.
 func resolved_for(combatant: Node) -> DamageHit:
 	var delivered := _copy()
-	var point := _combatant_position(combatant)
+	var box := _combatant_aabb(combatant)
+	var boxed := box.size.length_squared() > 0.0001
+	if boxed and not reaches_aabb(box):
+		delivered.amount = 0.0
+		return delivered
+	var point := _closest_on_aabb(box, centre()) if boxed \
+		else _combatant_position(combatant)
 	if not point.is_finite():
 		delivered.amount = 0.0
 		return delivered
-	var bounds := _combatant_radius(combatant)
+	var bounds := 0.0 if boxed else _combatant_radius(combatant)
 	var away := 0.0
-	if shape == Shape.CYLINDER:
+	if boxed:
+		away = maxf(distance_to(point), 0.0)
+	elif shape == Shape.CYLINDER:
 		if _cylinder_solid_distance(point) > bounds:
 			delivered.amount = 0.0
 			return delivered
@@ -530,6 +542,17 @@ func reaches(at: Vector3, bounds: float) -> bool:
 	if shape == Shape.CYLINDER:
 		return _cylinder_solid_distance(at) <= maxf(bounds, 0.0)
 	return distance_to(at) <= radius + maxf(bounds, 0.0)
+
+
+## Whether this volume overlaps an axis-aligned combat box.
+func reaches_aabb(box: AABB) -> bool:
+	if box.size.x < 0.0 or box.size.y < 0.0 or box.size.z < 0.0:
+		return false
+	var grown := box.grow(maxf(radius, 0.0))
+	if grown.has_point(origin) or grown.has_point(toward):
+		return true
+	var hit: Variant = grown.intersects_segment(origin, toward)
+	return hit != null
 
 
 ## Whether this volume overlaps a capsule from [param a] to [param b].
@@ -640,6 +663,26 @@ func _combatant_radius(combatant: Node) -> float:
 	if combatant != null and combatant.has_method(&"combat_radius"):
 		return maxf(float(combatant.call(&"combat_radius")), 0.0)
 	return 0.0
+
+
+func _combatant_aabb(combatant: Node) -> AABB:
+	if combatant != null and combatant.has_method(&"combat_aabb"):
+		var value: Variant = combatant.call(&"combat_aabb")
+		if value is AABB:
+			return value
+	var at := _combatant_position(combatant)
+	if not at.is_finite():
+		return AABB()
+	var half := _combatant_radius(combatant)
+	return AABB(at - Vector3.ONE * half, Vector3.ONE * (half * 2.0))
+
+
+func _closest_on_aabb(box: AABB, point: Vector3) -> Vector3:
+	var end := box.end
+	return Vector3(
+		clampf(point.x, box.position.x, end.x),
+		clampf(point.y, box.position.y, end.y),
+		clampf(point.z, box.position.z, end.z))
 
 
 func _copy() -> DamageHit:

@@ -13,7 +13,7 @@ const MIN_FLORA_DAMAGE := 6000.0
 
 
 static func apply(shooter: OnlinePlayer, definition: AbilityDefinition,
-		at: Vector3, facing: Vector3) -> void:
+		at: Vector3, facing: Vector3, stats_override: Dictionary = {}) -> void:
 	if not is_instance_valid(shooter) or definition == null or not at.is_finite():
 		return
 	if facing.length_squared() < 0.001 or not facing.is_finite():
@@ -22,15 +22,32 @@ static func apply(shooter: OnlinePlayer, definition: AbilityDefinition,
 	match definition.impact_type:
 		AbilityDefinition.ImpactType.EXPLOSION_CRATER, \
 				AbilityDefinition.ImpactType.GRAPPLE_SLAM:
-			_crater_blast(shooter, definition, at, facing)
+			_crater_blast(shooter, definition, at, facing, stats_override)
 		AbilityDefinition.ImpactType.MASSIVE_BLAST, \
 				AbilityDefinition.ImpactType.DELAYED_BLAST:
-			_massive_blast(shooter, definition, at, facing)
+			_massive_blast(shooter, definition, at, facing, stats_override)
+
+
+static func _stats_of(definition: AbilityDefinition, overlay: Dictionary) -> Dictionary:
+	if overlay.is_empty():
+		return definition.stats
+	var merged := definition.stats.duplicate(true)
+	merged.merge(overlay, true)
+	return merged
+
+
+static func _scaled_knockback(shooter: OnlinePlayer, stats: Dictionary) -> float:
+	var knockback := maxf(float(stats.get("knockback", 0.0)), 0.0)
+	if shooter != null and CrawlerRules.active() \
+			and shooter.has_method(&"crawler_knockback_scale"):
+		knockback *= float(shooter.call(&"crawler_knockback_scale"))
+	return knockback
 
 
 static func _crater_blast(shooter: OnlinePlayer,
-		definition: AbilityDefinition, at: Vector3, facing: Vector3) -> void:
-	var stats := definition.stats
+		definition: AbilityDefinition, at: Vector3, facing: Vector3,
+		stats_override: Dictionary = {}) -> void:
+	var stats := _stats_of(definition, stats_override)
 	var ability_id := definition.ability_id
 	var direct_radius := maxf(float(stats.get("projectile_radius", 0.5)) * 2.0, 0.5)
 	var direct := DamageHit.impact(at, direct_radius,
@@ -41,9 +58,13 @@ static func _crater_blast(shooter: OnlinePlayer,
 
 	var blast_radius := maxf(float(stats.get("radius", 1.0)), 0.1)
 	var blast := DamageHit.area(at, blast_radius,
-		maxf(float(stats.get("impact", 0.0)), 0.0), 1.0)
+		maxf(float(stats.get("impact", stats.get("damage", 0.0))), 0.0), 1.0)
 	blast.ability_id = ability_id
 	blast.affects_flora = false
+	var knockback := _scaled_knockback(shooter, stats)
+	if knockback > 0.0:
+		blast.radial_impulse = knockback
+		blast.radial_lift = knockback * 0.18
 	shooter.deal_damage(blast)
 
 	shooter.play_ability_explosion(at, blast_radius, definition.tint)
@@ -85,13 +106,14 @@ static func _crater_blast(shooter: OnlinePlayer,
 
 
 static func _massive_blast(shooter: OnlinePlayer,
-		definition: AbilityDefinition, at: Vector3, facing: Vector3) -> void:
+		definition: AbilityDefinition, at: Vector3, facing: Vector3,
+		stats_override: Dictionary = {}) -> void:
 	# Projectile and delayed marker visuals exist on every peer. Only the host is
 	# allowed to turn one into actor state, flora damage, or real terrain.
 	if shooter.multiplayer.has_multiplayer_peer() \
 			and not shooter.multiplayer.is_server():
 		return
-	var stats := definition.stats
+	var stats := _stats_of(definition, stats_override)
 	var ability_id := definition.ability_id
 	var blast_radius := maxf(float(stats.get("radius", 1.0)), 0.1)
 	# Move the damage origin just off the struck surface. This is important for
@@ -101,7 +123,7 @@ static func _massive_blast(shooter: OnlinePlayer,
 	var reaction := clampi(
 		definition.reaction_type, 0, DamageHit.Reaction.size() - 1) \
 		as DamageHit.Reaction
-	var knockback := maxf(float(stats.get("knockback", 0.0)), 0.0)
+	var knockback := _scaled_knockback(shooter, stats)
 	var lift := maxf(float(stats.get("lift", 0.0)), 0.0)
 
 	var direct_radius := maxf(

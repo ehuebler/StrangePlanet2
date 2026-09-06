@@ -1,0 +1,33 @@
+[gd_resource type="ShaderMaterial" load_steps=2 format=3]
+
+[ext_resource type="Shader" path="res://shaders/vivid/vivid_surface.gdshader" id="1_shader"]
+
+[resource]
+resource_name = "Cinder-Plate Rhino Surface"
+shader = ExtResource("1_shader")
+shader_parameter/base_color = Color(1.0, 1.0, 1.0, 1.0)
+shader_parameter/use_vertex_color = true
+shader_parameter/saturation = 1.3
+shader_parameter/brightness = 1.04
+shader_parameter/metallic = 0.0
+shader_parameter/roughness_variation = 0.18
+shader_parameter/relief_width = 2.0
+shader_parameter/region_albedo = 0.0
+shader_parameter/region_sheen = 0.28
+shader_parameter/region_rim = 0.42
+shader_parameter/detail_near = 10.0
+shader_parameter/detail_far = 52.0
+shader_parameter/camera_rim_color = Color(1.0, 0.58, 0.26, 1.0)
+shader_parameter/night_emission_color = Color(1.0, 0.48, 0.18, 1.0)
+shader_parameter/night_emission_energy = 2.3
+shader_parameter/night_emission_from_texture_alpha = true
+shader_parameter/roughness = 0.74
+shader_parameter/specular = 0.22
+shader_parameter/texture_relief = 1.55
+shader_parameter/detail_scale = 12.0
+shader_parameter/detail_amount = 0.18
+shader_parameter/bump_scale = 17.0
+shader_parameter/bump_strength = 0.2
+shader_parameter/macro_scale = 1.05
+shader_parameter/macro_amount = 0.14
+shader_parameter/camera_rim_energy = 0.38

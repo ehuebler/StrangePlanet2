@@ -1,0 +1,11 @@
+kind,id,title,description,scope,default_slots,icon
+ability,laser_eyes,Laser Eyes,"Two beams, converging on whatever you are looking at. They cut everything standing along their length, not only what they land on. Modifier slots change how the beams leave the eyes.",ability,3,res://assets/runtime/abilities/icons/laser_eyes.svg
+ability,meteor_punch,Meteor Punch,"Fist out, and go. From the air you dive; from your feet you launch flat and land in a crater of your own making.",ability,3,res://assets/runtime/abilities/icons/meteor_punch.svg
+ability,starfire,Starfire,"Hold to toss blazing energy disks from alternating hands. Each disk bursts on contact.",ability,3,res://assets/runtime/abilities/icons/starfire.svg
+ability,grapple,Grapple,"Grab a target near the crosshair, carry them up, then drive them back into the ground.",ability,3,res://assets/runtime/abilities/icons/grapple.svg
+ability,nuke,Nuke,"Launch a giant energy core. Its detonation tears a crater and hurls everything nearby.",ability,4,res://assets/runtime/abilities/icons/nuke.svg
+ability,lasso,Lasso,"Fire a physical string that tethers a target. Hold to swing, release to throw.",ability,3,res://assets/runtime/abilities/icons/lasso.svg
+ability,wall,Wall,"Project an indestructible translucent barrier in front of you.",ability,3,res://assets/runtime/abilities/icons/wall.svg
+ability,nausicaa,Nausicaa,"Sweep a short eye laser across terrain. Painted marks erupt in sequence.",ability,3,res://assets/runtime/abilities/icons/nausicaa.svg
+modifier,wobble,Wobble,"Ability-specific. On Laser Eyes the beams travel as a wobbling wave instead of a straight line.",ability_specific,0,res://assets/runtime/abilities/icons/wobble.svg
+modifier,big,Big,"Makes the ability it sits on larger. Starts small and grows exponentially through level 10.",generic,0,res://assets/runtime/abilities/icons/big.svg

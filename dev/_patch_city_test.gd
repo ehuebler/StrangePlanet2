@@ -47,6 +47,7 @@ func _ready() -> void:
 	_expect_pad_not_floating(city, shape)
 	_expect_districts_not_buried(city, shape)
 	_expect_district_aprons(city, shape)
+	_expect_apron_uses_terrain_tint(city, shape)
 	_expect(city.advance(shape), "third step draws the city map")
 	_expect(city.phase == PatchCity.PHASE_MAPPED, "city is mapped")
 	_expect_mapped(city, plan, shape)
@@ -211,6 +212,7 @@ func _expect_mapped(
 		"ghost buildings have no collision")
 	_expect_street_above_pad(city, shape)
 	_expect_fabric_on_pad(city)
+	_expect_buildings_rigid_on_slab(city, shape)
 	_expect_districts_fill_lots(city)
 	_expect_streets_clear_highway(city)
 	_expect_varied_headings(city)
@@ -411,6 +413,7 @@ func _expect_built_city(city: PatchCity, shape: PlanetShape) -> void:
 				buried += 1
 		_expect(buried > 0, "district aprons reach the terrain")
 	_expect_buildings_on_slab(city, shape)
+	_expect_buildings_rigid_on_slab(city, shape)
 	var lamps := city.get_node_or_null("CityLamps") as Node3D
 	_expect(lamps != null, "street lamps were placed")
 	_expect(city._lamp_spots.size() > 8, "lamps stand along the roads")
@@ -585,6 +588,28 @@ func _expect_painted_city(city: PatchCity) -> void:
 	_expect(cyl_half == 0 or cyl_rings == cyl_half,
 		"rect-base cylinder towers paint windows on the drum (%d / %d)"
 		% [cyl_rings, cyl_half])
+	var mixed := 0
+	var mixed_ok := 0
+	for lot in city.fabric.get("lots", []):
+		var row: Dictionary = lot
+		var variant := int(row.get("variant", -1))
+		if variant != PatchCity.VARIANT_CYL_HALF and variant != PatchCity.VARIANT_RECT_CAP:
+			continue
+		if not city._lot_on_slab(row):
+			continue
+		mixed += 1
+		var body := 0
+		var drum := 0
+		for ring in city._lot_facade_rings(row):
+			var piece: Dictionary = ring
+			if bool(piece.get("round", false)):
+				drum += 1
+			elif float(piece.get("lift", 0.0)) < 0.2:
+				body += 1
+		if body > 0 and drum > 0:
+			mixed_ok += 1
+	_expect(mixed == 0 or mixed_ok == mixed,
+		"rect-plus-cylinder buildings glaze each mass (%d / %d)" % [mixed_ok, mixed])
 	var taper_n := 0
 	var taper_setbacks := 0
 	var tall_n := 0
@@ -732,6 +757,64 @@ func _expect_buildings_on_slab(city: PatchCity, shape: PlanetShape) -> void:
 			under += 1
 	_expect(checked > 0, "built lots were seated on pavement")
 	_expect(under == 0, "buildings stay on the slab, not under it (%d under)" % under)
+
+
+func _expect_buildings_rigid_on_slab(city: PatchCity, shape: PlanetShape) -> void:
+	var sheared := 0
+	var checked := 0
+	for lot in city.fabric.get("lots", []):
+		var row: Dictionary = lot
+		if not city._lot_on_slab(row):
+			continue
+		var home := city._lot_slab_h(row)
+		if is_nan(home):
+			continue
+		var want := home + PatchCity.STREET_LIFT
+		var spots: Array = [row.get("centre", Vector2.ZERO)]
+		for piece in row.get("footprints", []):
+			var poly: PackedVector2Array = piece
+			for point in poly:
+				spots.append(point)
+		for uv in spots:
+			checked += 1
+			var mark := city._lot_deck_mark(shape, row, uv)
+			if absf(mark.length() - city._radius - want) > 0.08:
+				sheared += 1
+	_expect(checked > 0, "lot corners were seated on one slab height")
+	_expect(sheared == 0, "buildings stay level on their lot slab (%d sheared)" % sheared)
+
+	var sample: Dictionary = {}
+	for lot in city.fabric.get("lots", []):
+		var row: Dictionary = lot
+		if city._lot_on_slab(row):
+			sample = row.duplicate(true)
+			break
+	if sample.is_empty():
+		return
+	sample.erase("pad_h")
+	var cell := city._pad_cell
+	var centre: Vector2 = sample.get("centre", Vector2.ZERO)
+	var home_key := Vector2i(roundi(centre.x / cell), roundi(centre.y / cell))
+	var neighbour := Vector2i(home_key.x + 1, home_key.y)
+	var had := city._pad_tops.has(neighbour)
+	var old := float(city._pad_tops[neighbour]) if had else 0.0
+	var home := city._lot_slab_h(sample)
+	city._pad_tops[neighbour] = home + 18.0
+	var corner := Vector2(float(neighbour.x) * cell, float(neighbour.y) * cell)
+	var footprints: Array = [PackedVector2Array([centre, corner])]
+	sample["footprints"] = footprints
+	sample.erase("pad_h")
+	var locked := city._lot_deck_mark(shape, sample, corner)
+	var unlocked := city._deck_mark(shape, city._from_uv(corner), PatchCity.STREET_LIFT)
+	var still_home := absf(locked.length() - city._radius - home - PatchCity.STREET_LIFT) < 0.08
+	var jumped := unlocked.length() - city._radius > home + PatchCity.STREET_LIFT + 8.0
+	_expect(still_home, "a higher neighbour terrace does not lift the hull")
+	_expect(jumped, "the old per-corner mark would have climbed the terrace")
+	_expect(not city._lot_on_slab(sample), "lots that sit under a higher slab are skipped")
+	if had:
+		city._pad_tops[neighbour] = old
+	else:
+		city._pad_tops.erase(neighbour)
 
 
 func _expect_district_landmarks(city: PatchCity, plan: PatchCityGenerator.Plan) -> void:
@@ -1771,8 +1854,12 @@ func _expect_district_aprons(city: PatchCity, shape: PlanetShape) -> void:
 	_expect(city.get_node_or_null("CityApronBody") != null, "district aprons have collision")
 	var apron_mat := mesh.material_override as ShaderMaterial if mesh != null else null
 	_expect(
-		apron_mat != null and apron_mat.shader == PatchCity.SURFACE_MATERIAL.shader,
-		"district aprons use the planet ground shader")
+		apron_mat != null and apron_mat.shader == PatchCity.APRON_SHADER,
+		"district aprons use the two-sided planet ground shader")
+	if apron_mat != null:
+		_expect(
+			float(apron_mat.get_shader_parameter(&"ground_lift")) >= 0.2,
+			"district aprons lift off the interpolated planet mesh")
 	_expect(city.get_node_or_null("CityRamps") == null, "districts no longer grow jutting ramps")
 	if mesh == null or mesh.mesh == null:
 		return
@@ -1781,7 +1868,9 @@ func _expect_district_aprons(city: PatchCity, shape: PlanetShape) -> void:
 	_expect(verts.size() >= 48, "apron wraps the district rims (%d verts)" % verts.size())
 	var facing_out := 0
 	var facing_in := 0
-	var index_data: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var index_data := PackedInt32Array()
+	if arrays[Mesh.ARRAY_INDEX] != null:
+		index_data = arrays[Mesh.ARRAY_INDEX]
 	var tri_count := index_data.size() / 3 if index_data.size() >= 3 else verts.size() / 3
 	var tri_step := maxi(1, int(tri_count / 80))
 	for tri in range(0, tri_count, tri_step):
@@ -1834,6 +1923,7 @@ func _expect_district_aprons(city: PatchCity, shape: PlanetShape) -> void:
 	_expect(above_gap > 0, "apron occupies the gap under the pad")
 	var cols: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
 	var pavement_like := 0
+	var matched := 0
 	var coloured := 0
 	for index in range(0, cols.size(), step):
 		coloured += 1
@@ -1848,11 +1938,44 @@ func _expect_district_aprons(city: PatchCity, shape: PlanetShape) -> void:
 			sample.b - PatchCity.PAVEMENT_ROAD.b).length()
 		if walk_d < 0.14 or road_d < 0.08:
 			pavement_like += 1
+		var point: Vector3 = verts[index]
+		if point.length_squared() < 1.0:
+			continue
+		var want := shape.biome_color_at(point.normalized(), 0.0)
+		var tint_d := Vector3(
+			sample.r - want.r, sample.g - want.g, sample.b - want.b).length()
+		if tint_d < 0.08:
+			matched += 1
 	_expect(coloured > 0, "apron carries vertex colour")
-	_expect(pavement_like * 3 < coloured,
+	_expect(pavement_like * 8 < coloured,
 		"apron is biome ground, not pavement paint (%d / %d)" % [
 			pavement_like, coloured])
+	_expect(matched * 2 >= coloured,
+		"apron tint is the terrain colour at that heading (%d / %d)" % [
+			matched, coloured])
 	print("patch_city_test:     district apron %d verts" % verts.size())
+
+
+func _expect_apron_uses_terrain_tint(city: PatchCity, shape: PlanetShape) -> void:
+	# Dress used to stamp walk/asphalt on the top of the ramp. The lip is
+	# the case that has to stay planet-coloured once the pad is painted.
+	city._dressed = true
+	var uv := Vector2(18.0, 12.0)
+	var ink := city._apron_ink(shape, uv, 0.0)
+	var want := shape.biome_color_at(city._from_uv(uv), 0.0)
+	var tint_d := Vector3(ink.r - want.r, ink.g - want.g, ink.b - want.b).length()
+	var walk_d := Vector3(
+		ink.r - PatchCity.PAVEMENT_WALK.r,
+		ink.g - PatchCity.PAVEMENT_WALK.g,
+		ink.b - PatchCity.PAVEMENT_WALK.b).length()
+	var road_d := Vector3(
+		ink.r - PatchCity.PAVEMENT_ROAD.r,
+		ink.g - PatchCity.PAVEMENT_ROAD.g,
+		ink.b - PatchCity.PAVEMENT_ROAD.b).length()
+	_expect(tint_d < 0.02, "painted apron ink is the local terrain tint")
+	_expect(walk_d > 0.16 and road_d > 0.10,
+		"painted apron ink is not pad pavement")
+	city._dressed = false
 
 
 func _expect_sky_paint(city: PatchCity) -> void:

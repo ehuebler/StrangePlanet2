@@ -177,7 +177,8 @@ func _strike(player: Node) -> void:
 		hit.reaction = DamageHit.Reaction.RAGDOLL
 		hit.world_impulse = along * knockback + _up() * lift
 		hit.ability_id = "bigfoot_rock"
-		hit.set_source(thrower)
+		if is_instance_valid(thrower):
+			hit.set_source(thrower)
 		player.call(&"apply_damage", hit)
 	_shatter(_up())
 

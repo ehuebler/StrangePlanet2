@@ -12,7 +12,7 @@ const DEFAULT_SKIN_REVISION := 1
 ## entries, two mouse ability entries and persistent backpack contents.
 const LOADOUT_SCHEMA_REVISION := 1
 const HOTBAR_SLOTS := 3
-const ABILITY_SLOTS := 2
+const ABILITY_SLOTS := 4
 const DEFAULTS := {
 	"graphics": {
 		"window_mode": 0,
@@ -68,7 +68,7 @@ const DEFAULTS := {
 		"worn": {},
 		## Positional because the index is the number or mouse button that uses it.
 		"hotbar": ["", "", ""],
-		"abilities": ["", ""],
+		"abilities": ["", "", "", ""],
 		"backpack": [],
 		## CharacterDB raises this after giving a new save its finite starter
 		## wardrobe. Resetting defaults returns it to zero so the wardrobe is
@@ -79,11 +79,32 @@ const DEFAULTS := {
 		"tints": {},
 		"loadout_schema_revision": LOADOUT_SCHEMA_REVISION,
 	},
-	## Quests and achievements finished, as a list of [JournalDB] ids. Local to
-	## this machine and never replicated: a co-op session shares a world, not a
+	## Quests and achievements finished, as a list of [JournalDB] ids, plus
+	## which gem rewards have been claimed from the menu. Local to this
+	## machine and never replicated: a co-op session shares a world, not a
 	## diary. [Journal] is the only writer.
 	"progress": {
 		"done": [],
+		"claimed": [],
+		"kills": 0,
+		"claim_revision": 0,
+	},
+	## Gems, unlocked homescreen hats, and permanent crawler stat ranks. Lives
+	## outside a run so the home screen can spend them and the next crawler
+	## session still sees the same bonuses.
+	"meta": {
+		"gems": 0,
+		"unlocked_hats": [],
+		"ranks": {
+			"health": 0,
+			"dexterity": 0,
+			"flight": 0,
+			"dodge": 0,
+			"defense": 0,
+			"juke": 0,
+			"damage": 0,
+			"luck": 0,
+		},
 	},
 }
 
@@ -123,6 +144,8 @@ func get_setting(section: StringName, key: StringName, fallback: Variant = null)
 func set_setting(section: StringName, key: StringName, value: Variant, apply := true) -> void:
 	_config.set_value(String(section), String(key), value)
 	if apply:
+		if String(section) == "graphics":
+			LagTracker.note("settings", "graphics/%s = %s" % [String(key), str(value)])
 		_apply_setting(section, key, value)
 	settings_changed.emit(section, key, value)
 

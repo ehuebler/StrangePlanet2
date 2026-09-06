@@ -36,6 +36,8 @@ $blender = "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
 # Characters and apparel
 & $blender --background --factory-startup --python assets/source/blender/build_character.py
 & $blender --background --python assets/source/blender/build_character_3.py
+# Mixamo clips onto the settler skeleton (also runs at the end of the line above)
+& $blender --background --factory-startup --python assets/source/blender/merge_m2m_animations.py
 & $blender --background --factory-startup --python assets/source/blender/build_bigfoot.py
 & $blender --background assets/source/blender/player_character.blend --python assets/source/blender/build_apparel.py
 

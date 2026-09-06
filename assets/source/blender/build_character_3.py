@@ -1264,6 +1264,8 @@ def main() -> None:
     paint_body(mesh_obj, DEFAULT_SKIN)
 
     bake_locomotion(rig, body)
+    merge_m2m = load_module("merge_m2m_animations.py")
+    merge_m2m.merge_into_open_file(rig, mesh_obj)
     # Keep the GLB's PBR graph export-safe, then add the requested Blender-only
     # Mix Shader graph to the editable work file. Godot renders the same Fresnel
     # ramp through player_suit.tres/vivid_surface.gdshader.

@@ -30,7 +30,7 @@ const STATS := {
 		"description": "How much damage you can take before you go down.",
 		"base": 100.0,
 		"minimum": 1.0,
-		"maximum": 200.0,
+		"maximum": 400.0,
 		"unit": " HP",
 		"precision": 0,
 	},

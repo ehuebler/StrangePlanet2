@@ -10,7 +10,7 @@ extends Node
 ## stop the pencil surfaces redrawing, so two runs are comparable, and
 ## `-- --handover` to also shoot the sweep from the home pose into third person,
 ## which is the one thing here that cannot be checked from a single frame. Pass
-## `-- --ingame-red` to start safely and capture the canonical Hero/Apparel menu.
+## `-- --ingame-red` to start safely and capture the canonical Hero/Hats menu.
 
 const WORLD: PackedScene = preload("res://game/world.tscn")
 const CAPTURE_DIR := "res://dev/captures"
@@ -101,7 +101,7 @@ func _report_preview() -> void:
 		return
 	var animator := preview.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	var skeleton := preview.find_child("Skeleton3D", true, false) as Skeleton3D
-	var hips := skeleton.find_bone("Hips")
+	var hips := CharacterRig.find_bone(skeleton, &"Hips")
 	print("_menu_shot: preview playing '%s' at %.2fs, hips %.3f (rest %.3f)" % [
 		"NOTHING" if animator == null else animator.current_animation,
 		0.0 if animator == null else animator.current_animation_position,
@@ -144,7 +144,8 @@ func _report_home_controls() -> void:
 		return
 
 	for button_name: String in [
-		"HomeNewGame", "HomeOnline", "HomeSettings", "HomeQuit"
+		"HomeNewGame", "HomeOnline", "HomeSandbox", "HomeUpgrades",
+		"HomeAchievements", "HomeSettings", "HomeQuit"
 	]:
 		var button := _home.find_child(button_name, true, false) as Button
 		if button == null:
@@ -235,44 +236,47 @@ func _report_planet_title() -> void:
 
 
 func _run_home_new_game_flow() -> void:
-	var new_game := _home.find_child("HomeNewGame", true, false) as Button
-	if new_game == null:
-		push_error("_menu_shot: themed New Game button is missing")
+	var start := _home.find_child("HomeNewGame", true, false) as Button
+	var sandbox := _home.find_child("HomeSandbox", true, false) as Button
+	var upgrades := _home.find_child("HomeUpgrades", true, false) as Button
+	var achievements := _home.find_child("HomeAchievements", true, false) as Button
+	if start == null or not start.text.to_upper().contains("START"):
+		push_error("_menu_shot: themed Start Game button is missing")
 		return
-	new_game.pressed.emit()
+	if sandbox == null or upgrades == null or achievements == null:
+		push_error("_menu_shot: Sandbox, Upgrades, or Achievements home actions are missing")
+		return
+	var start_rect := start.get_global_rect()
+	var online := _home.find_child("HomeOnline", true, false) as Button
+	var sandbox_rect := sandbox.get_global_rect()
+	var upgrades_rect := upgrades.get_global_rect()
+	if online != null and (
+			sandbox_rect.position.x < online.get_global_rect().end.x
+			or upgrades_rect.position.x < sandbox_rect.end.x):
+		push_error("_menu_shot: Sandbox is not left of Upgrades after Online")
+	print("_menu_shot: home actions start='%s' sandbox='%s' upgrades='%s'" % [
+		start.text, sandbox.text, upgrades.text
+	])
+	upgrades.pressed.emit()
 	await _wait(0.25)
-	var panel := _home.find_child("NewGameModePanel", true, false) as Control
-	var cards := _home.find_child("HomeModeCards", true, false) as Control
-	if panel == null or cards == null or not panel.visible:
-		push_error("_menu_shot: New Game did not open the mode-card stage")
+	var shop := _home.find_child("MetaUpgradesPanel", true, false) as Control
+	var gems := _home.find_child("HomeGemCounter", true, false) as Control
+	if shop == null or gems == null or not gems.visible:
+		push_error("_menu_shot: Upgrades did not open the gem shop")
 		return
-	_report_mode_card_copy(cards, "home", 18, 15, HomeScreen.HOME_GREEN_TEXT)
-	await _capture("menu_home_modes")
-
-	var story := _home.find_child("HomeMode_story", true, false) as Button
-	if story == null:
-		push_error("_menu_shot: Story mode card is missing")
-		return
-	story.pressed.emit()
+	await _capture("menu_home_upgrades")
+	if _home._pose_view(HomeScreen.View.UPGRADES) != HomeScreen.View.ONLINE:
+		push_error("_menu_shot: Upgrades does not pan to the Online planet pose")
+	achievements.pressed.emit()
 	await _wait(0.25)
-	_report_home_mode_settings("story")
-	await _capture("menu_home_story_settings")
-
-	var back := _home.find_child("NewGameBack", true, false) as Button
-	if back == null:
-		push_error("_menu_shot: mode-settings Back button is missing")
-		return
-	back.pressed.emit()
-	await _wait(0.15)
-	var duels := _home.find_child("HomeMode_duels", true, false) as Button
-	if duels == null:
-		push_error("_menu_shot: Duels mode card is missing")
-		return
-	duels.pressed.emit()
-	await _wait(0.25)
-	_report_home_mode_settings("duels")
-	await _capture("menu_home_duels_settings")
-	_home._pick_mode(false)
+	var board := _home.find_child("AchievementsPanel", true, false) as Control
+	var reset := _home.find_child("AchievementReset", true, false) as Button
+	if board == null or reset == null or gems == null or not gems.visible:
+		push_error("_menu_shot: Achievements did not open the gem board")
+	if _home._pose_view(HomeScreen.View.ACHIEVEMENTS) != HomeScreen.View.ONLINE:
+		push_error("_menu_shot: Achievements does not pan to the Online planet pose")
+	await _capture("menu_home_achievements")
+	_home.show_view(HomeScreen.View.HOME)
 	await _wait(0.1)
 
 
@@ -508,8 +512,8 @@ func _run_ingame_red() -> void:
 	await _capture("menu_ingame_hero")
 	menu.show_tab(GameMenu.Tab.APPAREL)
 	await _wait(0.25)
-	_report_red_bounds(menu, "Apparel")
-	await _capture("menu_ingame_apparel")
+	_report_red_bounds(menu, "Hats")
+	await _capture("menu_ingame_hats")
 	menu.close()
 	await get_tree().process_frame
 
@@ -580,11 +584,11 @@ func _run_character_bodies() -> void:
 	for colour: Color in [Color(0.86, 0.24, 0.20), Color(0.24, 0.46, 0.74)]:
 		page.tint_picked.emit(PlayerDesignerPanel.TINT_BODY, colour)
 		await _wait(0.2)
-	page.tint_picked.emit("long_sleeve", Color(0.94, 0.68, 0.22))
+	page.tint_picked.emit("hat", Color(0.94, 0.68, 0.22))
 	await _wait(0.35)
 	await _capture("menu_character_tinted")
 	page.tint_cleared.emit(PlayerDesignerPanel.TINT_BODY)
-	page.tint_cleared.emit("long_sleeve")
+	page.tint_cleared.emit("hat")
 	await _wait(0.35)
 	await _capture("menu_character_no_tint")
 	print("_menu_shot: no tint leaves %s" % CharacterDB.load_look()["tints"])
@@ -596,7 +600,7 @@ func _run_character_bodies() -> void:
 		await _wait(0.35)
 
 
-## The second tab is apparel only. Toggle one real owned garment through the same
+## The second tab is hats only. Toggle one real owned hat through the same
 ## code a completed tile hold uses, then put it back before taking the screenshot.
 func _run_character_apparel(
 		page: PlayerDesignerPanel,
@@ -609,7 +613,7 @@ func _run_character_apparel(
 		true, false).filter(func(node: Node) -> bool:
 			return ItemDB.is_weapon((node as DesignerApparelTile).item_id())
 	)
-	print("_menu_shot: apparel catalogue count=%d ids=%s weapon_tiles=%d" % [
+	print("_menu_shot: hats catalogue count=%d ids=%s weapon_tiles=%d" % [
 		owned.size(), owned, weapon_tiles.size()])
 
 	var garment := ""
@@ -621,11 +625,11 @@ func _run_character_apparel(
 		var before := page.worn_slots().items()
 		page.toggle_apparel(garment)
 		page.toggle_apparel(garment)
-		print("_menu_shot: hold apparel round trip %s -> %s" % [
+		print("_menu_shot: hold hat round trip %s -> %s" % [
 			before, page.worn_slots().items()])
 	else:
-		print("_menu_shot: finite catalogue has no owned apparel to toggle")
-	await _capture("menu_character_apparel")
+		print("_menu_shot: finite catalogue has no owned hat to toggle")
+	await _capture("menu_character_hats")
 
 
 func _report_designer_fit(page: PlayerDesignerPanel) -> void:

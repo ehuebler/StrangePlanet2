@@ -43,12 +43,7 @@ const CATALOGUE_NARROW_HEIGHT := 280.0
 const DETAIL_NARROW_HEIGHT := 390.0
 
 const APPAREL_FILTERS := [
-	{"id": "", "label": "All", "glyph": RedMenuGlyph.Glyph.APPAREL_ALL},
-	{"id": "hat", "label": "Head", "glyph": RedMenuGlyph.Glyph.HAT},
-	{"id": "goggles", "label": "Eyes", "glyph": RedMenuGlyph.Glyph.GOGGLES},
-	{"id": "long_sleeve", "label": "Body", "glyph": RedMenuGlyph.Glyph.BODY_TUNIC},
-	{"id": "pants", "label": "Legs", "glyph": RedMenuGlyph.Glyph.PANTS},
-	{"id": "shoes", "label": "Feet", "glyph": RedMenuGlyph.Glyph.BOOTS},
+	{"id": "hat", "label": "Hats", "glyph": RedMenuGlyph.Glyph.HAT},
 ]
 const ITEM_FILTERS := [
 	{"id": ItemDB.KIND_WEAPON, "label": "Weapons", "glyph": RedMenuGlyph.Glyph.WEAPONS},
@@ -217,7 +212,8 @@ func _disconnect_sources() -> void:
 
 func _build() -> void:
 	add_child(_build_header())
-	add_child(_build_filter_bar())
+	if _mode != Mode.APPAREL:
+		add_child(_build_filter_bar())
 	add_child(_build_content())
 
 	_icons = ItemIcons.new()
@@ -231,7 +227,7 @@ func _build_header() -> PanelContainer:
 	row.name = "CatalogueHeaderContent"
 	row.add_theme_constant_override(&"separation", 12)
 
-	_header_title = _label("ALL APPAREL", 22, RED_BRIGHT)
+	_header_title = _label("HATS", 22, RED_BRIGHT)
 	_header_title.name = "CatalogueHeading"
 	_header_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_header_title)
@@ -334,7 +330,7 @@ func _build_catalogue_frame() -> PanelContainer:
 	glyph_center.add_child(_empty_glyph)
 	empty_column.add_child(glyph_center)
 
-	_empty_title = _label("NO OWNED APPAREL", 18, GREEN)
+	_empty_title = _label("NO HATS", 18, GREEN)
 	_empty_title.name = "EmptyStateTitle"
 	_empty_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	empty_column.add_child(_empty_title)
@@ -450,6 +446,8 @@ func _collect_entries() -> Array[Dictionary]:
 	match _mode:
 		Mode.APPAREL:
 			var allowed := CharacterDB.apparel_ids(_player.body_id())
+			if CrawlerRules.active() and _player.has_method(&"crawler_owned_hats"):
+				allowed = PackedStringArray(_player.call(&"crawler_owned_hats"))
 			_append_apparel(entries, _equipment, SOURCE_EQUIPMENT, allowed)
 			_append_apparel(entries, _backpack, SOURCE_BACKPACK, allowed)
 			_append_wardrobe(entries, allowed)
@@ -653,18 +651,10 @@ func _fill_catalogue() -> void:
 func _fill_empty_state() -> void:
 	match _mode:
 		Mode.APPAREL:
-			_empty_glyph.glyph = (
-				RedMenuGlyph.Glyph.APPAREL_ALL
-				if _filter.is_empty()
-				else _glyph_for_body_slot(_filter)
-			)
-			_empty_title.text = (
-				"NO APPAREL"
-				if _filter.is_empty()
-				else "NO %s APPAREL" % _filter_label(_filter)
-			)
+			_empty_glyph.glyph = RedMenuGlyph.Glyph.HAT
+			_empty_title.text = "NO HATS"
 			_empty_body.text = (
-				"EVERY GARMENT THAT FITS THIS BODY APPEARS HERE.\n"
+				"EVERY HAT THAT FITS THIS BODY APPEARS HERE.\n"
 				+ "HOLD EQUIP ON A TILE, OR SHIFT-CLICK IT, TO PUT IT ON."
 			)
 		Mode.ITEMS:
@@ -758,7 +748,9 @@ func _fill_detail() -> void:
 func _detail_record(entry: Dictionary, id: String, description: String) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.name = "SelectedItemRecord"
-	row.custom_minimum_size.y = 178.0 if ItemDB.is_ability(id) else 104.0
+	row.custom_minimum_size.y = 104.0
+	if ItemDB.is_ability(id):
+		row.custom_minimum_size.y = 0.0
 	row.add_theme_constant_override(&"separation", 10)
 	row.add_child(_detail_icon_block(id))
 
@@ -789,12 +781,13 @@ func _detail_record(entry: Dictionary, id: String, description: String) -> HBoxC
 			detail_text += "\n\nPROFILE //  %s" % profile
 		var written_stats := PackedStringArray()
 		for line: String in ItemDB.stat_lines(id):
-			written_stats.append(line.replace("\t", "  "))
+			written_stats.append(line.replace("\t", "  //  "))
 		if not written_stats.is_empty():
-			detail_text += "\nSTATS //  %s" % "   |   ".join(written_stats)
+			detail_text += "\n\nSTATS\n%s" % "\n".join(written_stats)
 	var detail := _label(detail_text, 10, RED_TEXT, true)
 	detail.name = "SelectedItemDescription"
-	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	detail.size_flags_vertical = Control.SIZE_SHRINK_BEGIN if ItemDB.is_ability(id) \
+		else Control.SIZE_EXPAND_FILL
 	copy.add_child(detail)
 	return row
 
@@ -803,8 +796,8 @@ func _fill_empty_detail() -> void:
 	var title_text := "NO ITEM SELECTED"
 	var body_text := "SELECT AN OWNED ENTRY TO OPEN ITS LOADOUT RECORD."
 	if _mode == Mode.APPAREL:
-		title_text = "NO APPAREL SELECTED"
-		body_text = "SELECT A WARDROBE ENTRY TO OPEN ITS LOADOUT RECORD."
+		title_text = "NO HAT SELECTED"
+		body_text = "SELECT A WARDROBE HAT TO OPEN ITS LOADOUT RECORD."
 	elif _mode == Mode.ABILITIES:
 		title_text = "NO ABILITY SELECTED"
 		body_text = (
@@ -1221,7 +1214,7 @@ func _update_header(total_count: int) -> void:
 	var heading := ""
 	match _mode:
 		Mode.APPAREL:
-			heading = "ALL APPAREL" if _filter.is_empty() else _filter_label(_filter)
+			heading = "HATS"
 		Mode.ITEMS:
 			heading = "ALL ITEMS" if _filter.is_empty() else _filter_label(_filter)
 		Mode.ABILITIES:
@@ -1231,7 +1224,7 @@ func _update_header(total_count: int) -> void:
 	if _mode == Mode.ITEMS:
 		noun = "OWNED"
 	elif _mode == Mode.APPAREL:
-		noun = "WARDROBE"
+		noun = "HATS"
 	_header_count.text = "%02d / %02d %s" % [
 		_visible_entries.size(),
 		total_count,

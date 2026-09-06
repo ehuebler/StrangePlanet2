@@ -27,6 +27,8 @@ func _ready() -> void:
 	_check_night_ground_glow()
 	_check_steam_lobby_contract()
 	_check_player_designer_contract()
+	_check_meta_upgrades()
+	_check_achievements()
 	_restore_settings()
 	print("loadout_model_test: %s" % (
 		"all checks passed" if _failures == 0 else "%d check(s) failed" % _failures))
@@ -204,7 +206,7 @@ func _check_player_designer_contract() -> void:
 	var equipment := ItemContainer.new(ItemDB.SLOT_ORDER.size())
 	for index in ItemDB.SLOT_ORDER.size():
 		equipment.set_filter(index, ItemDB.SLOT_ORDER[index])
-	var catalogue := ItemContainer.new(3, ["c3_hair", "sword", "c3_goggles"])
+	var catalogue := ItemContainer.new(3, ["c3_hair", "sword", "c3_party_hat"])
 
 	var panel := PlayerDesignerPanel.new()
 	panel.configure(
@@ -221,8 +223,10 @@ func _check_player_designer_contract() -> void:
 	_expect(panel.find_child("DesignerTabs", true, false) != null
 		and panel.find_child("DesignerEquippedSlots", true, false) != null
 		and panel.find_child("DesignerSkinPicker", true, false) != null
-		and panel.find_child("DesignerColourWheel", true, false) != null,
-		"player designer has red Hero Design controls")
+		and panel.find_child("DesignerColourWheel", true, false) != null
+		and panel.find_child("DesignerCharacter_settler", true, false) != null
+		and panel.find_child("DesignerHatColourWheel", true, false) != null,
+		"player designer has red Character controls")
 	var designer_name := panel.find_child(
 		"DesignerName", true, false) as LineEdit
 	_expect(designer_name != null
@@ -239,8 +243,8 @@ func _check_player_designer_contract() -> void:
 		"player designer rotates ui_background2")
 
 	panel.show_tab(PlayerDesignerPanel.Tab.APPAREL)
-	_expect(panel.apparel_ids() == PackedStringArray(["c3_hair", "c3_goggles"]),
-		"player designer catalogue contains apparel only")
+	_expect(panel.apparel_ids() == PackedStringArray(["c3_hair", "c3_party_hat"]),
+		"player designer catalogue contains hats only")
 	_expect(panel.find_child("SelectedItemDescription", true, false) == null,
 		"player designer apparel has no description panel")
 	var tile := panel.find_child(
@@ -254,7 +258,163 @@ func _check_player_designer_contract() -> void:
 		tile.hold_completed.emit(tile)
 		_expect(equipment.find("c3_hair") < 0,
 			"completed hold on worn apparel unequips it")
+	CrawlerMeta.begin_test({"gems": 0})
+	var locked := panel.find_child(
+		"DesignerApparel_c3_party_hat", true, false) as DesignerApparelTile
+	if locked != null:
+		locked.hold_completed.emit(locked)
+		_expect(equipment.find("c3_party_hat") < 0,
+			"locked hats stay locked without gems")
+	CrawlerMeta.begin_test({"gems": 80})
+	if locked != null:
+		locked.hold_completed.emit(locked)
+		_expect(CrawlerMeta.owns_hat("c3_party_hat"),
+			"holding a locked hat spends gems and unlocks it")
+	CrawlerMeta.end_test()
 	panel.queue_free()
+
+
+func _check_meta_upgrades() -> void:
+	CrawlerMeta.begin_test({"gems": 80})
+	_expect(CrawlerMeta.gems() == 80,
+		"meta test payload starts with 80 gems")
+	_expect(CharacterDB.playable_ids().size() >= 6,
+		"character selector offers more than the settler")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_HEALTH),
+		"gems buy a permanent health rank")
+	_expect(CrawlerMeta.rank_of(CrawlerProgress.STAT_HEALTH) == 1,
+		"bought health rank is stored")
+	_expect(CrawlerMeta.gems() == 80 - CrawlerMeta.UPGRADE_BASE,
+		"buying a rank spends the listed gem price")
+	var scratch := CrawlerProgress.new()
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_HEALTH).contains("(+"),
+		"permanent ranks appear beside the base health stat")
+	_expect(is_zero_approx(scratch.dodge_chance()),
+		"dodge starts at no chance")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_DODGE),
+		"gems buy a permanent dodge rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_DODGE).contains("(+"),
+		"permanent dodge ranks appear beside the base dodge stat")
+	_expect(is_equal_approx(scratch.dodge_chance(), CrawlerProgress.DODGE_PER_RANK),
+		"one gem dodge rank is six percent")
+	scratch.ranks[CrawlerProgress.STAT_DODGE] = 20
+	_expect(is_equal_approx(scratch.dodge_chance(), CrawlerProgress.DODGE_MAX),
+		"dodge chance stops at the cap")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_DODGE),
+		"a bought dodge rank can be refunded")
+	_expect(is_zero_approx(scratch.defense_share()),
+		"defense starts at no reduction")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_DEFENSE),
+		"gems buy a permanent defense rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_DEFENSE).contains("(+"),
+		"permanent defense ranks appear beside the base defense stat")
+	_expect(is_equal_approx(scratch.defense_share(), CrawlerProgress.DEFENSE_PER_RANK),
+		"one gem defense rank is eight percent")
+	scratch.ranks[CrawlerProgress.STAT_DEFENSE] = 20
+	_expect(is_equal_approx(scratch.defense_share(), CrawlerProgress.DEFENSE_MAX),
+		"defense reduction stops at the cap")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_DEFENSE),
+		"a bought defense rank can be refunded")
+	_expect(is_equal_approx(scratch.juke_cooldown(),
+			CrawlerProgress.JUKE_COOLDOWN_BASE),
+		"juke starts at the full cooldown")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_JUKE),
+		"gems buy a permanent juke rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_JUKE).contains("("),
+		"permanent juke ranks appear beside the base cooldown")
+	_expect(scratch.juke_cooldown() < CrawlerProgress.JUKE_COOLDOWN_BASE,
+		"one gem juke rank shortens the dash wait")
+	scratch.ranks[CrawlerProgress.STAT_JUKE] = 20
+	_expect(is_equal_approx(scratch.juke_cooldown(),
+			CrawlerProgress.JUKE_COOLDOWN_MIN),
+		"juke cooldown stops at the floor")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_JUKE),
+		"a bought juke rank can be refunded")
+	_expect(is_equal_approx(scratch.knockback_scale(), 1.0),
+		"knockback starts at 1X")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_KNOCKBACK),
+		"gems buy a permanent knockback rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_KNOCKBACK).contains("("),
+		"permanent knockback ranks appear beside the base multiplier")
+	_expect(is_equal_approx(scratch.knockback_scale(),
+			1.0 + CrawlerProgress.KNOCKBACK_PER_RANK),
+		"one gem knockback rank is twelve percent")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_KNOCKBACK),
+		"a bought knockback rank can be refunded")
+	_expect(is_equal_approx(scratch.range_scale(), 1.0),
+		"range starts at 1X")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_RANGE),
+		"gems buy a permanent range rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_RANGE).contains("("),
+		"permanent range ranks appear beside the base multiplier")
+	_expect(is_equal_approx(scratch.range_scale(),
+			1.0 + CrawlerProgress.RANGE_PER_RANK),
+		"one gem range rank is twelve percent")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_RANGE),
+		"a bought range rank can be refunded")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_LUCK),
+		"gems buy a permanent luck rank")
+	_expect(CrawlerMeta.rank_of(CrawlerProgress.STAT_LUCK) == 1,
+		"bought luck rank is stored")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_LUCK).contains("("),
+		"permanent luck ranks appear beside the base luck stat")
+	_expect(CrawlerProgress.rarity_weights(scratch.luck_rank())[3]
+			> CrawlerProgress.rarity_weights(0.0)[3],
+		"shop luck raises legendary level-up odds")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_LUCK),
+		"a bought luck rank can be refunded")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_HEALTH),
+		"a bought rank can be refunded")
+	_expect(CrawlerMeta.rank_of(CrawlerProgress.STAT_HEALTH) == 0
+		and CrawlerMeta.gems() == 80,
+		"refund restores the gems spent on that rank")
+	CrawlerMeta.end_test()
+
+
+func _check_achievements() -> void:
+	CrawlerMeta.begin_test()
+	Journal.begin_test()
+	var journal := Journal.new()
+	_expect(JournalDB.has_entry("kill_10_mobs"),
+		"kill 10 mobs is a catalogued achievement")
+	_expect(JournalDB.gems_of("kill_10_mobs") == 5,
+		"kill 10 mobs unlocks five gems")
+	_expect(journal.note_kill(9).is_empty() and not journal.is_done("kill_10_mobs"),
+		"nine kills do not finish the achievement")
+	var unlocked := journal.note_kill(1)
+	_expect(unlocked.has("kill_10_mobs") and journal.is_done("kill_10_mobs"),
+		"the tenth kill completes kill 10 mobs")
+	_expect(CrawlerMeta.gems() == 0,
+		"completing does not pay until the reward is claimed")
+	_expect(journal.can_claim("kill_10_mobs"),
+		"the menu can claim a finished gem reward")
+	var board := AchievementsPanel.new()
+	add_child(board)
+	var claim_button := board.find_child("AchievementClaim_kill_10_mobs", true, false) as Button
+	_expect(claim_button != null and claim_button.visible and claim_button.text == "CLAIM",
+		"the achievements menu shows CLAIM on an unclaimed reward")
+	if claim_button != null:
+		claim_button.pressed.emit()
+	journal.load_progress()
+	_expect(CrawlerMeta.gems() == 5, "claiming from the menu grants five gems")
+	_expect(journal.is_claimed("kill_10_mobs") and not journal.can_claim("kill_10_mobs"),
+		"claimed gems stay claimed")
+	_expect(board.find_child("AchievementClaim_kill_10_mobs", true, false) == null,
+		"CLAIM is gone after the reward is taken")
+	_expect(not journal.claim("kill_10_mobs"), "a reward cannot be claimed twice")
+	_expect(CrawlerMeta.gems() == 5, "a second claim pays nothing")
+	_expect(journal.complete("see_vacationers_landing"),
+		"a quest can sit beside the combat achievement")
+	journal.reset_achievements()
+	_expect(not journal.is_done("kill_10_mobs") and journal.kills() == 0,
+		"reset achievements clears combat progress")
+	_expect(not journal.is_claimed("kill_10_mobs"),
+		"reset achievements clears claimed rewards")
+	_expect(journal.is_done("see_vacationers_landing"),
+		"reset achievements leaves quests alone")
+	board.queue_free()
+	Journal.end_test()
+	CrawlerMeta.end_test()
 
 
 func _check_character_schema() -> void:
@@ -262,7 +422,7 @@ func _check_character_schema() -> void:
 	_expect((defaults["hotbar"] as Array).size() == CharacterDB.HOTBAR_SLOTS,
 		"default hotbar has three slots")
 	_expect((defaults["abilities"] as Array).size() == CharacterDB.ABILITY_SLOTS,
-		"default abilities have two slots")
+		"default abilities have four slots")
 	_expect(defaults.has("backpack"), "default look carries backpack data")
 	var old_look := {"rack": ["sword", "", "laser_rifle", "sword"]}
 	_expect(CharacterDB.hotbar_items(old_look, 3) \
@@ -283,7 +443,7 @@ func _check_starter_inventory() -> void:
 
 	var look := CharacterDB.default_look()
 	look["worn"] = {"hat": "c3_hair"}
-	look["backpack"] = ["c3_goggles"]
+	look["backpack"] = ["c3_party_hat"]
 	CharacterDB._seed_starter_inventory(look)
 	var backpack: Array = look.get("backpack", [])
 	var worn: Dictionary = look.get("worn", {})
@@ -301,17 +461,18 @@ func _check_starter_inventory() -> void:
 			continue
 		_expect(not owned.has(worn_id), "starter does not wear a backpack duplicate")
 		owned[worn_id] = true
-	_expect(owned.has("c3_hair") and owned.has("c3_goggles"),
-		"starter keeps the worn hair and carried goggles")
+	_expect(owned.has("c3_hair") and owned.has("c3_party_hat"),
+		"starter keeps the worn hair and carried party hat")
 	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
-		_expect(owned.has(item_id), "starter seed grants %s" % item_id)
+		if item_id == "c3_party_hat":
+			continue
+		_expect(not owned.has(item_id),
+			"fresh starter leaves %s locked for gems" % item_id)
 	_expect(backpack.size() <= CharacterDB.BACKPACK_SLOTS,
 		"starter seed does not overflow the backpack")
 	for item_id: String in ItemDB.weapon_ids():
-		_expect(hotbar.count(item_id) + backpack.count(item_id) == 1,
-			"starter owns exactly one %s" % item_id)
-	_expect(hotbar[0] == "sword" and hotbar[1] == "laser_rifle",
-		"starter weapons fill open numbered slots")
+		_expect(hotbar.count(item_id) + backpack.count(item_id) == 0,
+			"starter no longer grants %s" % item_id)
 	_expect(int(SettingsManager._config.get_value(
 		"appearance", "starter_inventory_revision", 0))
 		== CharacterDB.STARTER_INVENTORY_REVISION,
@@ -319,10 +480,10 @@ func _check_starter_inventory() -> void:
 
 	# Once revised, removing an item is permanent: another load cannot manufacture
 	# a dropped garment back into the backpack.
-	backpack.erase("c3_boots")
+	backpack.erase("c3_party_hat")
 	look["backpack"] = backpack
 	CharacterDB._seed_starter_inventory(look)
-	_expect(not (look["backpack"] as Array).has("c3_boots"),
+	_expect(not (look["backpack"] as Array).has("c3_party_hat"),
 		"completed starter seed does not resurrect removed ownership")
 
 	# The first finite-inventory rollouts could leave an empty save marked as
@@ -344,8 +505,8 @@ func _check_starter_inventory() -> void:
 		_expect(repaired.size() <= CharacterDB.BACKPACK_SLOTS,
 			"empty revision-%d save stays inside the backpack" % old_revision)
 		for item_id: String in ItemDB.weapon_ids():
-			_expect(repaired_hotbar.count(item_id) == 1,
-				"revision-%d save receives %s" % [old_revision, item_id])
+			_expect(repaired_hotbar.count(item_id) == 0,
+				"revision-%d save does not receive %s" % [old_revision, item_id])
 
 	# A partial older wardrobe is real finite ownership. Advancing its marker
 	# must not manufacture an individually removed garment.
@@ -364,9 +525,9 @@ func _check_starter_inventory() -> void:
 	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
 		_expect((partial_look["backpack"] as Array).has(item_id),
 			"revision-three wardrobe receives %s" % item_id)
-	_expect((partial_look["hotbar"] as Array).has("sword")
-		and (partial_look["hotbar"] as Array).has("laser_rifle"),
-		"revision-three wardrobe receives both missing weapons")
+	_expect(not (partial_look["hotbar"] as Array).has("sword")
+		and not (partial_look["hotbar"] as Array).has("laser_rifle"),
+		"revision-three wardrobe does not receive weapons")
 	_expect(int(SettingsManager._config.get_value(
 		"appearance", "starter_inventory_revision", 0))
 		== CharacterDB.STARTER_INVENTORY_REVISION,
@@ -380,9 +541,9 @@ func _check_starter_inventory() -> void:
 		"appearance", "starter_inventory_revision", 4)
 	var hairless_look := CharacterDB.default_look()
 	hairless_look["hotbar"] = ["sword", "laser_rifle", ""]
-	hairless_look["backpack"] = ["c3_goggles"]
+	hairless_look["backpack"] = ["c3_party_hat"]
 	CharacterDB._seed_starter_inventory(hairless_look)
-	_expect((hairless_look["backpack"] as Array).has("c3_goggles")
+	_expect((hairless_look["backpack"] as Array).has("c3_party_hat")
 		and (hairless_look["backpack"] as Array).has("c3_hair"),
 		"revision-four partial wardrobe receives missing Settler Hair")
 	_expect(not (hairless_look["backpack"] as Array).has("c3_tunic")
@@ -410,8 +571,8 @@ func _check_rack_migration() -> void:
 		== ["sword", "", "laser_rifle"], "legacy rack mirrors the migrated hotbar")
 	_expect(manager._config.get_value("appearance", "backpack", []) \
 		== ["sword", "laser_rifle"], "rack overflow moves to the backpack")
-	_expect(manager._config.get_value("appearance", "abilities", []).size() == 2,
-		"migration creates both ability slots")
+	_expect(manager._config.get_value("appearance", "abilities", []).size() == 4,
+		"migration creates four ability slots")
 	_expect(manager._config.get_value("appearance", "skin", "") == "clean_robotic" \
 		and manager._config.get_value("appearance", "worn", {}) == {"hat": "c3_hair"} \
 		and manager._config.get_value("appearance", "tints", {}) == {"body": "abcdef"},

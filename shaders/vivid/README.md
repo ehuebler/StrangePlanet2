@@ -24,7 +24,9 @@ Three problems shaped it:
 | File | Role |
 | --- | --- |
 | `vivid_lib.gdshaderinc` | The planet frame, the colour wheel, noise and detail helpers |
-| `vivid_terrain.gdshader` | The planet's ground: biome, cliffs, sea bed, caustics |
+| `vivid_terrain.gdshader` | The planet's ground: biome, cliffs, sea bed, caustics (`cull_back`) |
+| `vivid_terrain_core.gdshaderinc` | Shared body of the ground shader |
+| `vivid_terrain_apron.gdshader` | Same ground look on district ramps (`cull_disabled`, lifted) |
 | `vivid_surface.gdshader` | Props, characters, garments, weapons, imported `.glb` |
 | `vivid_tech.gdshader` | Reflective magenta/turquoise film on the alien-tech formations |
 | `vivid_space.gdshader` | Sky and space, as one continuous climb between them |

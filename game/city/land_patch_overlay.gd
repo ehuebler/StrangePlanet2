@@ -8,6 +8,7 @@ const GROUP := &"land_patch_overlay"
 const FONT: FontFile = preload("res://fonts/Bungee-Regular.ttf")
 const PALETTE: UIPalette = preload("res://ui/themes/ui_palette.tres")
 const STORE := preload("res://game/city/patch_city_store.gd")
+const CrawlerCityRingScript := preload("res://game/crawler/crawler_city_ring.gd")
 
 ## Typical territory width, metres. About a twelfth of the first cut, so
 ## ten to fifteen of these fit in one of those larger cells.
@@ -29,6 +30,8 @@ var _baked := false
 var _borders: MeshInstance3D
 var _labels: Array[Label3D] = []
 var _cities: Dictionary = {}
+var _flat_dirs: Dictionary = {}
+var _high_dirs: Dictionary = {}
 
 
 func _ready() -> void:
@@ -59,9 +62,13 @@ func render_live_city(patch_id: int) -> bool:
 	if held != null:
 		_cities.erase(patch_id)
 		held.free()
+	LagTracker.note("city", "E generate start patch %d" % patch_id)
+	var started := Time.get_ticks_msec()
 	var generator := PatchCityGenerator.new()
 	var plan := generator.generate(planet.shape, partition, patch_id)
 	if plan.districts.is_empty():
+		LagTracker.note("city", "E generate patch %d empty in %d ms"
+			% [patch_id, Time.get_ticks_msec() - started])
 		return false
 	var city := PatchCity.new()
 	city.apply(plan, planet.shape)
@@ -69,10 +76,43 @@ func render_live_city(patch_id: int) -> bool:
 	_cities[patch_id] = city
 	print("patch_city: %s — %d districts, loop %d pts"
 		% [plan.patch_name, plan.districts.size(), plan.loop.size()])
-	return _finish_live_city(city, planet)
+	var ok := _finish_live_city(city, planet)
+	LagTracker.note("city", "E generate %s %s in %d ms"
+		% [plan.patch_name, "ok" if ok else "fail", Time.get_ticks_msec() - started])
+	return ok
 
 
-func place_baked_city(patch_id: int) -> bool:
+func render_yard_city(patch_id: int) -> bool:
+	if not _baked or patch_id < 0 or patch_id >= partition.patches.size():
+		return false
+	var planet := get_parent() as Planet
+	if planet == null or planet.shape == null:
+		return false
+	var held := _city_at(patch_id)
+	if held != null:
+		_cities.erase(patch_id)
+		held.free()
+	LagTracker.note("city", "Q yard generate start patch %d" % patch_id)
+	var started := Time.get_ticks_msec()
+	var generator := PatchCityGenerator.new()
+	var plan := generator.generate(planet.shape, partition, patch_id)
+	if plan.districts.is_empty():
+		LagTracker.note("city", "Q yard generate patch %d empty in %d ms"
+			% [patch_id, Time.get_ticks_msec() - started])
+		return false
+	var city := YardCity.new()
+	city.apply(plan, planet.shape)
+	add_child(city)
+	_cities[patch_id] = city
+	print("yard_city: %s — %d districts, loop %d pts"
+		% [plan.patch_name, plan.districts.size(), plan.loop.size()])
+	var ok := _finish_live_city(city, planet)
+	LagTracker.note("city", "Q yard generate %s %s in %d ms"
+		% [plan.patch_name, "ok" if ok else "fail", Time.get_ticks_msec() - started])
+	return ok
+
+
+func place_baked_city(patch_id: int, refresh_maps := true) -> bool:
 	if not _baked or patch_id < 0 or patch_id >= partition.patches.size():
 		return false
 	var planet := get_parent() as Planet
@@ -87,6 +127,7 @@ func place_baked_city(patch_id: int) -> bool:
 			return false
 		_cities.erase(patch_id)
 		held.free()
+	LagTracker.note("city", "J place baked start %s" % patch_name)
 	var started := Time.get_ticks_msec()
 	var baked := STORE.instantiate_phase(
 		patch_id, PatchCity.PHASE_PAINTED, planet.shape, patch_name,
@@ -99,7 +140,11 @@ func place_baked_city(patch_id: int) -> bool:
 	print("patch_city: placed baked %s — %d places  %d ms"
 		% [baked.plan.patch_name, baked.places.size(),
 			Time.get_ticks_msec() - started])
-	_refresh_city_maps()
+	LagTracker.note("city", "J placed baked %s in %d ms"
+		% [baked.plan.patch_name, Time.get_ticks_msec() - started])
+	if refresh_maps:
+		_refresh_city_maps()
+	ensure_crawler_waypoints()
 	return true
 
 
@@ -108,6 +153,98 @@ func has_baked_city(patch_id: int) -> bool:
 		return false
 	return STORE.has_phase(
 		patch_id, PatchCity.PHASE_PAINTED, partition.patches[patch_id].name)
+
+
+func ensure_ready() -> bool:
+	if not _baked:
+		_rebuild()
+	return _baked
+
+
+func pick_spread_patches(count: int) -> Array[int]:
+	if not ensure_ready() or count <= 0:
+		return []
+	var candidates: Array[int] = []
+	for patch in partition.patches:
+		if patch.span < 420.0:
+			continue
+		candidates.append(patch.id)
+	if candidates.is_empty():
+		for patch in partition.patches:
+			candidates.append(patch.id)
+	if candidates.is_empty():
+		return []
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var chosen: Array[int] = []
+	chosen.append(candidates[rng.randi() % candidates.size()])
+	while chosen.size() < mini(count, candidates.size()):
+		var best := -1
+		var best_gap := -1.0
+		for patch_id in candidates:
+			if chosen.has(patch_id):
+				continue
+			var dir := partition.patches[patch_id].direction
+			var nearest := 4.0
+			for other_id in chosen:
+				nearest = minf(
+					nearest,
+					dir.distance_to(partition.patches[other_id].direction)
+				)
+			if nearest > best_gap:
+				best_gap = nearest
+				best = patch_id
+		if best < 0:
+			break
+		chosen.append(best)
+	return chosen
+
+
+func place_cities(patch_ids: Array) -> int:
+	if not ensure_ready():
+		return 0
+	var placed := 0
+	for raw: Variant in patch_ids:
+		var patch_id := int(raw)
+		if has_city(patch_id):
+			placed += 1
+			continue
+		if has_baked_city(patch_id) and place_baked_city(patch_id, false):
+			placed += 1
+			continue
+		if render_live_city(patch_id):
+			placed += 1
+	if placed > 0:
+		_refresh_city_maps()
+		ensure_crawler_waypoints()
+	return placed
+
+
+func place_all_baked_cities() -> int:
+	if not _baked:
+		return 0
+	var planet := get_parent() as Planet
+	if planet == null or planet.shape == null:
+		return 0
+	var started := Time.get_ticks_msec()
+	var placed := 0
+	var skipped := 0
+	LagTracker.note("city", "K place all baked start")
+	for patch in partition.patches:
+		if not has_baked_city(patch.id):
+			continue
+		if place_baked_city(patch.id, false):
+			placed += 1
+		else:
+			skipped += 1
+	if placed > 0:
+		_refresh_city_maps()
+		ensure_crawler_waypoints()
+	print("land_patches: placed %d baked cities, %d skipped  %.1f s"
+		% [placed, skipped, (Time.get_ticks_msec() - started) / 1000.0])
+	LagTracker.note("city", "K place all baked done %d ok %d skip in %d ms"
+		% [placed, skipped, Time.get_ticks_msec() - started])
+	return placed
 
 
 func _finish_live_city(city: PatchCity, planet: Planet) -> bool:
@@ -148,6 +285,487 @@ func city_phase(patch_id: int) -> int:
 	return city.phase if city != null else -1
 
 
+func city_for_patch(patch_id: int) -> PatchCity:
+	return _city_at(patch_id)
+
+
+func patch_id_named(wanted: String) -> int:
+	var clean := wanted.strip_edges().to_lower()
+	if clean.is_empty() or not ensure_ready():
+		return -1
+	for patch in partition.patches:
+		var name := patch.name.strip_edges().to_lower()
+		if name == clean or name.begins_with(clean):
+			return patch.id
+	return -1
+
+
+func patch_named(wanted: String):
+	var patch_id := patch_id_named(wanted)
+	if patch_id < 0 or patch_id >= partition.patches.size():
+		return null
+	return partition.patches[patch_id]
+
+
+func patch_id_at(world: Vector3) -> int:
+	if not ensure_ready() or not world.is_finite():
+		return -1
+	var planet := get_parent() as Planet
+	if planet == null:
+		return -1
+	var local := planet.to_local(world)
+	if local.length_squared() < 0.0001:
+		return -1
+	return partition.owner_at(local)
+
+
+func patch_name_at(world: Vector3) -> String:
+	var patch_id := patch_id_at(world)
+	if patch_id < 0 or patch_id >= partition.patches.size():
+		return ""
+	return str(partition.patches[patch_id].name)
+
+
+func surface_transform_for_patch(patch_id: int, clearance := 1.2) -> Transform3D:
+	if not ensure_ready() or patch_id < 0 or patch_id >= partition.patches.size():
+		return Transform3D()
+	var planet := get_parent() as Planet
+	if planet == null:
+		return Transform3D()
+	return _surface_transform_at(planet, partition.patches[patch_id].direction, clearance)
+
+
+func flat_surface_transform_for_patch(patch_id: int, clearance := 1.2) -> Transform3D:
+	if not ensure_ready() or patch_id < 0 or patch_id >= partition.patches.size():
+		return Transform3D()
+	var planet := get_parent() as Planet
+	if planet == null:
+		return Transform3D()
+	return _surface_transform_at(planet, flat_direction_for_patch(patch_id), clearance)
+
+
+func high_surface_transform_for_patch(patch_id: int, clearance := 1.2) -> Transform3D:
+	if not ensure_ready() or patch_id < 0 or patch_id >= partition.patches.size():
+		return Transform3D()
+	var planet := get_parent() as Planet
+	if planet == null:
+		return Transform3D()
+	return _surface_transform_at(planet, high_direction_for_patch(patch_id), clearance)
+
+
+func surface_transform_for_direction(direction: Vector3, clearance := 1.2) -> Transform3D:
+	if not ensure_ready() or direction.length_squared() < 0.0001:
+		return Transform3D()
+	var planet := get_parent() as Planet
+	if planet == null:
+		return Transform3D()
+	return _surface_transform_at(planet, direction, clearance)
+
+
+func crawler_spawn_transform(clearance := 1.2) -> Transform3D:
+	return surface_transform_for_direction(CrawlerRules.spawn_direction(), clearance)
+
+
+func crawler_city_transform(clearance := 0.35) -> Transform3D:
+	return surface_transform_for_direction(CrawlerRules.city_direction(), clearance)
+
+
+func flat_surface_transform_away_from(
+		patch_id: int,
+		from_dir: Vector3,
+		extra_metres := 420.0,
+		clearance := 1.2
+	) -> Transform3D:
+	if not ensure_ready() or patch_id < 0 or patch_id >= partition.patches.size():
+		return Transform3D()
+	var planet := get_parent() as Planet
+	if planet == null:
+		return Transform3D()
+	var inland := flat_direction_for_patch(patch_id)
+	var nudged := _nudge_direction_away(
+		planet, patch_id, inland, from_dir, extra_metres)
+	return _surface_transform_at(planet, nudged, clearance)
+
+
+func _nudge_direction_away(
+		planet: Planet,
+		patch_id: int,
+		inland: Vector3,
+		from_dir: Vector3,
+		extra_metres: float
+	) -> Vector3:
+	var at := inland.normalized() if inland.length_squared() > 0.25 else Vector3.UP
+	if extra_metres <= 0.0 or from_dir.length_squared() < 0.0001:
+		return at
+	var from := from_dir.normalized()
+	var shape := planet.shape
+	var spacing := planet.finest_spacing()
+	var radius := maxf(shape.radius, 1.0)
+	var step := 36.0
+	var travelled := 0.0
+	var last := at
+	var half := CrawlerRules.CITY_RING_RADIUS
+	while travelled < extra_metres:
+		var tangent := at - from * at.dot(from)
+		if tangent.length_squared() < 0.0001:
+			break
+		var nxt := (at + tangent.normalized() * (step / radius)).normalized()
+		if not _monument_pad_ok(shape, partition, patch_id, nxt, spacing, half):
+			break
+		last = nxt
+		at = nxt
+		travelled += step
+	return last
+
+
+func high_direction_for_patch(patch_id: int) -> Vector3:
+	if _high_dirs.has(patch_id):
+		return _high_dirs[patch_id]
+	var fallback := Vector3.UP
+	if patch_id >= 0 and patch_id < partition.patches.size():
+		fallback = partition.patches[patch_id].direction
+	var planet := get_parent() as Planet
+	if planet == null or planet.shape == null:
+		_high_dirs[patch_id] = fallback
+		return fallback
+	var chosen := _pick_high_direction(planet, patch_id, fallback)
+	_high_dirs[patch_id] = chosen
+	return chosen
+
+
+func flat_direction_for_patch(patch_id: int) -> Vector3:
+	if _flat_dirs.has(patch_id):
+		return _flat_dirs[patch_id]
+	var fallback := Vector3.UP
+	if patch_id >= 0 and patch_id < partition.patches.size():
+		fallback = partition.patches[patch_id].direction
+	var planet := get_parent() as Planet
+	if planet == null or planet.shape == null:
+		_flat_dirs[patch_id] = fallback
+		return fallback
+	var chosen := _pick_flat_direction(planet, patch_id, fallback)
+	_flat_dirs[patch_id] = chosen
+	return chosen
+
+
+static func spawn_slope_score(slope_degrees: float, pad_degrees: float, elevation: float) -> float:
+	if elevation < 8.0:
+		return INF
+	return maxf(slope_degrees, pad_degrees)
+
+
+static func peak_score(elevation: float, river := 0.0, lake := 0.0) -> float:
+	if elevation < 8.0 or river > 0.25 or lake > 0.45:
+		return -INF
+	return elevation
+
+
+func _pick_flat_direction(planet: Planet, patch_id: int, fallback: Vector3) -> Vector3:
+	var dirs := partition.directions_of(patch_id)
+	if dirs.is_empty():
+		return fallback
+	var shape := planet.shape
+	var spacing := planet.finest_spacing()
+	var stride := maxi(1, int(ceil(float(dirs.size()) / 96.0)))
+	var best := fallback
+	var best_score := INF
+	var best_elev := -INF
+	var index := 0
+	while index < dirs.size():
+		var direction: Vector3 = dirs[index]
+		index += stride
+		if direction.length_squared() < 0.25:
+			continue
+		var elev := shape.elevation(direction, spacing)
+		var parts := shape.sample(direction)
+		if float(parts.get("river", 0.0)) > 0.25 \
+				or float(parts.get("lake", 0.0)) > 0.45:
+			continue
+		var slope := _slope_degrees(shape, direction, spacing)
+		var pad := _pad_slope_degrees(shape, direction, spacing)
+		var score := spawn_slope_score(slope, pad, elev)
+		if score > best_score + 0.05:
+			continue
+		if score < best_score - 0.05 or elev > best_elev:
+			best_score = score
+			best_elev = elev
+			best = direction.normalized()
+	return best
+
+
+func _pick_high_direction(planet: Planet, patch_id: int, fallback: Vector3) -> Vector3:
+	var dirs := partition.directions_of(patch_id)
+	if dirs.is_empty():
+		return fallback
+	var shape := planet.shape
+	var spacing := planet.finest_spacing()
+	var stride := maxi(1, int(ceil(float(dirs.size()) / 128.0)))
+	var best := fallback
+	var best_elev := -INF
+	var best_slope := INF
+	var index := 0
+	while index < dirs.size():
+		var direction: Vector3 = dirs[index]
+		index += stride
+		if direction.length_squared() < 0.25:
+			continue
+		var elev := shape.elevation(direction, spacing)
+		var parts := shape.sample(direction)
+		var score := peak_score(
+			elev, float(parts.get("river", 0.0)), float(parts.get("lake", 0.0)))
+		if score < 0.0:
+			continue
+		var slope := _pad_slope_degrees(shape, direction, spacing)
+		if score > best_elev + 0.25 \
+				or (score >= best_elev - 0.25 and slope < best_slope - 0.5):
+			best_elev = score
+			best_slope = slope
+			best = direction.normalized()
+	return best
+
+
+func shore_direction_for_patch(patch_id: int, half_span := 52.0) -> Vector3:
+	if not ensure_ready() or patch_id < 0 or patch_id >= partition.patches.size():
+		return Vector3.UP
+	var inland := flat_direction_for_patch(patch_id)
+	var planet := get_parent() as Planet
+	if planet == null or planet.shape == null:
+		return inland
+	return _pick_shore_direction(planet, patch_id, inland, half_span)
+
+
+func _pick_shore_direction(
+		planet: Planet,
+		patch_id: int,
+		inland: Vector3,
+		half_span: float
+	) -> Vector3:
+	var shape := planet.shape
+	var spacing := planet.finest_spacing()
+	var radius := maxf(shape.radius, 1.0)
+	var start := inland.normalized() if inland.length_squared() > 0.25 else Vector3.UP
+	var best := start
+	var best_score := INF
+	var dirs := partition.directions_of(patch_id)
+	var stride := maxi(1, int(ceil(float(dirs.size()) / 96.0)))
+	var index := 0
+	while index < dirs.size():
+		var sample: Vector3 = dirs[index]
+		index += stride
+		if not _monument_pad_ok(shape, partition, patch_id, sample, spacing, half_span):
+			continue
+		var sample_elev := shape.elevation(sample, spacing)
+		var sample_score: float = sample_elev \
+				+ _pad_slope_degrees(shape, sample, spacing) * 0.2
+		if sample_score < best_score:
+			best_score = sample_score
+			best = sample.normalized()
+	var toward := _inland_axis(start)
+	for shore in _shore_border_dirs(patch_id):
+		var axis := start - shore
+		axis -= shore * axis.dot(shore)
+		if axis.length_squared() < 0.0001:
+			axis = toward
+		else:
+			axis = axis.normalized()
+		var pulls: Array[float] = [68.0, 90.0, 120.0, 160.0, 210.0]
+		for pull in pulls:
+			var candidate: Vector3 = (shore + axis * (pull / radius)).normalized()
+			if not _monument_pad_ok(shape, partition, patch_id, candidate, spacing, half_span):
+				continue
+			var elev := shape.elevation(candidate, spacing)
+			var score: float = elev + _pad_slope_degrees(shape, candidate, spacing) * 0.2
+			if score < best_score:
+				best_score = score
+				best = candidate
+	if best_score >= INF:
+		best = start
+	return _walk_toward_water(shape, partition, patch_id, best, spacing, half_span)
+
+
+func _shore_border_dirs(patch_id: int) -> PackedVector3Array:
+	var dirs := PackedVector3Array()
+	for chain in partition.border_chains:
+		if chain.patch_b != -1 or chain.patch_a != patch_id:
+			continue
+		if chain.dirs.is_empty():
+			continue
+		var stride := maxi(1, int(ceil(float(chain.dirs.size()) / 10.0)))
+		var index := 0
+		while index < chain.dirs.size():
+			var direction: Vector3 = chain.dirs[index]
+			if direction.length_squared() > 0.25:
+				dirs.append(direction.normalized())
+			index += stride
+	return dirs
+
+
+func _walk_toward_water(
+		shape: PlanetShape,
+		cut: LandPartition,
+		patch_id: int,
+		start: Vector3,
+		spacing: float,
+		half_span: float
+	) -> Vector3:
+	var radius := maxf(shape.radius, 1.0)
+	var at := start.normalized()
+	var step := 32.0 / radius
+	for _pass in 16:
+		var east := at.cross(Vector3.RIGHT)
+		if east.length_squared() < 0.01:
+			east = at.cross(Vector3.FORWARD)
+		east = east.normalized()
+		var north := at.cross(east).normalized()
+		var best := at
+		var best_elev := shape.elevation(at, spacing)
+		for spoke in 8:
+			var yaw := TAU * float(spoke) / 8.0
+			var nxt := (at + (east * cos(yaw) + north * sin(yaw)) * step).normalized()
+			if not _monument_pad_ok(shape, cut, patch_id, nxt, spacing, half_span):
+				continue
+			var elev := shape.elevation(nxt, spacing)
+			if elev < best_elev - 0.6:
+				best_elev = elev
+				best = nxt
+		if best.dot(at) > 0.999999:
+			break
+		at = best
+	return at
+
+
+func _monument_pad_ok(
+		shape: PlanetShape,
+		cut: LandPartition,
+		patch_id: int,
+		direction: Vector3,
+		spacing: float,
+		half_span: float
+	) -> bool:
+	if direction.length_squared() < 0.25:
+		return false
+	var up := direction.normalized()
+	if cut.owner_at(up) != patch_id:
+		return false
+	var elev := shape.elevation(up, spacing)
+	if elev < 8.0:
+		return false
+	var parts := shape.sample(up)
+	if float(parts.get("river", 0.0)) > 0.25 \
+			or float(parts.get("lake", 0.0)) > 0.45:
+		return false
+	if _pad_slope_degrees(shape, up, spacing) > 8.0:
+		return false
+	var east := up.cross(Vector3.RIGHT)
+	if east.length_squared() < 0.01:
+		east = up.cross(Vector3.FORWARD)
+	east = east.normalized()
+	var north := up.cross(east).normalized()
+	var ring := maxf(half_span, 8.0) / maxf(shape.radius, 1.0)
+	for step in 8:
+		var yaw := TAU * float(step) / 8.0
+		var sample := (up + (east * cos(yaw) + north * sin(yaw)) * ring).normalized()
+		if shape.elevation(sample, spacing) < 4.0:
+			return false
+	return true
+
+
+func _inland_axis(up: Vector3) -> Vector3:
+	var hint := Vector3.FORWARD if absf(up.z) < 0.9 else Vector3.RIGHT
+	var axis := hint - up * hint.dot(up)
+	if axis.length_squared() < 0.0001:
+		return Vector3.RIGHT
+	return axis.normalized()
+
+
+func _slope_degrees(shape: PlanetShape, direction: Vector3, spacing: float) -> float:
+	var up := direction.normalized()
+	var normal := shape.normal_at(up, spacing)
+	return rad_to_deg(acos(clampf(normal.dot(up), -1.0, 1.0)))
+
+
+func _pad_slope_degrees(shape: PlanetShape, direction: Vector3, spacing: float) -> float:
+	var steepest := _slope_degrees(shape, direction, spacing)
+	var up := direction.normalized()
+	var east := up.cross(Vector3.RIGHT)
+	if east.length_squared() < 0.01:
+		east = up.cross(Vector3.FORWARD)
+	east = east.normalized()
+	var north := up.cross(east).normalized()
+	var radius := maxf(shape.radius, 1.0)
+	var ring := 7.0 / radius
+	for step in 6:
+		var yaw := TAU * float(step) / 6.0
+		var sample := (up + (east * cos(yaw) + north * sin(yaw)) * ring).normalized()
+		steepest = maxf(steepest, _slope_degrees(shape, sample, spacing))
+	return steepest
+
+
+func _surface_transform_at(planet: Planet, direction: Vector3, clearance: float) -> Transform3D:
+	var facing := direction.normalized() if direction.length_squared() > 0.0001 \
+		else Vector3.UP
+	var at := planet.surface_position(facing)
+	var up := planet.up_at(at)
+	at += up * clearance
+	var forward := Vector3.FORWARD
+	forward -= up * forward.dot(up)
+	if forward.length_squared() < 0.0001:
+		forward = Vector3.RIGHT - up * Vector3.RIGHT.dot(up)
+	forward = forward.normalized()
+	var right := forward.cross(up).normalized()
+	if right.length_squared() < 0.0001:
+		return Transform3D(Basis.IDENTITY, at)
+	return Transform3D(
+		Basis(right, up, right.cross(up).normalized()).orthonormalized(),
+		at
+	)
+
+
+func keeps_mobs_out(at: Vector3) -> bool:
+	if not at.is_finite():
+		return false
+	if is_inside_tree() and CrawlerCityRingScript.blocks_near_any(get_tree(), at):
+		return true
+	if is_inside_tree() and CrawlerSpawnPad.blocks_near_any(get_tree(), at):
+		return true
+	for held in all_cities():
+		var city := held as PatchCity
+		if city == null:
+			continue
+		if city.contains_world(at):
+			return true
+		var reach := city.city_extent() + CrawlerRules.CITY_SAFE_PAD
+		if at.distance_to(city.world_centre()) <= reach:
+			return true
+	return false
+
+
+func push_out_of_cities(at: Vector3, pad := 1.2) -> Vector3:
+	var pushed := at
+	if is_inside_tree():
+		pushed = CrawlerCityRingScript.push_out_any(get_tree(), pushed, pad)
+	for held in all_cities():
+		var city := held as PatchCity
+		if city == null:
+			continue
+		var reach := city.city_extent() + CrawlerRules.CITY_SAFE_PAD + pad
+		if not city.contains_world(pushed) \
+				and pushed.distance_to(city.world_centre()) > reach:
+			continue
+		var centre := city.world_centre()
+		var up := city.world_up()
+		var radial := pushed - centre
+		radial -= up * radial.dot(up)
+		if radial.length_squared() < 0.0001:
+			radial = city.world_east() if city.has_method(&"world_east") else Vector3.RIGHT
+			radial -= up * radial.dot(up)
+		if radial.length_squared() < 0.0001:
+			radial = Vector3.RIGHT
+		var height := (pushed - centre).dot(up)
+		pushed = centre + radial.normalized() * reach + up * height
+	return pushed
+
+
 func all_cities() -> Array:
 	var out: Array = []
 	for patch_id in _cities:
@@ -155,6 +773,15 @@ func all_cities() -> Array:
 		if city != null:
 			out.append(city)
 	return out
+
+
+func ensure_crawler_waypoints() -> void:
+	if not CrawlerRules.active():
+		return
+	for held in all_cities():
+		var city := held as PatchCity
+		if city != null:
+			city.ensure_crawler_waypoint()
 
 
 func _city_at(patch_id: int) -> PatchCity:
@@ -224,6 +851,8 @@ func _rebuild() -> void:
 		if String(landmark.name).begins_with("GiantMountain"):
 			if landmark.direction.length_squared() > 0.001:
 				mountains.append(landmark.direction.normalized())
+	_flat_dirs.clear()
+	_high_dirs.clear()
 	partition.bake(planet.shape, mountains, mountain_clearance, target_span)
 	_build_borders(planet)
 	_build_labels(planet)

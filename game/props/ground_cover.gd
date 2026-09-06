@@ -325,6 +325,10 @@ class Tile extends RefCounted:
 	## Species owning each point, so a mixed reef casts the colour of the coral
 	## actually rooted there rather than one field-wide tint.
 	var glow_species := PackedInt32Array()
+	## Filled on the sow worker; published to glow_* on the main thread.
+	var sow_glow_points := PackedVector3Array()
+	var sow_glow_levels := PackedFloat32Array()
+	var sow_glow_species := PackedInt32Array()
 	## Share of each species' full density this tile was last sown at, in the
 	## same order as [member species]. Read back when deciding how much of the
 	## buffer to show, because a tile sown at an eighth is already thinned and
@@ -380,6 +384,11 @@ var _tiles := {}
 ## thousand tiles between them — for every tick it lasts.
 var _tile_list: Array[Tile] = []
 var _tile_list_stale := true
+## Live collision bodies, for beams that must pass through flora in one ray
+## instead of piercing trunks one at a time. Rebuilt when a tile dresses or
+## retires physics, not every query.
+var _collision_rids: Array[RID] = []
+var _collision_rids_stale := true
 ## Session-local state over deterministic placement. Keys are tile cells, then
 ## species indices, then instance indices; the value is the ability damage that
 ## instance is carrying, or [constant BROKEN]. It deliberately survives ordinary
@@ -417,6 +426,7 @@ var _dispatch_needed := true
 ## survey rebuilds the order.
 var _dispatch_from := 0
 var _since_survey := INF
+var _lag_seen := {}
 var _surveyed_at := Vector3.INF
 ## Last eye position whose thinning, LOD, shadow and collision rings were
 ## applied. New stands invalidate it so they are dressed on their first frame.
@@ -574,6 +584,9 @@ func _follow_view_range() -> void:
 ## a second or two of repopulating, which is the same wait as walking into new
 ## country.
 func _replant() -> void:
+	var started := Time.get_ticks_msec()
+	if not Engine.is_editor_hint():
+		LagTracker.note("flora", "replant start")
 	for task in _pending:
 		WorkerThreadPool.wait_for_task_completion(task)
 	_pending.clear()
@@ -615,6 +628,8 @@ func _replant() -> void:
 		_shortest = minf(_shortest, plant.height)
 	_since_survey = INF
 	_surveyed_at = Vector3.INF
+	if not Engine.is_editor_hint():
+		LagTracker.note("flora", "replant done in %d ms" % (Time.get_ticks_msec() - started))
 
 
 func _exit_tree() -> void:
@@ -743,6 +758,21 @@ static func _charge(phase: StringName, from: int) -> int:
 	return now
 
 
+func _report_lag() -> void:
+	if Engine.is_editor_hint():
+		return
+	var apply_ms := float(int(phase_cost.get(&"apply", 0)) - int(_lag_seen.get(&"apply", 0))) / 1000.0
+	var dress_ms := float(int(phase_cost.get(&"dress", 0)) - int(_lag_seen.get(&"dress", 0))) / 1000.0
+	var survey_ms := float(int(phase_cost.get(&"survey", 0)) - int(_lag_seen.get(&"survey", 0))) / 1000.0
+	_lag_seen = phase_cost.duplicate()
+	var total := apply_ms + dress_ms + survey_ms
+	LagTracker.set_gauge("flora", total)
+	if total >= 5.0:
+		LagTracker.note_throttled("flora", "flora_pass",
+			"survey %.1f  apply %.1f  dress %.1f ms" % [
+				survey_ms, apply_ms, dress_ms], 0.4)
+
+
 func _process(delta: float) -> void:
 	_finish_aerial_glow()
 	if _replant_in >= 0.0:
@@ -776,6 +806,7 @@ func _process(delta: float) -> void:
 	clock = _charge(&"apply", clock)
 	_dress(eye)
 	_charge(&"dress", clock)
+	_report_lag()
 	if _since_lights > 0.7:
 		_since_lights = 0.0
 		_place_glow_lights(eye)
@@ -1195,6 +1226,9 @@ func _apply() -> void:
 		# owns and they go with it.
 		if not _tiles.has(tile.cell):
 			continue
+		tile.glow_points = tile.sow_glow_points
+		tile.glow_levels = tile.sow_glow_levels
+		tile.glow_species = tile.sow_glow_species
 		_raise(tile)
 		applied += 1
 
@@ -1231,6 +1265,8 @@ func _raise(tile: Tile) -> void:
 		var body := _body_of(tile, index)
 		if body != null:
 			body.queue_free()
+	if not tile.collisions.is_empty():
+		_collision_rids_stale = true
 	tile.collisions.clear()
 	tile.stands.resize(species.size())
 	tile.collisions.resize(species.size())
@@ -1378,6 +1414,7 @@ func _dress_collision(tile: Tile, index: int, plant: PlantSpecies,
 		if current != null:
 			current.queue_free()
 			tile.collisions[index] = null
+			_collision_rids_stale = true
 		return
 	if current != null:
 		return
@@ -1438,6 +1475,7 @@ func _dress_collision(tile: Tile, index: int, plant: PlantSpecies,
 		body.add_child(collider)
 	add_child(body, false, Node.INTERNAL_MODE_BACK)
 	tile.collisions[index] = body
+	_collision_rids_stale = true
 
 
 ## Resolves one player contact identified by collider metadata. An empty answer
@@ -1583,6 +1621,25 @@ func _instance_height(buffer: PackedFloat32Array, instance_index: int,
 	var at := instance_index * STRIDE
 	var grew := Vector3(buffer[at + 1], buffer[at + 5], buffer[at + 9]).length()
 	return grew * plant.authored_height()
+
+
+## Collision bodies this field is currently simulating. Used by beams that must
+## pass through flora: excluding these RIDs is one ray, piercing trunks one at a
+## time is eight convex-hull queries on the physics clock.
+func collision_rids() -> Array[RID]:
+	if not _collision_rids_stale:
+		return _collision_rids
+	_collision_rids.clear()
+	if _tile_list_stale:
+		_tile_list.assign(_tiles.values())
+		_tile_list_stale = false
+	for tile in _tile_list:
+		for body_variant in tile.collisions:
+			var body := body_variant as CollisionObject3D
+			if body != null and is_instance_valid(body):
+				_collision_rids.append(body.get_rid())
+	_collision_rids_stale = false
+	return _collision_rids
 
 
 ## Ability damage, offered by anything holding a [DamageHit]. Returns how much
@@ -2133,7 +2190,10 @@ func _place_glow_lights(eye: Vector3) -> void:
 	for tile: Tile in _tiles.values():
 		if tile.glow_points.is_empty() or tile.away > glow_light_range * 5.0:
 			continue
-		for index in tile.glow_points.size():
+		var count := mini(
+			tile.glow_points.size(),
+			mini(tile.glow_levels.size(), tile.glow_species.size()))
+		for index in count:
 			points.append(to_global(tile.glow_points[index]))
 			levels.append(tile.glow_levels[index])
 			source_species.append(tile.glow_species[index])
@@ -2280,9 +2340,9 @@ func _sow(tile: Tile) -> void:
 			else _scatter(index, plant, _patches[index], _glows[index],
 				tile.cell, detail, points, levels, light_species))
 	tile.buffers = buffers
-	tile.glow_points = points
-	tile.glow_levels = levels
-	tile.glow_species = light_species
+	tile.sow_glow_points = points
+	tile.sow_glow_levels = levels
+	tile.sow_glow_species = light_species
 
 
 func _scatter(species_index: int, plant: PlantSpecies, patch: FastNoiseLite,

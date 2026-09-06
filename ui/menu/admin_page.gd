@@ -17,7 +17,7 @@ extends VBoxContainer
 ## only shows up for conjured items would be a bug in this file.
 
 const PALETTE: UIPalette = preload("res://ui/themes/ui_palette.tres")
-const ROWS_HEIGHT := 190.0
+const ROWS_HEIGHT := 140.0
 
 var _backpack: ItemContainer
 var _stats: PlayerStats
@@ -28,6 +28,14 @@ var _stat_list: VBoxContainer
 var _notice: Label
 var _item_search := ""
 var _item_slot := "All"
+var _lag_status: Label
+var _lag_events: VBoxContainer
+var _lag_hitches: VBoxContainer
+var _lag_charts: Dictionary = {}
+var _lag_name: LineEdit
+var _lag_pick := -1
+var _lag_visible: Dictionary = {}
+var _content: VBoxContainer
 
 
 ## Called before the page enters the tree. Handed the container and the stats
@@ -40,18 +48,255 @@ func configure(backpack: ItemContainer, stats: PlayerStats,
 
 
 func _ready() -> void:
-	add_theme_constant_override(&"separation", 14)
+	add_theme_constant_override(&"separation", 0)
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	add_child(scroll)
+	_content = VBoxContainer.new()
+	_content.add_theme_constant_override(&"separation", 14)
+	_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_content)
 	_build()
+	if LagTracker != null:
+		LagTracker.changed.connect(_refresh_lag)
+		LagTracker.hitch_recorded.connect(func(index: int) -> void:
+			_lag_pick = index
+			_refresh_lag()
+		)
+	_refresh_lag()
 
 
 func _build() -> void:
+	_build_lag()
 	_build_items()
 	_build_stats()
 	_notice = Label.new()
 	_notice.add_theme_font_size_override(&"font_size", 13)
 	_notice.add_theme_color_override(&"font_color", PALETTE.accent)
-	add_child(_notice)
+	_content.add_child(_notice)
+
+
+# --- Lag --------------------------------------------------------------------
+
+func _build_lag() -> void:
+	var box := _well("LAG TRACKER")
+	_lag_status = Label.new()
+	_lag_status.add_theme_font_size_override(&"font_size", 12)
+	_lag_status.add_theme_color_override(&"font_color", PALETTE.text_secondary)
+	_lag_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(_lag_status)
+
+	var charts := VBoxContainer.new()
+	charts.add_theme_constant_override(&"separation", 4)
+	box.add_child(charts)
+	for channel in LagTracker.channels():
+		var id := String(channel["id"])
+		_lag_visible[id] = id in ["frame", "process", "terrain", "flora", "draw", "pipes"]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override(&"separation", 8)
+		var toggle := Button.new()
+		toggle.toggle_mode = true
+		toggle.button_pressed = bool(_lag_visible[id])
+		toggle.text = String(channel["label"])
+		toggle.custom_minimum_size.x = 110
+		toggle.add_theme_font_size_override(&"font_size", 11)
+		AuroraSurface.add_to(toggle, AuroraSurface.Style.BUTTON)
+		toggle.toggled.connect(func(on: bool) -> void:
+			_lag_visible[id] = on
+			_lag_charts[id]["row"].visible = on
+		)
+		row.add_child(toggle)
+		var reading := Label.new()
+		reading.custom_minimum_size.x = 70
+		reading.add_theme_font_size_override(&"font_size", 11)
+		reading.add_theme_color_override(&"font_color", PALETTE.text_muted)
+		reading.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		row.add_child(reading)
+		var chart := LagChart.new()
+		chart.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		chart.custom_minimum_size = Vector2(160, 26)
+		chart.line_color = channel["color"]
+		if id == "frame":
+			chart.warn_at = 33.3
+		row.add_child(chart)
+		row.visible = bool(_lag_visible[id])
+		charts.add_child(row)
+		_lag_charts[id] = {"row": row, "chart": chart, "reading": reading, "toggle": toggle}
+
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override(&"separation", 12)
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_child(columns)
+
+	var events_box := VBoxContainer.new()
+	events_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	events_box.add_child(MenuWidgets.heading("EVENTS", 14))
+	_lag_events = _scrolled_min(events_box, 120)
+	columns.add_child(events_box)
+
+	var hitch_box := VBoxContainer.new()
+	hitch_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hitch_box.add_child(MenuWidgets.heading("HITCHES", 14))
+	_lag_hitches = _scrolled_min(hitch_box, 120)
+	columns.add_child(hitch_box)
+
+	var export_row := HBoxContainer.new()
+	export_row.add_theme_constant_override(&"separation", 10)
+	box.add_child(export_row)
+	_lag_name = LineEdit.new()
+	_lag_name.placeholder_text = "Name this lag event"
+	_lag_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	AuroraSurface.add_to(_lag_name, AuroraSurface.Style.INPUT)
+	export_row.add_child(_lag_name)
+	var window_btn := MenuWidgets.button("LAST 30S")
+	window_btn.custom_minimum_size.x = 110
+	window_btn.pressed.connect(func() -> void:
+		_lag_pick = -1
+		_fill_lag_hitches()
+		_refresh_lag()
+	)
+	export_row.add_child(window_btn)
+	var save := MenuWidgets.button("EXPORT")
+	save.custom_minimum_size.x = 110
+	save.pressed.connect(_export_lag)
+	export_row.add_child(save)
+	var folder := MenuWidgets.button("OPEN FOLDER")
+	folder.custom_minimum_size.x = 140
+	folder.pressed.connect(func() -> void:
+		LagTracker.open_export_folder()
+		_say("Opened %s" % LagTracker.export_dir())
+	)
+	export_row.add_child(folder)
+
+
+func _scrolled_min(box: VBoxContainer, height: float) -> VBoxContainer:
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.custom_minimum_size = Vector2(0, height)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_child(scroll)
+	var inner := VBoxContainer.new()
+	inner.add_theme_constant_override(&"separation", 4)
+	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(inner)
+	return inner
+
+
+func _refresh_lag() -> void:
+	if _lag_status == null:
+		return
+	var summary: Dictionary = LagTracker.frame_summary()
+	var span := LagTracker.window_span()
+	var hold := "frozen" if LagTracker.is_frozen() else "live"
+	var hitch_n := LagTracker.hitches().size()
+	var target := "last 30s"
+	if _lag_pick >= 0 and _lag_pick < hitch_n:
+		var hitch: Dictionary = LagTracker.hitches()[_lag_pick]
+		target = "hitch %.0f ms" % float(hitch.get("frame_ms", 0.0))
+	_lag_status.text = "%s  ·  last %.1fs  ·  %.0f fps  ·  avg %.1f ms  ·  max %.1f ms  ·  %d hitches  ·  export %s" % [
+		hold,
+		span.y - span.x,
+		float(summary.get("fps", 0.0)),
+		float(summary.get("avg_ms", 0.0)),
+		float(summary.get("max_ms", 0.0)),
+		hitch_n,
+		target,
+	]
+	_fill_lag_events()
+	_fill_lag_hitches()
+	_refresh_lag_charts()
+
+
+func _refresh_lag_charts() -> void:
+	if _lag_charts.is_empty():
+		return
+	var stamps := LagTracker.times()
+	var hitch_times := PackedFloat64Array()
+	for hitch in LagTracker.hitches():
+		hitch_times.append(float((hitch as Dictionary).get("t", 0.0)))
+	for id in _lag_charts:
+		var bits: Dictionary = _lag_charts[id]
+		var chart: LagChart = bits["chart"]
+		var reading: Label = bits["reading"]
+		chart.times = stamps
+		chart.values = LagTracker.series(String(id))
+		chart.hitch_times = hitch_times
+		chart.queue_redraw()
+		reading.text = "%.1f" % LagTracker.latest(String(id))
+
+
+func _fill_lag_events() -> void:
+	if _lag_events == null:
+		return
+	for child in _lag_events.get_children():
+		child.queue_free()
+	var rows := LagTracker.events_in_window()
+	var start := maxi(rows.size() - 40, 0)
+	if rows.is_empty():
+		_lag_events.add_child(MenuWidgets.caption("No events in this window."))
+		return
+	for i in range(start, rows.size()):
+		var row: Dictionary = rows[i]
+		var line := Label.new()
+		line.text = "%s  %s  %s" % [
+			_clock(float(row.get("t", 0.0))),
+			String(row.get("channel", "")),
+			String(row.get("message", "")),
+		]
+		line.add_theme_font_size_override(&"font_size", 11)
+		line.add_theme_color_override(&"font_color", PALETTE.text_secondary)
+		line.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_lag_events.add_child(line)
+
+
+func _fill_lag_hitches() -> void:
+	if _lag_hitches == null:
+		return
+	for child in _lag_hitches.get_children():
+		child.queue_free()
+	var rows := LagTracker.hitches()
+	if rows.is_empty():
+		_lag_hitches.add_child(MenuWidgets.caption("No hitch captured yet."))
+		return
+	for index in rows.size():
+		var hitch: Dictionary = rows[index]
+		var pick := Button.new()
+		pick.toggle_mode = true
+		pick.button_pressed = index == _lag_pick
+		pick.text = "%s   %.1f ms" % [_clock(float(hitch.get("t", 0.0))), float(hitch.get("frame_ms", 0.0))]
+		pick.add_theme_font_size_override(&"font_size", 12)
+		AuroraSurface.add_to(pick, AuroraSurface.Style.BUTTON)
+		var chosen := index
+		pick.pressed.connect(func() -> void:
+			_lag_pick = -1 if _lag_pick == chosen else chosen
+			if _lag_pick == chosen and _lag_name != null and _lag_name.text.strip_edges().is_empty():
+				_lag_name.text = "hitch_%.0fms" % float(hitch.get("frame_ms", 0.0))
+			_refresh_lag()
+		)
+		_lag_hitches.add_child(pick)
+
+
+func _export_lag() -> void:
+	var title := _lag_name.text.strip_edges()
+	if title.is_empty():
+		_say("Name the event before exporting.")
+		if _lag_name != null:
+			_lag_name.grab_focus()
+		return
+	var path := LagTracker.export_named(title, _lag_pick)
+	if path.is_empty():
+		_say("Export failed.")
+		return
+	_say("Saved %s" % path.get_file())
+
+
+func _clock(t: float) -> String:
+	var span := LagTracker.window_span()
+	var ago := maxf(span.y - t, 0.0)
+	return "-%.1fs" % ago
 
 
 # --- Items ------------------------------------------------------------------
@@ -226,8 +471,7 @@ func _stat_row(id: StringName) -> Control:
 ## it is added here rather than handed back.
 func _well(title: String) -> VBoxContainer:
 	var panel := PanelContainer.new()
-	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	add_child(panel)
+	_content.add_child(panel)
 	AuroraSurface.add_to(panel, AuroraSurface.Style.ROW)
 	var padding := MarginContainer.new()
 	for side in [&"margin_left", &"margin_right", &"margin_top", &"margin_bottom"]:

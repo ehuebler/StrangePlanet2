@@ -117,13 +117,22 @@ func _process(_delta: float) -> void:
 		var landmark := node as Landmark
 		if landmark == null:
 			continue
-		if not landmark.waypoint:
+		if not _shows_landmark(landmark):
 			# Only hidden if it has ever been drawn, so a landmark that is
 			# silent from the start never has a marker built for it at all.
 			if _markers.has(landmark):
 				(_markers[landmark] as Control).visible = false
 			continue
 		_place(landmark, _marker_for(landmark), eye, half)
+
+
+func _shows_landmark(landmark: Landmark) -> bool:
+	if landmark == null or not landmark.waypoint:
+		return false
+	if CrawlerRules.active():
+		return landmark.is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP) \
+				or (landmark.is_in_group(PatchMonument.KEEP_GROUP) and landmark.waypoint)
+	return true
 
 
 func _place(landmark: Landmark, marker: Control, eye: Vector3,

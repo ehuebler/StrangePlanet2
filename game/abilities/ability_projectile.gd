@@ -10,6 +10,7 @@ extends Node3D
 var shooter: OnlinePlayer
 var definition: AbilityDefinition
 var authoritative := false
+var stats: Dictionary = {}
 
 var _along := Vector3.FORWARD
 var _velocity := Vector3.FORWARD
@@ -23,7 +24,8 @@ var _probe: SphereShape3D
 
 static func launch(world: Node, source: OnlinePlayer, ability_id: String,
 		from: Vector3, along: Vector3, owns_impact: bool,
-		inherited_velocity: Vector3 = Vector3.ZERO) -> AbilityProjectile:
+		inherited_velocity: Vector3 = Vector3.ZERO,
+		stats_override: Dictionary = {}) -> AbilityProjectile:
 	var authored := ItemDB.ability_definition(ability_id)
 	if world == null or source == null or authored == null \
 			or authored.projectile_type == AbilityDefinition.ProjectileType.NONE:
@@ -31,14 +33,19 @@ static func launch(world: Node, source: OnlinePlayer, ability_id: String,
 	var projectile := AbilityProjectile.new()
 	projectile.shooter = source
 	projectile.definition = authored
+	projectile.stats = authored.stats.duplicate(true)
+	if not stats_override.is_empty():
+		projectile.stats.merge(stats_override, true)
 	projectile.authoritative = owns_impact
 	projectile._along = along.normalized() \
 		if along.length_squared() > 0.001 else -source.global_basis.z
-	projectile._speed = maxf(float(authored.stats.get("speed", 1.0)), 1.0)
+	projectile._speed = maxf(float(projectile.stats.get("speed", 1.0)), 1.0)
 	var carried := inherited_velocity if inherited_velocity.is_finite() \
 		else Vector3.ZERO
 	projectile._velocity = projectile._along * projectile._speed + carried
-	projectile._range = maxf(float(authored.stats.get("range", 1.0)), 1.0)
+	projectile._range = maxf(float(projectile.stats.get("range", 1.0)), 1.0)
+	if source.has_method(&"crawler_range_scale"):
+		projectile._range *= float(source.call(&"crawler_range_scale"))
 	projectile._shooter_rid = source.get_rid()
 	world.add_child(projectile)
 	projectile.global_position = from
@@ -60,7 +67,7 @@ func _ready() -> void:
 
 func _build_energy_disk() -> void:
 	var quoted_radius := maxf(
-		float(definition.stats.get("projectile_radius", 0.36)), 0.08)
+		float(stats.get("projectile_radius", 0.36)), 0.08)
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = quoted_radius
 	mesh.bottom_radius = quoted_radius
@@ -92,7 +99,7 @@ func _build_energy_disk() -> void:
 
 func _build_energy_orb() -> void:
 	var quoted_radius := maxf(
-		float(definition.stats.get("projectile_radius", 1.0)), 0.15)
+		float(stats.get("projectile_radius", 1.0)), 0.15)
 	var sphere := SphereMesh.new()
 	sphere.radius = quoted_radius
 	sphere.height = quoted_radius * 2.0
@@ -150,7 +157,8 @@ func _physics_process(delta: float) -> void:
 		global_position = hit["position"]
 		if authoritative:
 			var normal: Vector3 = hit.get("normal", -_along)
-			AbilityImpact.apply(shooter, definition, global_position, normal)
+			AbilityImpact.apply(
+				shooter, definition, global_position, normal, stats)
 		queue_free()
 		return
 	global_position = to
@@ -165,12 +173,15 @@ func _physics_process(delta: float) -> void:
 			var facing := -_velocity.normalized() \
 				if _velocity.length_squared() > 0.001 else -_along
 			AbilityImpact.apply(
-				shooter, definition, global_position, facing)
+				shooter, definition, global_position, facing, stats)
 		queue_free()
 
 
 func _quoted_radius() -> float:
-	return maxf(float(definition.stats.get("projectile_radius", 0.36)), 0.08)
+	var authored := 0.36
+	if definition != null:
+		authored = float(definition.stats.get("projectile_radius", authored))
+	return maxf(float(stats.get("projectile_radius", authored)), 0.08)
 
 
 func _trace_step(from: Vector3, to: Vector3) -> Dictionary:

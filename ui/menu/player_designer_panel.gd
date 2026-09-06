@@ -2,14 +2,16 @@ class_name PlayerDesignerPanel
 extends Control
 
 ## Home-screen character designer in the same red/green/black language as the
-## in-game Hero and Apparel pages.
+## in-game Hero and Hats pages.
 ##
 ## The live character standing beside this panel is the preview. This control
-## therefore contains only appearance controls: equipped apparel, texture and
-## tint on Hero Design, then an apparel-only hold catalogue on Apparel.
+## therefore contains only appearance controls: the character grid, texture and
+## skin tint on Character, then a gem-unlock hats catalogue with a hat tinter.
 
 signal name_entered(value: String)
 signal skin_picked(skin_id: String)
+signal body_picked(body_id: String)
+signal hat_unlocked(item_id: String)
 signal tint_picked(target: String, colour: Color)
 signal tint_cleared(target: String)
 
@@ -20,7 +22,8 @@ enum Tab {
 
 const BACKGROUND := preload("res://assets/runtime/ui/menu_background.png")
 const TINT_BODY := "body"
-const TAB_LABELS: Array[String] = ["Hero Design", "Apparel"]
+const TAB_LABELS: Array[String] = ["Character", "Hats"]
+const TINT_HAT := "hat"
 
 const RED := Color("ef151f")
 const RED_BRIGHT := Color("ff3445")
@@ -35,19 +38,10 @@ const TILE_EDGE := 88.0
 const TILE_GAP := 9.0
 
 const APPAREL_FILTERS: Array[Dictionary] = [
-	{"id": "", "label": "All", "glyph": RedMenuGlyph.Glyph.APPAREL_ALL},
-	{"id": "hat", "label": "Head", "glyph": RedMenuGlyph.Glyph.HAT},
-	{"id": "goggles", "label": "Eyes", "glyph": RedMenuGlyph.Glyph.GOGGLES},
-	{"id": "long_sleeve", "label": "Body", "glyph": RedMenuGlyph.Glyph.BODY_TUNIC},
-	{"id": "pants", "label": "Legs", "glyph": RedMenuGlyph.Glyph.PANTS},
-	{"id": "shoes", "label": "Feet", "glyph": RedMenuGlyph.Glyph.BOOTS},
+	{"id": "hat", "label": "Hats", "glyph": RedMenuGlyph.Glyph.HAT},
 ]
 const APPAREL_GLYPHS := [
 	RedMenuGlyph.Glyph.HAT,
-	RedMenuGlyph.Glyph.GOGGLES,
-	RedMenuGlyph.Glyph.BODY_TUNIC,
-	RedMenuGlyph.Glyph.PANTS,
-	RedMenuGlyph.Glyph.BOOTS,
 ]
 
 var _equipment: ItemContainer
@@ -73,6 +67,10 @@ var _clear_tint: Button
 var _wheel: ColourWheel
 var _hero_slots: Array[RedItemSlot] = []
 var _hero_glyphs: Array[RedMenuGlyph] = []
+var _character_grid: GridContainer
+var _hat_wheel: ColourWheel
+var _hat_tint_caption: Label
+var _clear_hat_tint: Button
 var _apparel_grid: GridContainer
 var _apparel_scroll: ScrollContainer
 var _apparel_count: Label
@@ -214,7 +212,7 @@ func _build_hero_page() -> VBoxContainer:
 	var identity := HBoxContainer.new()
 	identity.name = "DesignerIdentity"
 	identity.add_theme_constant_override(&"separation", 12)
-	var title := _label("HERO DESIGN", 23, RED_BRIGHT)
+	var title := _label("CHARACTER", 23, RED_BRIGHT)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	identity.add_child(title)
 	_name_field = LineEdit.new()
@@ -232,47 +230,24 @@ func _build_hero_page() -> VBoxContainer:
 	identity.add_child(_name_field)
 	page.add_child(_glow_frame(identity, "DesignerIdentityFrame", 6.0))
 
-	var apparel_column := VBoxContainer.new()
-	apparel_column.name = "DesignerEquippedContent"
-	apparel_column.add_theme_constant_override(&"separation", 8)
-	apparel_column.add_child(_section_heading("EQUIPPED APPAREL  //  CLICK TO AIM TINT"))
-	apparel_column.add_child(_rule())
-	var apparel_centre := CenterContainer.new()
-	apparel_centre.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	apparel_centre.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	apparel_column.add_child(apparel_centre)
-	var equipped_grid := GridContainer.new()
-	equipped_grid.name = "DesignerEquippedSlots"
-	equipped_grid.columns = ItemDB.SLOT_ORDER.size()
-	equipped_grid.add_theme_constant_override(&"h_separation", 10)
-	apparel_centre.add_child(equipped_grid)
-	for index in ItemDB.SLOT_ORDER.size():
-		var body_slot: String = ItemDB.SLOT_ORDER[index]
-		var slot := RedItemSlot.new()
-		slot.name = "DesignerWorn_%s" % body_slot
-		slot.set_edge(78.0)
-		slot.badge = String(ItemDB.SLOT_LABELS.get(body_slot, body_slot)).to_upper()
-		slot.placeholder = ""
-		slot.draggable = false
-		slot.bind(_equipment, index)
-		slot.picked.connect(_on_hero_slot_picked)
-		equipped_grid.add_child(slot)
-		_hero_slots.append(slot)
-
-		var glyph := RedMenuGlyph.new()
-		glyph.name = "Empty_%s" % body_slot
-		glyph.glyph = APPAREL_GLYPHS[index]
-		glyph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		glyph.offset_left = 14.0
-		glyph.offset_top = 14.0
-		glyph.offset_right = -14.0
-		glyph.offset_bottom = -14.0
-		slot.add_child(glyph)
-		_hero_glyphs.append(glyph)
+	var roster_column := VBoxContainer.new()
+	roster_column.name = "DesignerEquippedContent"
+	roster_column.add_theme_constant_override(&"separation", 8)
+	roster_column.add_child(_section_heading("CHARACTERS  //  TAP A TILE"))
+	roster_column.add_child(_rule())
+	_character_grid = GridContainer.new()
+	_character_grid.name = "DesignerEquippedSlots"
+	_character_grid.columns = 4
+	_character_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_character_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_character_grid.add_theme_constant_override(&"h_separation", 8)
+	_character_grid.add_theme_constant_override(&"v_separation", 8)
+	roster_column.add_child(_character_grid)
 	var equipped_frame := _glow_frame(
-		apparel_column, "DesignerEquippedFrame", 8.0
+		roster_column, "DesignerEquippedFrame", 8.0
 	)
-	equipped_frame.custom_minimum_size.y = 132.0
+	equipped_frame.custom_minimum_size.y = 168.0
+	equipped_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page.add_child(equipped_frame)
 
 	var picker_column := VBoxContainer.new()
@@ -320,7 +295,7 @@ func _build_hero_page() -> VBoxContainer:
 	_tint_caption.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	picker_controls.add_child(_tint_caption)
 	picker_controls.add_child(_label(
-		"CLICK A WORN TILE ABOVE TO TINT THAT GARMENT.",
+		"TINT APPLIES TO THE SKIN, NEVER THE HAT.",
 		10,
 		RED_MUTED,
 		true
@@ -353,7 +328,7 @@ func _build_apparel_page() -> VBoxContainer:
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override(&"separation", 12)
-	var title := _label("APPAREL", 23, RED_BRIGHT)
+	var title := _label("HATS", 23, RED_BRIGHT)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	_apparel_count = _label("00 OWNED", 11, RED_MUTED)
@@ -362,40 +337,12 @@ func _build_apparel_page() -> VBoxContainer:
 	header.add_child(_apparel_count)
 	page.add_child(_glow_frame(header, "DesignerApparelHeader", 10.0))
 
-	var filter_column := VBoxContainer.new()
-	filter_column.add_theme_constant_override(&"separation", 5)
-	filter_column.add_child(_label("FILTER // CLICK ACTIVE FILTER TO SHOW ALL", 10, RED_MUTED))
-	var filter_scroll := ScrollContainer.new()
-	filter_scroll.name = "DesignerFilterScroll"
-	filter_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	filter_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	filter_scroll.custom_minimum_size.y = 48.0
-	filter_column.add_child(filter_scroll)
-	var filter_row := HBoxContainer.new()
-	filter_row.name = "DesignerApparelFilters"
-	filter_row.add_theme_constant_override(&"separation", 7)
-	filter_scroll.add_child(filter_row)
-	for definition: Dictionary in APPAREL_FILTERS:
-		var id := String(definition["id"])
-		var filter_button := _filter_button(
-			String(definition["label"]),
-			int(definition["glyph"]) as RedMenuGlyph.Glyph,
-			id == _filter
-		)
-		filter_button.name = "DesignerFilter_%s" % (
-			"All" if id.is_empty() else id
-		)
-		var chosen := id
-		filter_button.pressed.connect(func() -> void: _pick_filter(chosen))
-		filter_row.add_child(filter_button)
-	page.add_child(_glow_frame(filter_column, "DesignerApparelFilterFrame", 8.0))
-
 	var catalogue_column := VBoxContainer.new()
 	catalogue_column.name = "DesignerApparelCatalogue"
 	catalogue_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	catalogue_column.add_theme_constant_override(&"separation", 8)
 	var hint := _label(
-		"HOLD A TILE TO EQUIP OR UNEQUIP  //  EVERY GARMENT FOR THIS BODY",
+		"HOLD TO EQUIP  //  LOCKED HATS COST GEMS",
 		10,
 		GREEN_TEXT,
 		true
@@ -420,7 +367,7 @@ func _build_apparel_page() -> VBoxContainer:
 	_apparel_grid.resized.connect(_fit_apparel_columns)
 
 	_empty_apparel = _label(
-		"NO OWNED APPAREL MATCHES THIS FILTER.",
+		"NO HATS.",
 		16,
 		RED_MUTED,
 		true
@@ -436,6 +383,53 @@ func _build_apparel_page() -> VBoxContainer:
 	)
 	catalogue_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page.add_child(catalogue_frame)
+
+	var tint_column := VBoxContainer.new()
+	tint_column.name = "DesignerHatTintContent"
+	tint_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tint_column.add_theme_constant_override(&"separation", 8)
+	tint_column.add_child(_section_heading("HAT TINT  //  COLOUR ON THE WORN HAT"))
+	tint_column.add_child(_rule())
+	var tint_row := HBoxContainer.new()
+	tint_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tint_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tint_row.add_theme_constant_override(&"separation", 12)
+	tint_column.add_child(tint_row)
+	var tint_copy := VBoxContainer.new()
+	tint_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tint_copy.add_theme_constant_override(&"separation", 8)
+	tint_row.add_child(tint_copy)
+	var hat_tint_title := HBoxContainer.new()
+	hat_tint_title.add_theme_constant_override(&"separation", 8)
+	var hat_heading := _label("HAT ONLY //", 12, RED_BRIGHT)
+	hat_heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hat_tint_title.add_child(hat_heading)
+	_clear_hat_tint = _button("NO TINT")
+	_clear_hat_tint.name = "DesignerHatNoTint"
+	_clear_hat_tint.custom_minimum_size = Vector2(112.0, 36.0)
+	_clear_hat_tint.pressed.connect(_clear_selected_tint)
+	hat_tint_title.add_child(_clear_hat_tint)
+	tint_copy.add_child(hat_tint_title)
+	_hat_tint_caption = _label("", 11, GREEN_TEXT, true)
+	_hat_tint_caption.name = "DesignerHatTintTarget"
+	tint_copy.add_child(_hat_tint_caption)
+	tint_copy.add_child(_label(
+		"HOLD A LOCKED TILE TO SPEND GEMS AND UNLOCK IT.",
+		10,
+		RED_MUTED,
+		true
+	))
+	var hat_wheel_centre := CenterContainer.new()
+	hat_wheel_centre.custom_minimum_size.x = 154.0
+	hat_wheel_centre.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tint_row.add_child(hat_wheel_centre)
+	_hat_wheel = ColourWheel.new()
+	_hat_wheel.name = "DesignerHatColourWheel"
+	_hat_wheel.picked.connect(_pick_tint)
+	hat_wheel_centre.add_child(_hat_wheel)
+	var tint_frame := _glow_frame(tint_column, "DesignerHatTintFrame", 8.0)
+	tint_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page.add_child(tint_frame)
 	return page
 
 
@@ -448,6 +442,8 @@ func show_tab(tab: Tab) -> void:
 		_hero_page.visible = _tab == Tab.HERO
 	if _apparel_page != null:
 		_apparel_page.visible = _tab == Tab.APPAREL
+	_tint_target = TINT_HAT if _tab == Tab.APPAREL else TINT_BODY
+	_update_tint_target()
 	if _tab == Tab.APPAREL:
 		_fill_apparel()
 
@@ -472,25 +468,24 @@ func refresh() -> void:
 	if _name_field != null and not _name_field.has_focus():
 		_name_field.text = _player_name
 	_fill_skin_row()
-	_refresh_hero_slots()
+	_fill_character_grid()
 	_update_tint_target()
 	_fill_apparel()
 
 
-func _refresh_hero_slots() -> void:
-	for index in _hero_slots.size():
-		var slot := _hero_slots[index]
-		var id := slot.item_id()
-		var body_slot := _equipment.filter_of(index) if _equipment != null else ""
-		slot.equipped = not id.is_empty()
-		slot.selected = _tint_target != TINT_BODY and body_slot == _tint_target
-		slot.tooltip_text = (
-			"%s\nCLICK TO AIM TINT"
-			% (ItemDB.title(id).to_upper() if not id.is_empty() else "EMPTY %s" % slot.badge)
-		)
-		if index < _hero_glyphs.size():
-			_hero_glyphs[index].visible = id.is_empty()
-		slot.queue_redraw()
+func _fill_character_grid() -> void:
+	if _character_grid == null:
+		return
+	_clear(_character_grid)
+	for body_id: String in CharacterDB.playable_ids():
+		var selected := body_id == _body_id
+		var button := _button(CharacterDB.title(body_id), selected)
+		button.name = "DesignerCharacter_%s" % body_id
+		button.custom_minimum_size = Vector2(0.0, 52.0)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var chosen := body_id
+		button.pressed.connect(func() -> void: _pick_body(chosen))
+		_character_grid.add_child(button)
 
 
 func _fill_skin_row() -> void:
@@ -519,23 +514,26 @@ func _pick_skin(skin_id: String) -> void:
 	skin_picked.emit(_skin_id)
 
 
-func _on_hero_slot_picked(slot: RedItemSlot) -> void:
-	if slot.item_id().is_empty() or _equipment == null:
-		_tint_target = TINT_BODY
-	else:
-		var chosen := _equipment.filter_of(slot.index)
-		_tint_target = TINT_BODY if chosen == _tint_target else chosen
-	_update_tint_target()
-	_refresh_hero_slots()
+func _pick_body(body_id: String) -> void:
+	var clean := CharacterDB.sanitize_body(body_id)
+	if clean == _body_id:
+		return
+	_body_id = clean
+	_skin_id = CharacterDB.sanitize_skin(_body_id, _skin_id)
+	_fill_character_grid()
+	_fill_skin_row()
+	body_picked.emit(_body_id)
 
 
 func _pick_tint(colour: Color) -> void:
+	_tint_target = TINT_HAT if _tab == Tab.APPAREL else TINT_BODY
 	_tints[_tint_target] = colour.to_html(false)
 	_update_tint_target()
 	tint_picked.emit(_tint_target, colour)
 
 
 func _clear_selected_tint() -> void:
+	_tint_target = TINT_HAT if _tab == Tab.APPAREL else TINT_BODY
 	if not _tints.has(_tint_target):
 		return
 	_tints.erase(_tint_target)
@@ -544,20 +542,30 @@ func _clear_selected_tint() -> void:
 
 
 func _update_tint_target() -> void:
-	if _tint_target != TINT_BODY and _equipped_in(_tint_target).is_empty():
+	if _tab == Tab.APPAREL:
+		_tint_target = TINT_HAT
+	else:
 		_tint_target = TINT_BODY
+	var active := _tints.has(_tint_target)
 	if _tint_caption != null:
-		var target_title := "SKIN"
-		if _tint_target != TINT_BODY:
-			target_title = ItemDB.title(_equipped_in(_tint_target)).to_upper()
-		_tint_caption.text = "TARGET // %s\n%s" % [
-			target_title,
-			"TINT ACTIVE" if _tints.has(_tint_target) else "AUTHORED COLOUR",
+		_tint_caption.text = "TARGET // SKIN\n%s" % [
+			"TINT ACTIVE" if active else "AUTHORED COLOUR",
+		]
+	if _hat_tint_caption != null:
+		var worn := _equipped_in(TINT_HAT)
+		var hat_title := ItemDB.title(worn).to_upper() if not worn.is_empty() else "NO HAT"
+		_hat_tint_caption.text = "TARGET // %s\n%s" % [
+			hat_title,
+			"TINT ACTIVE" if _tints.has(TINT_HAT) else "AUTHORED COLOUR",
 		]
 	if _clear_tint != null:
-		_clear_tint.disabled = not _tints.has(_tint_target)
+		_clear_tint.disabled = not _tints.has(TINT_BODY)
+	if _clear_hat_tint != null:
+		_clear_hat_tint.disabled = not _tints.has(TINT_HAT)
 	if _wheel != null:
-		_wheel.set_colour(Color.html(str(_tints.get(_tint_target, "ffffff"))))
+		_wheel.set_colour(Color.html(str(_tints.get(TINT_BODY, "ffffff"))))
+	if _hat_wheel != null:
+		_hat_wheel.set_colour(Color.html(str(_tints.get(TINT_HAT, "ffffff"))))
 
 
 func _equipped_in(body_slot: String) -> String:
@@ -600,9 +608,13 @@ func _fill_apparel() -> void:
 	_apparel_tiles.clear()
 	var all_entries := _apparel_entries(false)
 	var visible_entries := _apparel_entries(true)
+	var owned_count := 0
+	for entry: Dictionary in all_entries:
+		if CrawlerMeta.owns_hat(String(entry["id"])):
+			owned_count += 1
 	if _apparel_count != null:
 		_apparel_count.text = "%02d / %02d OWNED" % [
-			visible_entries.size(),
+			owned_count,
 			all_entries.size(),
 		]
 	if _apparel_scroll != null:
@@ -618,13 +630,24 @@ func _fill_apparel() -> void:
 		tile.set_edge(TILE_EDGE)
 		tile.bind(_catalogue, int(entry["index"]))
 		tile.placeholder = ""
-		tile.equipped = _equipment != null and _equipment.find(id) >= 0
+		var owned := CrawlerMeta.owns_hat(id)
+		tile.equipped = owned and _equipment != null and _equipment.find(id) >= 0
 		tile.selected = tile.equipped
-		tile.badge = "WORN" if tile.equipped else "HOLD"
-		tile.tooltip_text = "%s\n%s" % [
-			ItemDB.title(id).to_upper(),
-			"HOLD TO UNEQUIP" if tile.equipped else "HOLD TO EQUIP",
-		]
+		if not owned:
+			var price := CrawlerMeta.hat_price(id)
+			tile.badge = "%dG" % price
+			tile.modulate = Color(0.72, 0.72, 0.78, 1.0)
+			tile.tooltip_text = "%s\nHOLD TO UNLOCK  //  %d GEMS" % [
+				ItemDB.title(id).to_upper(),
+				price,
+			]
+		else:
+			tile.modulate = Color.WHITE
+			tile.badge = "WORN" if tile.equipped else "HOLD"
+			tile.tooltip_text = "%s\n%s" % [
+				ItemDB.title(id).to_upper(),
+				"HOLD TO UNEQUIP" if tile.equipped else "HOLD TO EQUIP",
+			]
 		tile.hold_completed.connect(_on_apparel_hold_completed)
 		_apparel_grid.add_child(tile)
 		_apparel_tiles.append(tile)
@@ -661,6 +684,11 @@ func toggle_apparel(item_id: String) -> void:
 	if _equipment == null or item_id.is_empty() or not ItemDB.is_apparel(item_id) \
 			or not CharacterDB.apparel_fits(_body_id, item_id):
 		return
+	if not CrawlerMeta.owns_hat(item_id):
+		if not CrawlerMeta.unlock_hat(item_id):
+			return
+		hat_unlocked.emit(item_id)
+		_fill_apparel()
 	var body_slot := ItemDB.slot_of(item_id)
 	for index in _equipment.size():
 		if _equipment.filter_of(index) != body_slot:
@@ -706,6 +734,13 @@ func set_player_name(value: String) -> void:
 	_player_name = value
 	if _name_field != null and not _name_field.has_focus():
 		_name_field.text = value
+
+
+func set_body(value: String) -> void:
+	_body_id = CharacterDB.sanitize_body(value)
+	_skin_id = CharacterDB.sanitize_skin(_body_id, _skin_id)
+	_fill_character_grid()
+	_fill_skin_row()
 
 
 func set_skin(value: String) -> void:

@@ -41,7 +41,7 @@ func _ready() -> void:
 		push_error("eye_probe: no skeleton")
 		get_tree().quit(1)
 		return
-	var bone := skeleton.find_bone(&"Head")
+	var bone := CharacterRig.find_bone(skeleton, &"Head")
 	print("eye_probe: body=%s bone=%d of %d" % [
 		player._body_id, bone, skeleton.get_bone_count()])
 
@@ -113,7 +113,7 @@ func _measure_body(id: String) -> void:
 		print("eye_probe: %s has no skeleton" % id)
 		scene.queue_free()
 		return
-	var bone := skeleton.find_bone(&"Head")
+	var bone := CharacterRig.find_bone(skeleton, &"Head")
 	var rest := skeleton.get_bone_global_rest(bone)
 	var mesh := _head_mesh(skeleton)
 	print("eye_probe: --- %s, head bone at %s" % [id, rest.origin])
@@ -147,7 +147,8 @@ func _face_at(mesh: MeshInstance3D, height: float) -> float:
 
 
 func _measure_goggles(player: OnlinePlayer) -> void:
-	player.equipment.set_item(1, "c3_goggles")
+	if player.equipment.size() > 0:
+		player.equipment.set_item(0, "c3_hair")
 	for _frame in 20:
 		await get_tree().process_frame
 	var worn_names := PackedStringArray()

@@ -421,7 +421,7 @@ static func _basis_with_y(direction: Vector3, hint: Vector3) -> Basis:
 
 func _find_bones(skeleton: Skeleton3D) -> bool:
 	for key in BONES:
-		var index := skeleton.find_bone(BONES[key])
+		var index := CharacterRig.find_bone(skeleton, StringName(BONES[key]))
 		if index < 0:
 			push_warning("WeaponPose: %s has no '%s' bone" % [skeleton.name, BONES[key]])
 			_bones.clear()

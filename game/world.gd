@@ -9,11 +9,15 @@ extends Node3D
 const PLAYER_SCENE := preload("res://game/player/player.tscn")
 
 ## The title view opens at the light the authored cycle reaches after three
-## minutes: low over Vacationer's Landing and close to local sunset. Gameplay
-## still begins from phase zero in [method _begin_session].
+## minutes: low over Vacationer's Landing and close to local sunset. Story
+## gameplay still begins from phase zero in [method _begin_session]. A crawler
+## session instead opens at local twilight on the Tide Margin pad.
 const HOME_SUN_ADVANCE_SECONDS := 180.0
+## Just inside the coordinate plate's dusk band (+8° to −17°) at the spawn pad.
+const CRAWLER_SPAWN_SUN_ELEVATION := 6.0
 const DROP_FORWARD_DISTANCE := 1.55
 const DROP_SURFACE_CLEARANCE := 0.08
+const CRAWLER_DROP_FORWARD := 1.6
 ## Slightly wider than the 2.4 m interaction ray to allow for the player's eye,
 ## the pickup's raised centre and a sloping surface, but still an arm's-length
 ## server check rather than trusting that a client ray hit.
@@ -68,6 +72,9 @@ var _respawn_sequence: Dictionary = {}
 ## Steam and ENet are identities, not roster indices; modulo-ing one by the
 ## number of authored markers can put two different peers on the same marker.
 var _sandbox_spawn_slots: Dictionary = {}
+var _crawler_city_queue: Array = []
+var _crawler_city_gift_id := 0
+var _crawler_city_gift_claimed := false
 
 
 func _ready() -> void:
@@ -333,6 +340,10 @@ func request_colony_respawn() -> void:
 	var player := _spawned_players.get(sender) as OnlinePlayer
 	if not is_instance_valid(player) or not player.is_dead():
 		return
+	if CrawlerRules.active():
+		var progress := player.crawler_progress
+		if progress == null or not progress.spend_respawn_ticket():
+			return
 	respawn_player_at_colony(sender)
 
 
@@ -344,7 +355,7 @@ func respawn_player_at_colony(peer_id: int) -> bool:
 		return false
 	var sequence := int(_respawn_sequence.get(peer_id, 0)) + 1
 	_respawn_sequence[peer_id] = sequence
-	var at_transform := safe_colony_respawn_transform(peer_id)
+	var at_transform := _respawn_transform(peer_id)
 	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
 		_apply_colony_respawn.rpc(peer_id, at_transform, sequence)
 	else:
@@ -370,7 +381,7 @@ func respawn_player_above_city(peer_id: int) -> bool:
 		return false
 	var sequence := int(_respawn_sequence.get(peer_id, 0)) + 1
 	_respawn_sequence[peer_id] = sequence
-	var at_transform := nearest_city_respawn_transform(player.global_position, peer_id)
+	var at_transform := _respawn_transform(peer_id, player.global_position)
 	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
 		_apply_colony_respawn.rpc(peer_id, at_transform, sequence)
 	else:
@@ -378,7 +389,21 @@ func respawn_player_above_city(peer_id: int) -> bool:
 	return true
 
 
+func _respawn_transform(peer_id: int, from := Vector3.ZERO) -> Transform3D:
+	if CrawlerRules.active():
+		var start := _crawler_start_transform()
+		if start.origin.length_squared() > 1.0:
+			return start
+	if from.length_squared() > 0.0001:
+		return nearest_city_respawn_transform(from, peer_id)
+	return safe_colony_respawn_transform(peer_id)
+
+
 func nearest_city_respawn_transform(from: Vector3, peer_id: int) -> Transform3D:
+	if CrawlerRules.active():
+		var start := _crawler_start_transform()
+		if start.origin.length_squared() > 1.0:
+			return start
 	var city := _nearest_city(from)
 	if city == null:
 		return safe_colony_respawn_transform(peer_id)
@@ -389,6 +414,290 @@ func nearest_city_respawn_transform(from: Vector3, peer_id: int) -> Transform3D:
 	if facing.length_squared() < 0.0001:
 		facing = Vector3.FORWARD
 	return Transform3D(_upright_basis(facing.normalized(), up), at)
+
+
+func _seed_crawler_cities(tries := 0) -> void:
+	if not CrawlerRules.active():
+		return
+	var overlay := _land_patches()
+	if overlay == null or not overlay.ensure_ready():
+		if tries < 8:
+			call_deferred(&"_seed_crawler_cities", tries + 1)
+		return
+	_ensure_crawler_ring(tries)
+	_ensure_crawler_horde()
+	_park_crawler_players()
+
+
+func _ensure_crawler_ring(tries := 0) -> void:
+	if not CrawlerRules.active():
+		return
+	if get_node_or_null("CrawlerCityRing") != null:
+		_ensure_crawler_start_site()
+		_apply_crawler_site_progress()
+		_ensure_crawler_city_gift()
+		return
+	var overlay := _land_patches()
+	if overlay == null or not overlay.ensure_ready():
+		if tries < 8:
+			call_deferred(&"_ensure_crawler_ring", tries + 1)
+		return
+	var at := overlay.crawler_city_transform(0.35)
+	if at.origin.length_squared() < 1.0:
+		var named_id := overlay.patch_id_named(CrawlerRules.CITY_PATCH)
+		if named_id < 0:
+			named_id = _fallback_crawler_city_id(overlay)
+		var start_id := overlay.patch_id_named(CrawlerRules.START_PATCH)
+		var from := overlay.flat_direction_for_patch(start_id) if start_id >= 0 \
+				else Vector3.ZERO
+		at = overlay.flat_surface_transform_away_from(
+			named_id, from, CrawlerRules.CITY_RING_PUSH, 0.35)
+	if at.origin.length_squared() < 1.0:
+		if tries < 8:
+			call_deferred(&"_ensure_crawler_ring", tries + 1)
+		return
+	var patch_id := overlay.patch_id_at(at.origin)
+	if patch_id < 0:
+		patch_id = overlay.patch_id_named(CrawlerRules.CITY_PATCH)
+	if patch_id < 0:
+		patch_id = _fallback_crawler_city_id(overlay)
+	var ring = load("res://game/crawler/crawler_city_ring.gd").new()
+	ring.name = "CrawlerCityRing"
+	ring.configure(patch_id, at)
+	add_child(ring)
+	NetworkManager.session_options["crawler_cities"] = [patch_id]
+	_ensure_crawler_start_site()
+	_apply_crawler_site_progress()
+	_ensure_crawler_city_gift()
+
+
+func _place_next_crawler_city() -> void:
+	if not CrawlerRules.active() or _crawler_city_queue.is_empty():
+		return
+	var overlay := _land_patches()
+	if overlay == null:
+		return
+	var patch_id := int(_crawler_city_queue.pop_front())
+	overlay.place_cities([patch_id])
+	if not _crawler_city_queue.is_empty():
+		call_deferred(&"_place_next_crawler_city")
+	else:
+		_park_crawler_players()
+
+
+func _ensure_crawler_city_gift() -> void:
+	if not CrawlerRules.active():
+		return
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		return
+	if _crawler_city_gift_claimed:
+		return
+	if _crawler_city_gift_id > 0:
+		var existing := _pickup_nodes.get(_crawler_city_gift_id) as Node
+		if is_instance_valid(existing):
+			return
+	var ring := get_node_or_null("CrawlerCityRing") as CrawlerCityRing
+	if ring == null:
+		return
+	var card := CrawlerCatalog.make_ability("starfire")
+	if card == null:
+		return
+	var pickup_id := _next_pickup_id
+	_next_pickup_id += 1
+	_crawler_city_gift_id = pickup_id
+	var at_transform := ring.gift_stand_transform()
+	_pickups[pickup_id] = {
+		"kind": "crawler",
+		"payload": card.to_dict(),
+		"transform": at_transform,
+		"claimed": false,
+	}
+	_spawn_crawler_pickup_local(pickup_id, card.to_dict(), at_transform)
+	if multiplayer.has_multiplayer_peer():
+		_spawn_crawler_pickup.rpc(pickup_id, card.to_dict(), at_transform)
+
+
+func _fallback_crawler_city_id(overlay: LandPatchOverlay) -> int:
+	var start_id := overlay.patch_id_named(CrawlerRules.START_PATCH)
+	var best := -1
+	var best_span := -1.0
+	for patch in overlay.partition.patches:
+		if patch.id == start_id or CrawlerRules.reserved_patch(patch.name):
+			continue
+		if patch.span > best_span:
+			best_span = patch.span
+			best = patch.id
+	return best
+
+
+func _ensure_crawler_start_site() -> void:
+	if not CrawlerRules.active():
+		return
+	_ensure_crawler_spawn_pad()
+	if _crawler_start_site() != null:
+		return
+	var at := _crawler_start_transform()
+	if at.origin.length_squared() < 1.0:
+		return
+	var host := planet()
+	var site := CrawlerSite.new()
+	site.name = "CrawlerStartSite"
+	site.site_id = CrawlerRules.START_SITE_ID
+	site.title = CrawlerRules.START_SITE_TITLE
+	site.enter_radius = CrawlerRules.START_ENTER_RADIUS
+	site.waypoint = false
+	site.hide_beyond = 0.0
+	site.show_beyond = 0.0
+	site.aimed_beyond = 0.0
+	site.clearance = 2.0
+	site.direction = at.origin.normalized()
+	site.planet = host
+	if host != null:
+		host.add_child(site)
+	else:
+		add_child(site)
+
+
+func _crawler_start_site() -> CrawlerSite:
+	var existing := get_node_or_null("CrawlerStartSite") as CrawlerSite
+	if existing != null:
+		return existing
+	var host := planet()
+	if host != null:
+		return host.get_node_or_null("CrawlerStartSite") as CrawlerSite
+	return null
+
+
+func _apply_crawler_site_progress() -> void:
+	if CrawlerProgress.session_payload.is_empty() or not is_inside_tree():
+		return
+	var ledger := CrawlerProgress.new()
+	ledger.from_dict(CrawlerProgress.session_payload)
+	CrawlerSites.apply_progress(ledger, get_tree())
+
+
+## Sets the orbit so the sun sits just into twilight at the crawler pad.
+## Host only; clients inherit the phase from the world snapshot.
+func _sync_crawler_twilight(tries := 0) -> void:
+	if not CrawlerRules.active() or celestial_cycle == null:
+		return
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		return
+	var at := _crawler_start_transform()
+	if at.origin.length_squared() < 1.0:
+		if tries < 8:
+			call_deferred(&"_sync_crawler_twilight", tries + 1)
+		return
+	var host := planet()
+	var up := at.basis.y
+	if host != null:
+		var from_centre := at.origin - host.global_position
+		if from_centre.length_squared() > 0.0001:
+			up = from_centre
+	if up.length_squared() < 0.0001:
+		return
+	celestial_cycle.set_phase(celestial_cycle.phase_for_local_elevation(
+		up, CRAWLER_SPAWN_SUN_ELEVATION, true))
+
+
+func _crawler_start_transform() -> Transform3D:
+	_ensure_crawler_spawn_pad()
+	var pad := _crawler_spawn_pad()
+	if pad != null:
+		var seated := pad.player_spawn_transform()
+		if seated.origin.length_squared() > 1.0:
+			return seated
+	var overlay := _land_patches()
+	if overlay == null or not overlay.ensure_ready():
+		return Transform3D()
+	var seated := overlay.crawler_spawn_transform(1.35)
+	if seated.origin.length_squared() > 1.0:
+		return seated
+	var patch_id := overlay.patch_id_named(CrawlerRules.START_PATCH)
+	if patch_id < 0 and not overlay.partition.patches.is_empty():
+		patch_id = overlay.partition.patches[0].id
+	return overlay.high_surface_transform_for_patch(patch_id, 1.35)
+
+
+func _crawler_spawn_pad() -> CrawlerSpawnPad:
+	var existing := get_node_or_null("CrawlerSpawnPad") as CrawlerSpawnPad
+	if existing != null:
+		return existing
+	var host := planet()
+	if host != null:
+		return host.get_node_or_null("CrawlerSpawnPad") as CrawlerSpawnPad
+	return null
+
+
+func _ensure_crawler_spawn_pad(tries := 0) -> void:
+	if not CrawlerRules.active():
+		return
+	if _crawler_spawn_pad() != null:
+		return
+	var overlay := _land_patches()
+	if overlay == null or not overlay.ensure_ready():
+		if tries < 8:
+			call_deferred(&"_ensure_crawler_spawn_pad", tries + 1)
+		return
+	var at := overlay.crawler_spawn_transform(0.0)
+	if at.origin.length_squared() < 1.0:
+		var patch_id := overlay.patch_id_named(CrawlerRules.START_PATCH)
+		if patch_id < 0 and not overlay.partition.patches.is_empty():
+			patch_id = overlay.partition.patches[0].id
+		at = overlay.high_surface_transform_for_patch(patch_id, 0.0)
+	if at.origin.length_squared() < 1.0:
+		if tries < 8:
+			call_deferred(&"_ensure_crawler_spawn_pad", tries + 1)
+		return
+	var pad := CrawlerSpawnPad.new()
+	pad.name = "CrawlerSpawnPad"
+	pad.configure(at)
+	var host := planet()
+	if host != null:
+		host.add_child(pad)
+	else:
+		add_child(pad)
+	_sync_crawler_twilight()
+
+
+func _park_crawler_players() -> void:
+	if not CrawlerRules.active():
+		return
+	var at := _crawler_start_transform()
+	if at.origin.length_squared() < 1.0:
+		return
+	_sync_crawler_twilight()
+	for player_variant: Variant in _spawned_players.values():
+		var player := player_variant as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		player.global_transform = at
+		player.reset_physics_interpolation()
+		player.reset_network_state(at)
+		if player.has_method(&"settle_on_ground"):
+			player.call(&"settle_on_ground")
+		if player.has_method(&"play_spawn_arrival"):
+			player.call(&"play_spawn_arrival")
+
+
+func _land_patches() -> LandPatchOverlay:
+	var overlay := get_node_or_null("Planet/LandPatches") as LandPatchOverlay
+	if overlay != null:
+		return overlay
+	if not is_inside_tree():
+		return null
+	return get_tree().get_first_node_in_group(LandPatchOverlay.GROUP) \
+		as LandPatchOverlay
+
+
+func _ensure_crawler_horde() -> void:
+	if not CrawlerRules.active():
+		return
+	if get_node_or_null("CrawlerHorde") != null:
+		return
+	var horde := CrawlerHorde.new()
+	horde.name = "CrawlerHorde"
+	add_child(horde)
 
 
 func _nearest_city(from: Vector3) -> PatchCity:
@@ -415,6 +724,10 @@ func _nearest_city(from: Vector3) -> PatchCity:
 ## landing-site fallback). The host computes and broadcasts the exact transform,
 ## so peers need not agree on their local terrain streaming state that frame.
 func safe_colony_respawn_transform(peer_id: int) -> Transform3D:
+	if CrawlerRules.active():
+		var start := _crawler_start_transform()
+		if start.origin.length_squared() > 1.0:
+			return start
 	var anchor := get_node_or_null("Planet/VacationersLanding") as Node3D
 	if anchor == null:
 		anchor = get_node_or_null("Planet/LandingSite") as Node3D
@@ -535,6 +848,15 @@ func pickup_snapshots() -> Array:
 		var record: Dictionary = _pickups.get(pickup_id, {})
 		if record.is_empty() or bool(record.get("claimed", false)):
 			continue
+		var kind := str(record.get("kind", ""))
+		if kind == "crawler":
+			snapshots.append({
+				"pickup_id": pickup_id,
+				"kind": "crawler",
+				"payload": record.get("payload", {}),
+				"transform": record.get("transform", Transform3D.IDENTITY),
+			})
+			continue
 		snapshots.append({
 			"pickup_id": pickup_id,
 			"item_id": str(record.get("item_id", "")),
@@ -570,16 +892,28 @@ func _begin_session() -> void:
 	if _session_open:
 		return
 	_session_open = true
+	LagTracker.note("session", "world session opened  host=%s" % multiplayer.is_server())
 	if multiplayer.is_server():
-		# The world is already rendering behind the title screen, but a new game
-		# should begin at the authored noon rather than inherit however long the
-		# player spent in the menu. Joining clients receive this phase below.
-		celestial_cycle.set_phase(0.0)
+		# The world is already rendering behind the title screen. Story starts
+		# at authored noon over the landing; crawler starts at dusk on the pad.
+		# Joining clients receive this phase below.
 		celestial_cycle.set_day_index(0)
+		if CrawlerRules.active():
+			_sync_crawler_twilight()
+		else:
+			celestial_cycle.set_phase(0.0)
 		for peer_id in NetworkManager.players:
-			_spawn_player(int(peer_id), NetworkManager.get_player_metadata(int(peer_id)), _spawn_transform(int(peer_id)), true)
+			_spawn_player(
+				int(peer_id),
+				NetworkManager.get_player_metadata(int(peer_id)),
+				_spawn_transform(int(peer_id)),
+				not CrawlerRules.active()
+			)
 	else:
 		_request_world_state.rpc_id(1)
+	if CrawlerRules.active():
+		call_deferred(&"_seed_crawler_cities", 0)
+		call_deferred(&"_ensure_crawler_horde")
 
 
 ## What being in a menu costs. Escape used to raise a pause card of the world's
@@ -593,8 +927,10 @@ func _begin_session() -> void:
 ##   can honestly do is take the mouse and stop taking this player's input — which
 ##   [method OnlinePlayer.open_menu] has already done by the time this is called.
 func set_local_pause(paused: bool) -> void:
-	_locally_paused = paused
 	var freeze_simulation := paused and NetworkManager.is_single_player
+	if paused != _locally_paused or freeze_simulation != _simulation_frozen:
+		LagTracker.note("ui", "local pause %s  freeze=%s" % [paused, freeze_simulation])
+	_locally_paused = paused
 	if freeze_simulation == _simulation_frozen:
 		get_tree().paused = freeze_simulation
 		return
@@ -699,6 +1035,220 @@ func _request_pickup_from_client(pickup_id: int, generation: int) -> void:
 			or not NetworkManager.is_peer_registered(sender):
 		return
 	_server_pickup(sender, pickup_id, generation)
+
+
+func request_crawler_drop(
+		peer_id: int,
+		source: String,
+		index: int,
+		expected_token: String
+	) -> void:
+	var local_id := multiplayer.get_unique_id()
+	if peer_id != local_id:
+		return
+	var player := _spawned_players.get(local_id) as OnlinePlayer
+	if not is_instance_valid(player) or player.crawler_kit == null:
+		return
+	if multiplayer.is_server():
+		_server_crawler_drop(
+			local_id, source, index, expected_token, player.inventory_generation())
+		return
+	player.sync_loadout_to_server()
+	_request_crawler_drop_from_client.rpc_id(
+		1, source, index, expected_token, player.inventory_generation())
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_crawler_drop_from_client(
+		source: String,
+		index: int,
+		expected_token: String,
+		generation: int
+	) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.state != NetworkManager.SessionState.IN_GAME \
+			or not NetworkManager.is_peer_registered(sender):
+		return
+	_server_crawler_drop(sender, source, index, expected_token, generation)
+
+
+func request_crawler_pickup(pickup_id: int, peer_id: int) -> void:
+	var local_id := multiplayer.get_unique_id()
+	if peer_id != local_id:
+		return
+	var player := _spawned_players.get(local_id) as OnlinePlayer
+	if not is_instance_valid(player):
+		return
+	if multiplayer.is_server():
+		_server_crawler_pickup(local_id, pickup_id, player.inventory_generation())
+		return
+	player.sync_loadout_to_server()
+	_request_crawler_pickup_from_client.rpc_id(
+		1, pickup_id, player.inventory_generation())
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_crawler_pickup_from_client(pickup_id: int, generation: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if NetworkManager.state != NetworkManager.SessionState.IN_GAME \
+			or not NetworkManager.is_peer_registered(sender):
+		return
+	_server_crawler_pickup(sender, pickup_id, generation)
+
+
+func _server_crawler_drop(
+		peer_id: int,
+		source: String,
+		index: int,
+		expected_token: String,
+		generation: int
+	) -> int:
+	if not multiplayer.is_server():
+		return 0
+	var player := _spawned_players.get(peer_id) as OnlinePlayer
+	if not is_instance_valid(player) or player.crawler_kit == null \
+			or not player.authoritative_inventory_ready() \
+			or generation != player.inventory_generation():
+		return 0
+	var payload := player.crawler_kit.extract(source, index, expected_token)
+	if payload.is_empty():
+		return 0
+	var next_generation := player.advance_inventory_generation()
+	var pickup_id := _next_pickup_id
+	_next_pickup_id += 1
+	var at_transform := _crawler_drop_transform(player)
+	_pickups[pickup_id] = {
+		"kind": "crawler",
+		"payload": payload,
+		"transform": at_transform,
+		"claimed": false,
+	}
+	_spawn_crawler_pickup_local(pickup_id, payload, at_transform)
+	if multiplayer.has_multiplayer_peer():
+		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform)
+	if peer_id != multiplayer.get_unique_id():
+		_confirm_crawler_drop.rpc_id(
+			peer_id, pickup_id, source, index, expected_token, next_generation)
+	return pickup_id
+
+
+func _server_crawler_pickup(peer_id: int, pickup_id: int, generation: int) -> bool:
+	if not multiplayer.is_server():
+		return false
+	var player := _spawned_players.get(peer_id) as OnlinePlayer
+	var record: Dictionary = _pickups.get(pickup_id, {})
+	if not is_instance_valid(player) or player.crawler_kit == null \
+			or not player.authoritative_inventory_ready() \
+			or generation != player.inventory_generation() or record.is_empty() \
+			or bool(record.get("claimed", false)) \
+			or str(record.get("kind", "")) != "crawler":
+		return false
+	var payload: Dictionary = record.get("payload", {})
+	var at_transform: Transform3D = record.get(
+		"transform", Transform3D.IDENTITY)
+	if payload.is_empty() \
+			or player.global_position.distance_to(at_transform.origin) \
+				> PICKUP_MAX_DISTANCE:
+		return false
+	record["claimed"] = true
+	_pickups[pickup_id] = record
+	var granted := player.crawler_kit.grant(payload, player.selected_ability_index())
+	if not bool(granted.get("ok", false)):
+		record["claimed"] = false
+		_pickups[pickup_id] = record
+		return false
+	var next_generation := player.advance_inventory_generation()
+	if pickup_id == _crawler_city_gift_id:
+		_crawler_city_gift_claimed = true
+	if peer_id != multiplayer.get_unique_id():
+		_grant_crawler_pickup.rpc_id(
+			peer_id, pickup_id, payload, next_generation)
+	_despawn_pickup_local(pickup_id)
+	if multiplayer.has_multiplayer_peer():
+		_despawn_pickup.rpc(pickup_id)
+	var displaced: Variant = granted.get("displaced", {})
+	if displaced is Dictionary and not (displaced as Dictionary).is_empty():
+		_server_crawler_spawn(player, displaced as Dictionary)
+	return true
+
+
+func _server_crawler_spawn(player: OnlinePlayer, payload: Dictionary) -> int:
+	var pickup_id := _next_pickup_id
+	_next_pickup_id += 1
+	var at_transform := _crawler_drop_transform(player)
+	_pickups[pickup_id] = {
+		"kind": "crawler",
+		"payload": payload,
+		"transform": at_transform,
+		"claimed": false,
+	}
+	_spawn_crawler_pickup_local(pickup_id, payload, at_transform)
+	if multiplayer.has_multiplayer_peer():
+		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform)
+	return pickup_id
+
+
+@rpc("authority", "call_remote", "reliable")
+func _confirm_crawler_drop(
+		_pickup_id: int,
+		source: String,
+		index: int,
+		token: String,
+		generation: int
+	) -> void:
+	var player := local_player()
+	if is_instance_valid(player) and player.crawler_kit != null:
+		player.crawler_kit.extract(source, index, token)
+		player._inventory_generation = generation
+
+
+@rpc("authority", "call_remote", "reliable")
+func _grant_crawler_pickup(
+		_pickup_id: int,
+		payload: Dictionary,
+		generation: int
+	) -> void:
+	var player := local_player()
+	if is_instance_valid(player) and player.crawler_kit != null:
+		player.crawler_kit.grant(payload, player.selected_ability_index())
+		player._inventory_generation = generation
+
+
+@rpc("authority", "call_remote", "reliable")
+func _spawn_crawler_pickup(
+		pickup_id: int,
+		payload: Dictionary,
+		at_transform: Transform3D
+	) -> void:
+	_spawn_crawler_pickup_local(pickup_id, payload, at_transform)
+
+
+func _spawn_crawler_pickup_local(
+		pickup_id: int,
+		payload: Dictionary,
+		at_transform: Transform3D
+	) -> void:
+	if pickup_id <= 0 or payload.is_empty():
+		return
+	var existing := _pickup_nodes.get(pickup_id) as Node
+	if is_instance_valid(existing):
+		return
+	_pickups[pickup_id] = {
+		"kind": "crawler",
+		"payload": payload,
+		"transform": at_transform,
+		"claimed": false,
+	}
+	var dropped := DroppedCrawlerCard.new()
+	dropped.configure(pickup_id, payload)
+	add_child(dropped, true)
+	dropped.global_transform = at_transform
+	dropped.reset_physics_interpolation()
+	_pickup_nodes[pickup_id] = dropped
 
 
 ## Returns the spawned id for focused tests; public callers intentionally ignore
@@ -848,7 +1398,7 @@ func _despawn_pickup(pickup_id: int) -> void:
 
 func _despawn_pickup_local(pickup_id: int) -> void:
 	_pickups.erase(pickup_id)
-	var dropped := _pickup_nodes.get(pickup_id) as DroppedItem
+	var dropped := _pickup_nodes.get(pickup_id) as Node
 	_pickup_nodes.erase(pickup_id)
 	if is_instance_valid(dropped):
 		dropped.queue_free()
@@ -868,6 +1418,33 @@ func _source_accepts_item(source: String, item_id: String) -> bool:
 		"backpack":
 			return ItemDB.accepts_backpack(item_id)
 	return false
+
+
+## Floats a crawler card in front of the player's look, at their current height.
+## Flight keeps that pose in the air; the tile is never snapped to the terrain.
+func _crawler_drop_transform(player: OnlinePlayer) -> Transform3D:
+	var up := player.world_up()
+	if up.length_squared() < 0.5:
+		up = player.global_basis.y
+	if up.length_squared() < 0.5:
+		up = Vector3.UP
+	up = up.normalized()
+	var look := Vector3.ZERO
+	if player.camera != null:
+		look = player.look_direction()
+	if look.length_squared() < 0.0001:
+		look = -player.global_basis.z
+	look = look.normalized()
+	if absf(look.dot(up)) > 0.92:
+		var along := -player.global_basis.z
+		along -= up * along.dot(up)
+		if along.length_squared() < 0.0001:
+			along = player.global_basis.x
+		look = look.lerp(along.normalized(), 0.35).normalized()
+	return Transform3D(
+		_upright_basis(-look, up),
+		player.combat_position() + look * CRAWLER_DROP_FORWARD
+	)
 
 
 ## Stands the pickup on the finest terrain query, one player-width ahead along
@@ -931,7 +1508,12 @@ func _on_player_registered(peer_id: int, metadata: Dictionary) -> void:
 	if not multiplayer.is_server() \
 			or NetworkManager.state != NetworkManager.SessionState.IN_GAME:
 		return
-	_spawn_player.rpc(peer_id, metadata, _spawn_transform(peer_id), true)
+	_spawn_player.rpc(
+		peer_id,
+		metadata,
+		_spawn_transform(peer_id),
+		not CrawlerRules.active()
+	)
 
 
 ## [param in_flight] is for the spawn markers, which hang in orbit with nothing
@@ -941,6 +1523,7 @@ func _on_player_registered(peer_id: int, metadata: Dictionary) -> void:
 func _spawn_player(peer_id: int, metadata: Dictionary, at_transform: Transform3D, in_flight: bool) -> void:
 	if _spawned_players.has(peer_id):
 		return
+	var started := Time.get_ticks_msec()
 	var player := PLAYER_SCENE.instantiate() as OnlinePlayer
 	player.name = str(peer_id)
 	player.peer_id = peer_id
@@ -968,7 +1551,13 @@ func _spawn_player(peer_id: int, metadata: Dictionary, at_transform: Transform3D
 	if _has_look_override and peer_id == multiplayer.get_unique_id():
 		look = _look_override.duplicate(true)
 		_has_look_override = false
+	if CrawlerRules.active():
+		look["worn"] = {}
 	player.apply_look(look)
+	if CrawlerRules.active() and player.has_method(&"refresh_crawler_look"):
+		player.call(&"refresh_crawler_look")
+	if CrawlerRules.active() and player.has_method(&"arm_spawn_arrival"):
+		player.call(&"arm_spawn_arrival")
 	player.global_transform = at_transform
 	# This is a spawn/teleport, not movement between two physics ticks. Without
 	# resetting, interpolation draws one frame between the scene origin and the
@@ -978,6 +1567,10 @@ func _spawn_player(peer_id: int, metadata: Dictionary, at_transform: Transform3D
 	if in_flight:
 		player.start_flying()
 	_spawned_players[peer_id] = player
+	if CrawlerRules.active() and player.has_method(&"play_spawn_arrival"):
+		player.call(&"play_spawn_arrival")
+	LagTracker.note("spawn", "player %d '%s' in %d ms" % [
+		peer_id, player.display_name, Time.get_ticks_msec() - started])
 
 
 @rpc("authority", "call_local", "reliable")
@@ -987,6 +1580,7 @@ func _despawn_player(peer_id: int) -> void:
 	_respawn_sequence.erase(peer_id)
 	_sandbox_spawn_slots.erase(peer_id)
 	if is_instance_valid(player):
+		LagTracker.note("spawn", "despawn player %d" % peer_id)
 		player.queue_free()
 
 
@@ -1070,13 +1664,24 @@ func _receive_world_state(
 		if not pickup_variant is Dictionary:
 			continue
 		var pickup: Dictionary = pickup_variant
+		var pickup_id := int(pickup.get("pickup_id", 0))
+		if str(pickup.get("kind", "")) == "crawler" or pickup.has("payload"):
+			_spawn_crawler_pickup_local(
+				pickup_id,
+				pickup.get("payload", {}),
+				pickup.get("transform", Transform3D.IDENTITY))
+			continue
 		_spawn_pickup_local(
-			int(pickup.get("pickup_id", 0)),
+			pickup_id,
 			str(pickup.get("item_id", "")),
 			pickup.get("transform", Transform3D.IDENTITY))
 
 
 func _spawn_transform(peer_id: int) -> Transform3D:
+	if CrawlerRules.active():
+		var crawler := _crawler_start_transform()
+		if crawler.origin.length_squared() > 1.0:
+			return crawler
 	if _is_online_sandbox():
 		return _online_sandbox_spawn_transform(peer_id)
 	if _has_spawn_override and peer_id == multiplayer.get_unique_id():

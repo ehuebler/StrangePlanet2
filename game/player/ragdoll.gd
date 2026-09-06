@@ -37,7 +37,7 @@ const CHAIN := {
 	&"Hips": &"Chest",
 	&"Chest": &"Neck",
 	&"Neck": &"Head",
-	&"Head": &"",
+	&"Head": &"head_leaf",
 	&"LeftUpperArm": &"LeftLowerArm",
 	&"LeftLowerArm": &"LeftHand",
 	&"RightUpperArm": &"RightLowerArm",
@@ -294,16 +294,18 @@ func _ready() -> void:
 	_skeleton = skeleton
 	var measured := _measure(skeleton)
 	for bone_name: StringName in CHAIN:
-		var id := skeleton.find_bone(bone_name)
+		var id := CharacterRig.find_bone(skeleton, bone_name)
 		if id < 0:
 			continue
+		var actual := StringName(skeleton.get_bone_name(id))
 		var girth: float = measured.get(bone_name, GIRTH.get(bone_name, 0.05))
-		var bone := _build(skeleton, id, bone_name, girth)
+		var bone := _build(skeleton, id, actual, girth)
 		if bone == null:
 			continue
+		bone.mass = float(MASS.get(bone_name, 2.0))
 		add_child(bone)
 		_bones.append(bone)
-		_names.append(bone_name)
+		_names.append(actual)
 		_ids.append(id)
 		_girth.append(girth)
 		_half.append(_reach(skeleton, id, bone_name).length() * 0.5)
@@ -339,6 +341,7 @@ func limp() -> bool:
 func go_limp(carried: Vector3, pull: Vector3) -> void:
 	if not built():
 		return
+	LagTracker.note_throttled("combat", "ragdoll", "ragdoll go_limp", 0.4)
 	# A knock already running is a smaller version of this and gives way to it.
 	# Without this the early return below would leave a player who is clipped on
 	# the shoulder and then hits a cliff with one loose arm and nothing else.
@@ -843,9 +846,9 @@ func _taper(skeleton: Skeleton3D, measured: Dictionary) -> void:
 ## The nearest bone above this one that has a body of its own, skipping the
 ## shoulders and the like that [constant CHAIN] leaves out.
 func _carrier(skeleton: Skeleton3D, bone_name: StringName) -> StringName:
-	var walk := skeleton.get_bone_parent(skeleton.find_bone(bone_name))
+	var walk := skeleton.get_bone_parent(CharacterRig.find_bone(skeleton, bone_name))
 	while walk >= 0:
-		var above := StringName(skeleton.get_bone_name(walk))
+		var above := CharacterRig.canonical_bone(StringName(skeleton.get_bone_name(walk)))
 		if CHAIN.has(above):
 			return above
 		walk = skeleton.get_bone_parent(walk)
@@ -901,10 +904,10 @@ func _gather(instance: MeshInstance3D, skeleton: Skeleton3D, spread: Dictionary)
 			var id := to_bone[best]
 			if id < 0:
 				continue
-			var bone_name := skeleton.get_bone_name(id)
-			if not CHAIN.has(StringName(bone_name)):
+			var bone_name := CharacterRig.canonical_bone(StringName(skeleton.get_bone_name(id)))
+			if not CHAIN.has(bone_name):
 				continue
-			var axis := _reach(skeleton, id, StringName(bone_name))
+			var axis := _reach(skeleton, id, bone_name)
 			var span := axis.length()
 			if span < 0.02:
 				continue
@@ -929,9 +932,9 @@ func _gather(instance: MeshInstance3D, skeleton: Skeleton3D, spread: Dictionary)
 ## next joint rather than from whichever child happens to come first, because the
 ## hips have three of them and only one of them is the spine.
 func _reach(skeleton: Skeleton3D, id: int, bone_name: StringName) -> Vector3:
-	var next := StringName(CHAIN.get(bone_name, &""))
+	var next := StringName(CHAIN.get(CharacterRig.canonical_bone(bone_name), &""))
 	if not next.is_empty():
-		var child := skeleton.find_bone(next)
+		var child := CharacterRig.find_bone(skeleton, next)
 		# Measured through the rest pose rather than off the child's own rest
 		# origin, so the next joint named may be a grandchild: the pelvis capsule
 		# reaches past `Spine` to `Chest`, and the ribcage past `UpperChest` to
@@ -940,6 +943,10 @@ func _reach(skeleton: Skeleton3D, id: int, bone_name: StringName) -> Vector3:
 		if child >= 0:
 			return skeleton.get_bone_global_rest(id).affine_inverse() \
 				* skeleton.get_bone_global_rest(child).origin
+	for child_id in skeleton.get_bone_count():
+		if skeleton.get_bone_parent(child_id) == id:
+			return skeleton.get_bone_global_rest(id).affine_inverse() \
+				* skeleton.get_bone_global_rest(child_id).origin
 	return Vector3(0.0, LEAF_SPAN, 0.0)
 
 

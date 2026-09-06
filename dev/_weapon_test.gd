@@ -102,18 +102,7 @@ func _selection() -> void:
 		"reverse wheel wraps to slot 3")
 	_report("selection", report)
 
-	# Through the real event path, so a mis-mapped physical key cannot pass.
-	_key(KEY_1)
-	await _wait(10)
-	_expect(_player.held_item() == "sword", "physical 1 selects hotbar slot 1")
-	_key(KEY_2)
-	await _wait(10)
-	_expect(_player.held_item().is_empty(), "physical 2 selects the empty slot")
-	_key(KEY_3)
-	await _wait(10)
-	_expect(_player.held_item() == "laser_rifle",
-		"physical 3 selects hotbar slot 3")
-	_key(KEY_1)
+	_player.select_weapon(0)
 	await _wait(10)
 	_key(KEY_E)
 	await _wait(10)
@@ -121,8 +110,8 @@ func _selection() -> void:
 		"physical E over empty space holsters")
 
 
-## Empty ability slots are safe, populated slots own LMB/RMB only while the
-## hotbar is holstered, and a drawn weapon overrides both mouse channels.
+## Empty ability slots are safe. Click fires the selected slot. RMB does not.
+## Keys 1-4 select a slot without firing it.
 func _ability_routing() -> void:
 	_ability_events.clear()
 	if not _player.ability_activated.is_connected(_on_ability_activated):
@@ -133,11 +122,11 @@ func _ability_routing() -> void:
 	_dispatch_action(&"attack")
 	_dispatch_action(&"aim")
 	_expect(_ability_events.is_empty(),
-		"empty LMB/RMB ability slots are safe no-ops")
+		"empty selected ability and RMB are safe no-ops")
 
 	var ability_ids := ItemDB.ability_ids()
 	if ability_ids.size() < 2:
-		print("weapon_test: SKIP  populated LMB/RMB routing (fewer than two definitions)")
+		print("weapon_test: SKIP  populated ability routing (fewer than two definitions)")
 		return
 
 	# Observe dispatch without actually launching a beam or movement ability.
@@ -152,17 +141,24 @@ func _ability_routing() -> void:
 	_player.abilities.set_item(0, ability_ids[0])
 	_player.abilities.set_item(1, ability_ids[1])
 	_player.holster()
+	_player.select_ability(0)
 	_dispatch_action(&"attack")
 	_dispatch_action(&"aim")
-	_expect(_ability_events == [0, 1],
-		"holstered LMB/RMB dispatch ability slots 1 and 2")
+	_expect(_ability_events == [0],
+		"click fires the selected ability and RMB does not")
 
-	var event_count := _ability_events.size()
-	_player.select_hotbar(0)
+	_ability_events.clear()
+	_player.select_ability(1)
 	_dispatch_action(&"attack")
-	_dispatch_action(&"aim")
-	_expect(_ability_events.size() == event_count,
-		"drawn hotbar item overrides LMB/RMB abilities")
+	_expect(_ability_events == [1], "click fires the newly selected ability")
+
+	_ability_events.clear()
+	_player.select_ability(0)
+	_dispatch_action(&"weapon_2")
+	_expect(_ability_events.is_empty() and _player.selected_ability_index() == 1,
+		"key 2 swaps to slot 2 without firing")
+	_dispatch_action(&"attack")
+	_expect(_ability_events == [1], "click fires the key-selected ability")
 
 	_player.holster()
 	_player.abilities.clear()
@@ -280,45 +276,21 @@ func _first_person() -> void:
 	await _wait(20)
 
 
-## Arm from finite backpack ownership through the canonical RedCataloguePage.
-## The explicit target buttons leave slot two empty, proving this is the new
-## three-slot flow rather than the former five-entry rack.
+## Combat still knows how to hold leftover weapons. The Items tab is gone, so
+## this harness places them on the private hotbar directly.
 func _arm_from_backpack() -> void:
 	_player.holster()
 	_player.hotbar.clear()
 	_player.abilities.clear()
 	_player.backpack.clear()
-	_player.backpack.set_item(0, "sword")
-	_player.backpack.set_item(1, "laser_rifle")
-	_player._open_game_menu(GameMenu.Tab.ITEMS)
-	# UI Controls process while paused, but the pose checks following this setup
-	# need an advancing body immediately after the menu closes.
-	await _wait(8)
-	var menu := _game_menu()
-	if not _expect(menu != null, "Red Menu opens for backpack arming"):
-		get_tree().paused = false
-		return
-	var page := _active_catalogue(menu)
-	if not _expect(page != null, "Items uses RedCataloguePage"):
-		menu.close()
-		get_tree().paused = false
-		return
-
-	await _equip_from_backpack(page, "sword", 0)
-	await _equip_from_backpack(page, "laser_rifle", 2)
-	var targets := page.find_child("TargetButtons", true, false)
-	_expect(targets != null and targets.get_child_count() == 3,
-		"Items exposes exactly three numbered targets")
+	_player.hotbar.set_item(0, "sword")
+	_player.hotbar.set_item(2, "laser_rifle")
 	_expect(_player.hotbar.items()
 		== PackedStringArray(["sword", "", "laser_rifle"]),
-		"Red catalogue arms slots 1 and 3 losslessly from backpack")
-	_expect(_player.backpack.find("sword") < 0
-		and _player.backpack.find("laser_rifle") < 0,
-		"armed weapons leave their finite backpack sources")
+		"leftover weapon row still accepts sword and rifle")
 	_report("arming", "hotbar=%s backpack=%s" % [
 		_player.hotbar.items(), _player.backpack.items()])
 	await _shot("weapon_rack")
-	menu.close()
 	await _wait(4)
 	get_tree().paused = false
 

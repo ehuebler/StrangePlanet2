@@ -171,7 +171,8 @@ func _strike(player: Node) -> void:
 		hit.reaction = DamageHit.Reaction.STAGGER
 		hit.world_impulse = along * knockback + _up() * knockback * 0.2
 		hit.ability_id = "fauna_spit"
-		hit.set_source(spitter)
+		if is_instance_valid(spitter):
+			hit.set_source(spitter)
 		player.call(&"apply_damage", hit)
 	_burst(-_velocity.normalized() if _velocity.length_squared() > 0.01 \
 		else _up())

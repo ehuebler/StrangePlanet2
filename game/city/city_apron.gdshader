@@ -1,12 +1,7 @@
 shader_type spatial;
-// Vertex-coloured district slope. Unshaded pavement used to stay noon-bright
-// against night terrain; this takes the same cubemap lighting and a night dim.
-// Vertex colour is the biome without city zoning. The vivid treatment here is
-// the same saturate / region mix the ground uses, so a desert ramp reads as
-// desert instead of as a painted card.
-// Depth bias wins the z-fight with the planet mesh: the collider stays on the
-// authored top, and a few centimetres of visual push stops the ramp vanishing
-// from some camera angles.
+// Leftover homemade slope card. Runtime aprons use vivid_terrain_apron.gdshader
+// so they photograph as planet ground. Kept as a reference for the lift and
+// the cull_disabled render mode that sheet still needs.
 render_mode cull_disabled, diffuse_lambert_wrap, specular_schlick_ggx, depth_draw_opaque;
 
 #include "res://shaders/vivid/vivid_lib.gdshaderinc"

@@ -82,15 +82,26 @@ static func set_texture(mesh_instance: MeshInstance3D, texture: Texture2D) -> vo
 			material.set_shader_parameter(&"base_texture", texture)
 
 
-## The imported body mesh is named `Character` on both bodies. Matching that
-## node rather than "everything not in Wardrobe" is what prevents a held weapon
-## under the same skeleton from inheriting the player's skin after a late look
-## refresh.
+## The imported body mesh is named `Character` after [method CharacterRig.normalize_body].
+## Matching that node rather than "everything not in Wardrobe" is what prevents
+## a held weapon under the same skeleton from inheriting the player's skin after
+## a late look refresh.
 static func set_body_texture(root: Node, texture: Texture2D) -> void:
 	if texture == null:
 		return
 	for node in root.find_children("Character", "MeshInstance3D", true, false):
 		set_texture(node as MeshInstance3D, texture)
+		return
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node as MeshInstance3D
+		if mesh.skin == null:
+			continue
+		var named := String(mesh.name)
+		if named.begins_with(Wardrobe.NODE_PREFIX) \
+				or named.begins_with(Weapons.NODE_PREFIX):
+			continue
+		set_texture(mesh, texture)
+		return
 
 
 ## Multiplies the albedo already painted onto every surface of `mesh_instance`.

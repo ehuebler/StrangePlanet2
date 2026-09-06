@@ -12,6 +12,9 @@ signal picked(slot: RedItemSlot)
 signal quick_move_requested(slot: RedItemSlot)
 signal hover_started(slot: RedItemSlot)
 signal hover_ended(slot: RedItemSlot)
+signal item_dropped(target: RedItemSlot, source: RedItemSlot)
+signal crawler_move_dropped(target: RedItemSlot, data: Dictionary)
+signal drag_released(slot: RedItemSlot, dropped: bool)
 
 const EDGE := 70.0
 const RED := Color("ef151f")
@@ -23,6 +26,9 @@ var container: ItemContainer
 var index := 0
 var interactive := true
 var draggable := true
+## When true, a drop copies the id onto the target instead of swapping
+## containers. Ability library tiles use this so a known power is not consumed.
+var copy_on_drag := false
 var selected := false
 var equipped := false:
 	set(value):
@@ -33,6 +39,7 @@ var badge := ""
 
 var _hovered := false
 var _drop_target := false
+var _drag_live := false
 var _fallback_glyph: RedMenuGlyph
 
 
@@ -57,6 +64,12 @@ func _init() -> void:
 func set_edge(edge: float) -> void:
 	custom_minimum_size = Vector2.ONE * edge
 	size = custom_minimum_size
+	if _fallback_glyph != null:
+		var pad := clampf(edge * 0.10, 2.0, 13.0)
+		_fallback_glyph.offset_left = pad
+		_fallback_glyph.offset_top = pad
+		_fallback_glyph.offset_right = -pad
+		_fallback_glyph.offset_bottom = -pad
 	queue_redraw()
 
 
@@ -83,6 +96,13 @@ func _notification(what: int) -> void:
 			queue_redraw()
 		NOTIFICATION_DRAG_END:
 			_drop_target = false
+			if _drag_live:
+				var viewport := get_viewport()
+				drag_released.emit(
+					self,
+					viewport != null and viewport.gui_is_drag_successful()
+				)
+				_drag_live = false
 			queue_redraw()
 		NOTIFICATION_RESIZED:
 			queue_redraw()
@@ -105,16 +125,28 @@ func _gui_input(event: InputEvent) -> void:
 func _get_drag_data(_at: Vector2) -> Variant:
 	if not interactive or not draggable or item_id().is_empty():
 		return null
+	_drag_live = true
 	set_drag_preview(_drag_preview())
 	return {"red_item_slot": self}
 
 
 func _can_drop_data(_at: Vector2, data: Variant) -> bool:
+	if _is_crawler_move(data):
+		var token := str((data as Dictionary).get("token", ""))
+		var legal := container != null and container.accepts(index, token)
+		var occupant := item_id()
+		if legal and not occupant.is_empty() and not ItemDB.is_ability(occupant):
+			legal = false
+		if legal != _drop_target:
+			_drop_target = legal
+			queue_redraw()
+		return legal
 	var from := _source_slot(data)
 	if from == null or container == null:
 		return false
-	var legal := container.accepts(index, from.item_id()) \
-		and from.container.accepts(from.index, item_id())
+	var legal := container.accepts(index, from.item_id())
+	if not from.copy_on_drag:
+		legal = legal and from.container.accepts(from.index, item_id())
 	if legal != _drop_target:
 		_drop_target = legal
 		queue_redraw()
@@ -122,11 +154,26 @@ func _can_drop_data(_at: Vector2, data: Variant) -> bool:
 
 
 func _drop_data(_at: Vector2, data: Variant) -> void:
+	if _is_crawler_move(data):
+		_drop_target = false
+		crawler_move_dropped.emit(self, data as Dictionary)
+		return
 	var from := _source_slot(data)
 	if from == null:
 		return
 	_drop_target = false
+	if from.copy_on_drag:
+		item_dropped.emit(self, from)
+		if container != null:
+			container.set_item(index, from.item_id())
+		return
 	ItemContainer.transfer(from.container, from.index, container, index)
+	item_dropped.emit(self, from)
+
+
+func _is_crawler_move(data: Variant) -> bool:
+	return typeof(data) == TYPE_DICTIONARY \
+		and bool((data as Dictionary).get("crawler_move", false))
 
 
 func _source_slot(data: Variant) -> RedItemSlot:
@@ -140,22 +187,38 @@ func _drag_preview() -> Control:
 	var holder := Control.new()
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var preview := TextureRect.new()
-	preview.texture = ItemIcons.cached(item_id())
+	preview.texture = CrawlerCatalog.texture_for(item_id())
 	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	preview.position = -size * 0.42
 	preview.size = size * 0.84
-	preview.modulate = Color(GREEN, 0.86)
+	preview.modulate = _icon_modulate(item_id())
 	holder.add_child(preview)
+	if container != null \
+			and container.filter_of(index) == CrawlerCatalog.FILTER_KIT \
+			and CrawlerCatalog.scope_of(item_id()) == "ability_specific":
+		var hosts := CrawlerCatalog.host_abilities(item_id())
+		if not hosts.is_empty():
+			var mark := TextureRect.new()
+			mark.texture = CrawlerCatalog.texture_for(hosts[0])
+			mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			mark.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			mark.position = preview.position + preview.size * Vector2(0.58, 0.58)
+			mark.size = preview.size * 0.38
+			mark.modulate = _icon_modulate(hosts[0])
+			holder.add_child(mark)
 	return holder
 
 
 func _draw() -> void:
-	var outer := Rect2(Vector2.ZERO, size).grow(-3.0)
+	var edge := minf(size.x, size.y)
+	var frame := clampf(edge * 0.06, 1.5, 3.0)
+	var bloom := clampf(edge * 0.08, 1.5, 3.0)
+	var outer := Rect2(Vector2.ZERO, size).grow(-frame)
 	# A few translucent strokes read as bloom without a rounded shader or a
 	# texture atlas, and retain perfectly sharp corners at every resolution.
-	draw_rect(outer.grow(3.0), Color(RED, 0.12), false, 6.0)
-	draw_rect(outer.grow(1.5), Color(RED, 0.28), false, 3.0)
+	draw_rect(outer.grow(bloom), Color(RED, 0.12), false, bloom * 2.0)
+	draw_rect(outer.grow(bloom * 0.5), Color(RED, 0.28), false, bloom)
 	var fill := BLACK
 	if equipped:
 		fill = Color(0.16, 0.12, 0.01, 0.92)
@@ -168,23 +231,43 @@ func _draw() -> void:
 		else GREEN if selected
 		else RED
 	)
+	var rim_w := 2.0 if edge < 40.0 else 3.0
 	draw_rect(outer, Color(rim, 0.98), false,
-		3.0 if (_hovered or _drop_target or selected or equipped) else 2.0)
+		rim_w if (_hovered or _drop_target or selected or equipped) else maxf(rim_w - 1.0, 1.0))
 
 	var id := item_id()
 	if id.is_empty():
 		_sync_fallback("", false)
 		_draw_placeholder()
 	else:
-		var icon := ItemIcons.cached(id)
-		var inner := outer.grow(-7.0)
-		var has_icon := icon != null and icon.get_width() > 1
+		var icon := CrawlerCatalog.texture_for(id)
+		var inner := outer.grow(-_icon_inset())
+		var has_icon := icon != null
 		_sync_fallback(id, not has_icon)
 		if has_icon:
-			draw_texture_rect(icon, inner, false, YELLOW if equipped else GREEN)
+			draw_texture_rect(icon, inner, false, _icon_modulate(id))
 		else:
-			draw_rect(inner.grow(-4.0), Color(ItemDB.tint(id), 0.22))
+			draw_rect(inner.grow(-2.0), Color(ItemDB.tint(id), 0.22))
+		_draw_host_mark(id)
 	_draw_badge()
+
+
+func _icon_modulate(id: String) -> Color:
+	# Catalogue SVGs already carry their own ink. Multiplying them by the
+	# menu green turns the dark plates into empty-looking squares, which is
+	# what the city-store bag tiles were showing for wobble and big.
+	if not CrawlerCatalog.icon_path(CrawlerCatalog.catalog_id(id)).is_empty():
+		return Color.WHITE
+	return Color(YELLOW if equipped else GREEN, 0.95)
+
+
+func _icon_inset() -> float:
+	var edge := minf(size.x, size.y)
+	# Large library tiles keep a generous gutter. Ability-mod squares are
+	# ~28px; a 7px pad on each side left an 8px icon in a 28px box.
+	if edge >= 56.0:
+		return 7.0
+	return clampf(edge * 0.04, 1.0, 2.5)
 
 
 func _sync_fallback(id: String, show: bool) -> void:
@@ -232,6 +315,29 @@ func _draw_placeholder() -> void:
 	var baseline := (size.y + font_size) * 0.5 - 2.0
 	draw_string(font, Vector2(0.0, baseline), placeholder,
 		HORIZONTAL_ALIGNMENT_CENTER, size.x, font_size, GREEN)
+
+
+func _draw_host_mark(id: String) -> void:
+	if container == null or container.filter_of(index) != CrawlerCatalog.FILTER_KIT:
+		return
+	if not CrawlerCatalog.is_modifier(id) \
+			or CrawlerCatalog.scope_of(id) != "ability_specific":
+		return
+	var hosts := CrawlerCatalog.host_abilities(id)
+	if hosts.is_empty():
+		return
+	var mark := CrawlerCatalog.texture_for(hosts[0])
+	if mark == null:
+		return
+	var edge := maxf(size.x * 0.36, 12.0)
+	var pad := maxf(size.x * 0.08, 3.0)
+	var plate := Rect2(
+		Vector2(size.x - edge - pad, size.y - edge - pad),
+		Vector2.ONE * edge
+	)
+	draw_rect(plate.grow(2.0), Color(0.0, 0.0, 0.0, 0.72))
+	draw_rect(plate.grow(2.0), Color(RED, 0.85), false, 1.0)
+	draw_texture_rect(mark, plate.grow(-1.0), false, _icon_modulate(hosts[0]))
 
 
 func _draw_badge() -> void:

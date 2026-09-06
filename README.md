@@ -141,6 +141,8 @@ The test world's floor is 32 m across, which a boosted flight leaves in well und
 
 `assets/runtime/characters/player_character_3.glb` is the 1.60 m settler body. Its default look is `assets/runtime/characters/luke.png`; `character_3_clean_robotic.png` (red, cream and gold with cyan cores) and `character_3_integrated_robotic.png` (violet skin under graphite, silver and red armour with cyan lights) remain selectable alternatives. They are texture schemes on one body, not separate bodies: the skeleton, collider, animation set and `c3_*` apparel are shared.
 
+Mixamo clips from `m2m_player.glb` are retargeted onto this same humanoid and stored in `player_character_3_m2m.glb`. The authored locomotion and ability names on the body stay as they are; new work should play the Mixamo clip names (`Idle_A`, `Melee_Hook`, `Dance_Simple`, …). `Walk` and `Slide` already exist on the body, so those two Mixamo motions ship as `m2m_Walk` and `m2m_Slide`. Rebuild the library with `assets/source/blender/merge_m2m_animations.py`.
+
 The supplied front/back concept sheets are elevations of different proportions, not UV maps, and the source sculpt has no UV coordinates. `assets/source/blender/character_3_skins.py` therefore owns the adaptation. `build_character_3.py` asks it to make one packed atlas, evaluates those two designs in the mesh's original 3D metres, and rasterises both PNGs through that atlas. Luke is painted directly against the same atlas and is put on the exported material as the default:
 
 ```powershell

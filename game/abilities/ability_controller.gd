@@ -18,8 +18,8 @@ var player: OnlinePlayer
 
 ## One entry per ability slot, null where the slot is empty.
 var _abilities: Array[Ability] = []
-## Which id each slot was last built for, so a container change that did not
-## touch a slot does not rebuild the ability standing in it.
+## Which instance fingerprint each slot was last built for, so a container
+## change that did not touch a slot does not rebuild the ability standing in it.
 var _built_for := PackedStringArray()
 
 
@@ -34,6 +34,9 @@ func _ready() -> void:
 	player.abilities.changed.connect(_on_slots_changed)
 	player.ability_activated.connect(_on_activated)
 	player.ability_released.connect(_on_released)
+	if player.crawler_kit != null \
+			and not player.crawler_kit.changed.is_connected(_on_slots_changed):
+		player.crawler_kit.changed.connect(_on_slots_changed)
 	_rebuild()
 
 
@@ -62,15 +65,25 @@ func _on_slots_changed() -> void:
 
 
 func _rebuild() -> void:
+	if _abilities.size() != player.abilities.size():
+		_abilities.resize(player.abilities.size())
+		_built_for.resize(player.abilities.size())
 	for index in _abilities.size():
 		var id := player.abilities.get_item(index)
-		if id == _built_for[index]:
+		var key := _slot_key(index, id)
+		if key == _built_for[index]:
 			continue
 		var standing := _abilities[index]
 		if standing != null:
 			standing.cancel()
-		_built_for[index] = id
+		_built_for[index] = key
 		_abilities[index] = _make(index, id)
+
+
+func _slot_key(index: int, id: String) -> String:
+	if player.crawler_kit != null:
+		return player.crawler_kit.slot_fingerprint(index)
+	return id
 
 
 func _make(index: int, id: String) -> Ability:
@@ -92,7 +105,9 @@ func _make(index: int, id: String) -> Ability:
 	if ability == null:
 		push_error("Ability '%s' script is not an Ability" % id)
 		return null
-	ability.configure(player, index, id, definition)
+	ability.configure(player, index, CrawlerCatalog.ability_id(id), definition)
+	if player.crawler_kit != null:
+		ability.apply_crawler(player.crawler_kit.equipped_card(index))
 	return ability
 
 

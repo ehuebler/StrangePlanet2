@@ -18,7 +18,7 @@ uniform vec2 map_origin = vec2(0.0);
 uniform vec3 city_east = vec3(1.0, 0.0, 0.0);
 uniform vec3 city_north = vec3(0.0, 0.0, 1.0);
 uniform float city_radius = 8000.0;
-instance uniform float ruin = 0.0;
+uniform float ruin = 0.0;
 
 varying vec3 world_pos;
 varying vec3 world_n;
@@ -76,6 +76,13 @@ void fragment() {
 		metal = 0.10;
 	} else if (use_paint > 0.5) {
 		albedo = paint.rgb * mix(base, vec3(1.0), 0.35);
+		// Atlas tiles are a four-face box unwrap. On a drum or a mixed
+		// rect-plus-cylinder the bright window cells sit on the wrong
+		// silhouette; night glass meshes carry the real lights.
+		if (night > 0.01) {
+			float pane = dot(paint.rgb, vec3(0.22, 0.67, 0.11));
+			albedo = mix(albedo, base * 0.82, smoothstep(0.32, 0.68, pane) * night);
+		}
 	} else if (style == 19 || roof > 0.72) {
 		albedo *= 0.88 + 0.14 * value_noise(uv * 0.28);
 		rough = mix(0.48, 0.62, float(style == 19));
@@ -175,23 +182,37 @@ void fragment() {
 	RIM_TINT = 0.42;
 	vec3 glow = albedo * mix(0.12, 0.0, night) * mix(0.85, 1.2, sky);
 	if (style == 18) {
-		// Keep the night band below bloom-to-white so magenta/cyan stay that
-		// colour instead of reading as a white outline.
-		glow = base * mix(0.05, 2.6, night);
+		float peak = max(base.r, max(base.g, base.b));
+		vec3 neon = base;
+		if (peak > 0.08) {
+			neon = base / peak;
+		}
+		glow = neon * mix(0.05, 4.4, night);
 	}
 	if (use_paint > 0.5) {
 		glow += paint.rgb * paint.a * mix(0.06, 0.0, night);
 	}
 	if (has_lamps > 0.5 && night > 0.01 && map_span.x > 4.0) {
 		vec3 q = normalize(world_pos);
-		vec2 uv = vec2(dot(q, city_east), dot(q, city_north)) * city_radius;
-		vec2 st = (uv - map_origin) / map_span;
-		if (st.x >= 0.0 && st.y >= 0.0 && st.x <= 1.0 && st.y <= 1.0) {
-			float amount = clamp(dot(texture(lamp_map, st).rgb, vec3(0.33)), 0.0, 1.0);
+		vec2 city_uv = vec2(dot(q, city_east), dot(q, city_north)) * city_radius;
+		vec2 st = (city_uv - map_origin) / map_span;
+		float wall = 1.0 - abs(dot(n, q));
+		if (wall > 0.55 && st.x >= 0.0 && st.y >= 0.0 && st.x <= 1.0 && st.y <= 1.0) {
+			vec3 wash = texture(lamp_map, st).rgb;
+			float amount = clamp(dot(wash, vec3(0.33)), 0.0, 1.0);
+			vec2 texel = vec2(0.004);
+			vec3 wash_x = texture(lamp_map, st + vec2(texel.x, 0.0)).rgb
+				- texture(lamp_map, st - vec2(texel.x, 0.0)).rgb;
+			vec3 wash_y = texture(lamp_map, st + vec2(0.0, texel.y)).rgb
+				- texture(lamp_map, st - vec2(0.0, texel.y)).rgb;
+			vec2 grad = vec2(dot(wash_x, vec3(0.33)), dot(wash_y, vec3(0.33)));
+			if (dot(grad, grad) > 1.0e-6) {
+				vec3 to_lamp = normalize(city_east * grad.x + city_north * grad.y);
+				amount *= max(dot(n, to_lamp), 0.0);
+			}
 			float h = length(world_pos) - city_radius;
 			float reach = 1.0 - smoothstep(2.5, 16.0, h);
-			float wall = 1.0 - abs(dot(n, q));
-			glow += albedo * amount * night * vec3(1.0, 0.88, 0.70) * mix(0.4, 1.8, wall) * reach;
+			glow += wash * night * mix(0.8, 2.4, wall) * reach * step(0.02, amount);
 		}
 	}
 	EMISSION = glow;

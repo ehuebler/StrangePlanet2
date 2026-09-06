@@ -50,6 +50,7 @@
 [ext_resource type="PackedScene" path="res://game/fauna/fauna_populations.tscn" id="49_fauna"]
 [ext_resource type="Script" path="res://game/props/ability_test_site.gd" id="51_test_site"]
 [ext_resource type="Script" path="res://game/city/land_patch_overlay.gd" id="52_patches"]
+[ext_resource type="Script" path="res://game/props/patch_monuments.gd" id="53_monuments"]
 
 [sub_resource type="ShaderMaterial" id="SkyMaterial"]
 shader = ExtResource("4_space")
@@ -328,6 +329,9 @@ metadata/_custom_type_script = "uid://cxyl1llbkxjek"
 ; sites are left out; the rest of the land is tiled with no gaps.
 [node name="LandPatches" type="Node3D" parent="Planet"]
 script = ExtResource("52_patches")
+
+[node name="PatchMonuments" type="Node3D" parent="Planet"]
+script = ExtResource("53_monuments")
 
 ; The coastal sign for Vacationer's Landing, placed by hand because Settlements
 ; leaves this town's waypoints empty. It is the noon anchor, the fauna showcase

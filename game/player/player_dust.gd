@@ -223,7 +223,7 @@ func impact_cloud(at: Vector3, up: Vector3, radius: float,
 		strength := 1.0) -> void:
 	if _bursts.is_empty() or not at.is_finite():
 		return
-	var span := clampf(radius, 0.3, 34.0)
+	var span := clampf(radius, 0.3, 80.0)
 	var power := clampf(strength, 0.3, 2.5)
 	var outward := up.normalized() if up.length_squared() > 0.001 else Vector3.UP
 	var side := outward.cross(
@@ -299,7 +299,7 @@ func _bind_character(character: Node3D) -> void:
 	if _skeleton == null:
 		return
 	for index in FOOT_BONES.size():
-		_foot_ids[index] = _skeleton.find_bone(FOOT_BONES[index])
+		_foot_ids[index] = CharacterRig.find_bone(_skeleton, FOOT_BONES[index])
 
 
 func _foot_point(index: int, up: Vector3, right: Vector3) -> Vector3:

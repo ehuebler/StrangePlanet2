@@ -57,6 +57,7 @@ func _ready() -> void:
 	_check_gating()
 	_check_controller()
 	_check_eye_points()
+	_check_laser_beam_placement()
 
 	_player.queue_free()
 	await get_tree().process_frame
@@ -111,7 +112,7 @@ func _check_authored_ability_shapes() -> void:
 		and not starfire.hover_animation.is_empty()
 		and not starfire.alternate_hover_animation.is_empty()
 		and starfire.animation != starfire.alternate_animation,
-		"Starfire has standing and raised-knee clips for both hands")
+		"Starfire has left and right jab clips")
 	_expect(meteor != null and starfire != null
 		and is_equal_approx(
 			float(starfire.stats.get("crater_radius", 0.0)) * 2.0,
@@ -266,6 +267,26 @@ func _check_eye_points() -> void:
 		"and they are level with each other")
 
 
+func _check_laser_beam_placement() -> void:
+	var left := Vector3(-0.05, 1.4, -0.2)
+	var right := Vector3(0.05, 1.4, -0.2)
+	var at := Vector3(0.0, 1.2, -8.0)
+	var beams := _player.laser_beams()
+	beams.aim(left, right, at)
+	var core := beams._beams[0][0] as MeshInstance3D
+	_expect(core != null and core.visible, "the first aim shows the left beam")
+	if core != null:
+		var along := (at - left).normalized()
+		_expect(core.global_position.distance_to(left.lerp(at, 0.5)) < 0.02,
+			"the beam sits on the eye-to-target line")
+		_expect(core.global_transform.basis.y.normalized().dot(along) > 0.99,
+			"the beam points out of the eye")
+	_expect(beams.physics_interpolation_mode
+			== Node.PHYSICS_INTERPOLATION_MODE_OFF,
+		"the beam is not interpolated from a previous pose")
+	beams.stop()
+
+
 func _check_starfire_alternation() -> void:
 	var definition := ItemDB.ability_definition("starfire")
 	var ability := Starfire.new()
@@ -303,13 +324,13 @@ func _check_starfire_motion() -> void:
 	_expect(_player.animator != null
 		and _player.animator.has_animation(definition.hover_animation)
 		and _player.animator.has_animation(definition.alternate_hover_animation),
-		"the player rig ships both raised-knee Starfire clips")
+		"the player rig ships both Starfire jab clips")
 	var projectile: AbilityProjectile
 	for child: Node in get_children():
 		if child is AbilityProjectile:
 			projectile = child as AbilityProjectile
 	_expect(_player._ability_clip == String(definition.hover_animation),
-		"a floating throw keeps the raised-knee animation")
+		"a floating throw still plays the matching jab")
 	_expect(projectile != null and projectile._velocity.is_equal_approx(
 		projectile._along * projectile._speed + carried),
 		"Starfire adds the player's velocity to disk launch velocity")
@@ -384,9 +405,10 @@ func _check_new_ability_runtime() -> void:
 		orb.queue_free()
 
 	var clips := [
-		"NukeThrow", "NukeFloatThrow",
-		"LassoThrow", "LassoFloatThrow", "LassoHold", "LassoFloatHold",
-		"WallPlace", "WallFloatPlace",
+		"OverhandThrow", "Throw_Object",
+		"Fighting_Idle", "Levitate_Idle",
+		"Fighting_Left_Jab", "Fighting_Right_Jab",
+		"Two-hand_Blast", "Spell_Simple_Enter",
 	]
 	var clips_present := _player.animator != null
 	for clip: String in clips:

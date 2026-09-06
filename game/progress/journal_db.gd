@@ -45,6 +45,17 @@ const ENTRIES := {
 		"landmark": "Iceland",
 		"within": 400.0,
 	},
+	"kill_10_mobs": {
+		"kind": "achievement",
+		"category": "Combat",
+		"title": "Kill 10 mobs",
+		"summary": "Defeat ten crawler enemies.",
+		"detail": "Any crawler kill counts. The tenth one unlocks five gems. "
+			+ "Claim them from Achievements in the menu.",
+		"reward": "5 gems",
+		"gems": 5,
+		"kills": 10,
+	},
 }
 
 
@@ -104,6 +115,14 @@ static func landmark_of(id: String) -> String:
 
 static func within_of(id: String) -> float:
 	return float(field(id, "within", 0.0))
+
+
+static func kills_of(id: String) -> int:
+	return maxi(int(field(id, "kills", 0)), 0)
+
+
+static func gems_of(id: String) -> int:
+	return maxi(int(field(id, "gems", 0)), 0)
 
 
 static func field(id: String, key: String, fallback: Variant) -> Variant:

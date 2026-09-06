@@ -119,11 +119,15 @@ func _exit_tree() -> void:
 func _connect_journal() -> void:
 	if _journal != null and not _journal.completed.is_connected(_on_completed):
 		_journal.completed.connect(_on_completed)
+	if _journal != null and not _journal.claimed.is_connected(_on_claimed):
+		_journal.claimed.connect(_on_claimed)
 
 
 func _disconnect_journal() -> void:
 	if _journal != null and _journal.completed.is_connected(_on_completed):
 		_journal.completed.disconnect(_on_completed)
+	if _journal != null and _journal.claimed.is_connected(_on_claimed):
+		_journal.claimed.disconnect(_on_claimed)
 
 
 func _build() -> void:
@@ -354,10 +358,16 @@ func _fill_list(ids: PackedStringArray, selected: String) -> void:
 
 	for id: String in ids:
 		var done := _journal != null and _journal.is_done(id)
+		var waiting := _journal != null and _journal.can_claim(id)
+		var mark := "ACTIVE"
+		if waiting:
+			mark = "CLAIM"
+		elif done:
+			mark = "COMPLETE"
 		var button := Button.new()
 		button.name = "Entry_%s" % id
 		button.text = "[ %s ]  //  %s" % [
-			"COMPLETE" if done else "ACTIVE",
+			mark,
 			JournalDB.title_of(id).to_upper(),
 		]
 		button.tooltip_text = JournalDB.summary_of(id)
@@ -387,6 +397,7 @@ func _fill_detail(id: String) -> void:
 		return
 
 	var done := _journal != null and _journal.is_done(id)
+	var waiting := _journal != null and _journal.can_claim(id)
 	var title := _label(
 		JournalDB.title_of(id),
 		23,
@@ -396,7 +407,13 @@ func _fill_detail(id: String) -> void:
 	title.name = "RecordTitle"
 	_detail.add_child(title)
 
-	var state := "COMPLETE" if done else "IN PROGRESS"
+	var state := "IN PROGRESS"
+	if waiting:
+		state = "UNCLAIMED"
+	elif _journal != null and _journal.is_claimed(id):
+		state = "CLAIMED"
+	elif done:
+		state = "COMPLETE"
 	var status := _label(
 		"%s  //  %s" % [JournalDB.category_of(id), state],
 		12,
@@ -431,6 +448,14 @@ func _fill_detail(id: String) -> void:
 	var reward := JournalDB.reward_of(id)
 	if not reward.is_empty():
 		_detail.add_child(_detail_section("REWARD", reward, GREEN_TEXT))
+	if waiting:
+		var claim := _tab_button("CLAIM GEMS", "JournalClaim_%s" % id)
+		claim.size_flags_horizontal = Control.SIZE_SHRINK_END
+		claim.custom_minimum_size = Vector2(160.0, 42.0)
+		_style_tab(claim, true)
+		var chosen := id
+		claim.pressed.connect(func() -> void: _claim(chosen))
+		_detail.add_child(claim)
 
 
 func _detail_section(title: String, text: String, color: Color) -> Control:
@@ -484,6 +509,15 @@ func _on_search_changed(text: String) -> void:
 
 func _on_completed(_id: String) -> void:
 	_refresh_content()
+
+
+func _on_claimed(_id: String) -> void:
+	_refresh_content()
+
+
+func _claim(id: String) -> void:
+	if _journal != null:
+		_journal.claim(id)
 
 
 func _update_responsive_layout() -> void:

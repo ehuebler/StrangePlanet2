@@ -1,11 +1,13 @@
 class_name RedHeroPage
 extends VBoxContainer
 
-## Read-only in-game character overview for the red menu.
+## In-game hero overview for the red menu.
 ##
-## Call [method configure] before adding the page to the tree. Apparel is the one
-## deliberate exception to the read-only presentation: shift-clicking a worn tile
-## uses [method ItemContainer.quick_move] to stow it in the backpack.
+## The compressed portrait sits on the left with its hat tile in the upper
+## corner. The right column is the ability loadout: a four-slot hotbar, a
+## scrolling library of known powers, and a description of the selected one.
+## Shift-click or drag a library tile onto the hotbar to assign it. There are
+## no equip or drop buttons.
 
 const RED := Color("ef151f")
 const RED_BRIGHT := Color("ff3445")
@@ -18,54 +20,54 @@ const BLACK_68 := Color(0.0, 0.0, 0.0, 0.68)
 const BLACK_86 := Color(0.0, 0.0, 0.0, 0.86)
 
 const NARROW_WIDTH := 900.0
-const WIDE_APPAREL_EDGE := 72.0
-const NARROW_APPAREL_EDGE := 54.0
-const WIDE_HOTBAR_EDGE := 72.0
-const NARROW_HOTBAR_EDGE := 54.0
+const WIDE_HAT_EDGE := 64.0
+const NARROW_HAT_EDGE := 52.0
+const WIDE_HOTBAR_EDGE := 68.0
+const NARROW_HOTBAR_EDGE := 52.0
+const LIBRARY_EDGE := 72.0
+const LIBRARY_GAP := 8.0
 
-const HOTBAR_BADGES := ["LMB", "RMB", "1", "2", "3"]
-const APPAREL_GLYPHS := [
-	RedMenuGlyph.Glyph.HAT,
-	RedMenuGlyph.Glyph.GOGGLES,
-	RedMenuGlyph.Glyph.BODY_TUNIC,
-	RedMenuGlyph.Glyph.PANTS,
-	RedMenuGlyph.Glyph.BOOTS,
-]
+const HOTBAR_BADGES := ["1", "2", "3", "4"]
 
 var _player: OnlinePlayer
 var _equipment: ItemContainer
-var _weapons: ItemContainer
 var _abilities: ItemContainer
 var _backpack: ItemContainer
 var _stats: PlayerStats
+var _ability_library: ItemContainer
 
 var _built := false
 var _sources_connected := false
 var _narrow := false
 var _responsive_initialized := false
-var _selected_apparel := -1
 var _stats_open := false
+var _selected_ability_id := ""
 
-var _main_grid: GridContainer
+var _main_grid: BoxContainer
 var _stats_frame: PanelContainer
+var _stats_heading: Label
+var _stats_scroll: ScrollContainer
 var _stats_rows: VBoxContainer
 var _status_rows: VBoxContainer
 var _status_section: VBoxContainer
 var _character_block: VBoxContainer
-var _loadout_column: VBoxContainer
+var _ability_column: VBoxContainer
 var _hero_name: Label
 var _preview: RedCharacterPreview
 var _stats_toggle: Button
-var _apparel_frame: PanelContainer
-var _apparel_grid: GridContainer
-var _apparel_hint: Label
+var _hat_slot: RedItemSlot
+var _hat_glyph: RedMenuGlyph
 var _hotbar_frame: PanelContainer
 var _hotbar_row: HBoxContainer
+var _library_scroll: ScrollContainer
+var _library_grid: GridContainer
+var _description_body: Label
+var _description_title: Label
+var _description_scroll: ScrollContainer
 var _icons: ItemIcons
 
-var _apparel_slots: Array[RedItemSlot] = []
-var _apparel_glyphs: Array[RedMenuGlyph] = []
 var _hotbar_slots: Array[RedItemSlot] = []
+var _library_slots: Array[RedItemSlot] = []
 
 
 ## Supplies the player whose live loadout this page presents. Configure the page
@@ -89,7 +91,7 @@ func configure(player: OnlinePlayer) -> void:
 	refresh()
 
 
-## Re-reads the name, stats and all ten visible item slots. Menu code and visual
+## Re-reads the name, stats, hat, hotbar and library. Menu code and visual
 ## harnesses may call this after changing player state directly.
 func refresh() -> void:
 	if not _built:
@@ -104,8 +106,11 @@ func refresh() -> void:
 
 	_fill_stats()
 	_fill_status_effects()
-	_refresh_apparel()
+	_refresh_hat()
 	_refresh_hotbar()
+	_refresh_library()
+	_fill_description()
+	_fit_description_scroll()
 	if _preview != null:
 		if _player != null:
 			_preview.set_tints(_player.tints())
@@ -121,9 +126,9 @@ func _init() -> void:
 	custom_minimum_size = Vector2(320.0, 360.0)
 
 
-## The wide three-column contents must not become the page's own minimum width:
-## doing so would prevent a parent container from ever shrinking it far enough
-## to trigger the one-column layout. The scroll region owns overflow instead.
+## The wide contents must not become the page's own minimum width: doing so
+## would prevent a parent container from shrinking far enough to trigger the
+## one-column layout. The scroll region owns overflow instead.
 func _get_minimum_size() -> Vector2:
 	return custom_minimum_size
 
@@ -149,14 +154,11 @@ func _exit_tree() -> void:
 func _capture_sources() -> void:
 	if _player == null:
 		_equipment = null
-		_weapons = null
 		_abilities = null
 		_backpack = null
 		_stats = null
 		return
 	_equipment = _player.equipment
-	_weapons = _player.weapons
-	# Dynamic access keeps this page parseable across the two-slot backend landing.
 	_abilities = _player.get("abilities") as ItemContainer
 	_backpack = _player.backpack
 	_stats = _player.stats
@@ -165,7 +167,7 @@ func _capture_sources() -> void:
 func _connect_sources() -> void:
 	if _sources_connected:
 		return
-	for source: ItemContainer in [_equipment, _weapons, _abilities, _backpack]:
+	for source: ItemContainer in [_equipment, _abilities, _backpack]:
 		if source != null and not source.changed.is_connected(refresh):
 			source.changed.connect(refresh)
 	if _stats != null and not _stats.changed.is_connected(_on_stats_changed):
@@ -176,7 +178,7 @@ func _connect_sources() -> void:
 
 
 func _disconnect_sources() -> void:
-	for source: ItemContainer in [_equipment, _weapons, _abilities, _backpack]:
+	for source: ItemContainer in [_equipment, _abilities, _backpack]:
 		if source != null and source.changed.is_connected(refresh):
 			source.changed.disconnect(refresh)
 	if _stats != null and _stats.changed.is_connected(_on_stats_changed):
@@ -195,37 +197,21 @@ func _on_status_changed(_id: StringName, _remaining: float) -> void:
 
 
 func _build() -> void:
-	var scroll := ScrollContainer.new()
-	scroll.name = "HeroScroll"
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	add_child(scroll)
-
-	_main_grid = GridContainer.new()
+	clip_contents = true
+	_main_grid = BoxContainer.new()
 	_main_grid.name = "HeroComposition"
-	_main_grid.columns = 2
+	_main_grid.vertical = false
+	_main_grid.alignment = BoxContainer.ALIGNMENT_BEGIN
 	_main_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_main_grid.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_main_grid.add_theme_constant_override(&"h_separation", 14)
-	_main_grid.add_theme_constant_override(&"v_separation", 12)
-	scroll.add_child(_main_grid)
+	_main_grid.add_theme_constant_override(&"separation", 10)
+	add_child(_main_grid)
 
 	_character_block = _build_character_block()
 	_main_grid.add_child(_character_block)
 
-	_loadout_column = VBoxContainer.new()
-	_loadout_column.name = "HeroLoadoutRows"
-	_loadout_column.custom_minimum_size.x = 480.0
-	_loadout_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_loadout_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_loadout_column.size_flags_stretch_ratio = 1.12
-	_loadout_column.add_theme_constant_override(&"separation", 12)
-	_main_grid.add_child(_loadout_column)
-
-	_apparel_frame = _build_apparel_frame()
-	_loadout_column.add_child(_apparel_frame)
-	_loadout_column.add_child(_build_hotbar_block())
+	_ability_column = _build_ability_column()
+	_main_grid.add_child(_ability_column)
 
 	_icons = ItemIcons.new()
 	_icons.name = "ItemIcons"
@@ -233,47 +219,12 @@ func _build() -> void:
 	_icons.icon_ready.connect(_on_icon_ready)
 
 
-func _build_stats_frame() -> PanelContainer:
-	var column := VBoxContainer.new()
-	column.name = "StatsContent"
-	column.add_theme_constant_override(&"separation", 8)
-	column.add_child(_section_heading("PLAYER STATS  //  LIVE READOUT"))
-	column.add_child(_rule())
-
-	_stats_rows = VBoxContainer.new()
-	_stats_rows.name = "StatRows"
-	_stats_rows.add_theme_constant_override(&"separation", 7)
-	_stats_rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(_stats_rows)
-
-	_status_section = VBoxContainer.new()
-	_status_section.name = "StatusSection"
-	_status_section.add_theme_constant_override(&"separation", 6)
-	_status_section.visible = false
-	column.add_child(_status_section)
-
-	var status_heading := _section_heading("TEMPORARY EFFECTS  //  LIVE", 13)
-	status_heading.name = "StatusHeading"
-	_status_section.add_child(status_heading)
-	_status_section.add_child(_rule())
-
-	_status_rows = VBoxContainer.new()
-	_status_rows.name = "StatusRows"
-	_status_rows.add_theme_constant_override(&"separation", 7)
-	_status_section.add_child(_status_rows)
-
-	var frame := _glow_frame(column, "StatsFrame", 13.0)
-	frame.visible = false
-	frame.mouse_filter = Control.MOUSE_FILTER_STOP
-	return frame
-
-
 func _build_character_block() -> VBoxContainer:
 	var column := VBoxContainer.new()
 	column.name = "HeroModel"
-	column.custom_minimum_size.x = 430.0
+	column.custom_minimum_size.x = 168.0
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	column.size_flags_stretch_ratio = 1.0
 	column.add_theme_constant_override(&"separation", 6)
 
@@ -286,16 +237,22 @@ func _build_character_block() -> VBoxContainer:
 
 	var stage := Control.new()
 	stage.name = "CharacterStage"
+	stage.custom_minimum_size = Vector2(168.0, 210.0)
 	stage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stage.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stage.clip_contents = true
 
-	var preview_center := CenterContainer.new()
+	var preview_center := Control.new()
 	preview_center.name = "CharacterPreviewCenter"
 	preview_center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	preview_center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview_center.clip_contents = true
 	stage.add_child(preview_center)
 
 	_preview = RedCharacterPreview.new()
 	_preview.name = "CharacterPreview"
+	_preview.view_size = Vector2(168.0, 210.0)
+	_preview.hover_in_frame = true
 	if _player != null:
 		_preview.configure(
 			_equipment,
@@ -306,6 +263,32 @@ func _build_character_block() -> VBoxContainer:
 	else:
 		_preview.configure(null, CharacterDB.DEFAULT_BODY, "", {})
 	preview_center.add_child(_preview)
+
+	_hat_slot = RedItemSlot.new()
+	_hat_slot.name = "HatSlot"
+	_hat_slot.set_edge(WIDE_HAT_EDGE)
+	_hat_slot.badge = "HAT"
+	_hat_slot.placeholder = ""
+	_hat_slot.draggable = false
+	_hat_slot.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_hat_slot.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_hat_slot.offset_left = -(WIDE_HAT_EDGE + 10.0)
+	_hat_slot.offset_top = 10.0
+	_hat_slot.offset_right = -10.0
+	_hat_slot.offset_bottom = WIDE_HAT_EDGE + 10.0
+	_hat_slot.picked.connect(_on_hat_picked)
+	_hat_slot.quick_move_requested.connect(_on_hat_quick_move)
+	stage.add_child(_hat_slot)
+
+	_hat_glyph = RedMenuGlyph.new()
+	_hat_glyph.name = "EmptyGlyph_hat"
+	_hat_glyph.glyph = RedMenuGlyph.Glyph.HAT
+	_hat_glyph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_hat_glyph.offset_left = 12.0
+	_hat_glyph.offset_top = 12.0
+	_hat_glyph.offset_right = -12.0
+	_hat_glyph.offset_bottom = -12.0
+	_hat_slot.add_child(_hat_glyph)
 
 	_stats_frame = _build_stats_frame()
 	_stats_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -322,12 +305,167 @@ func _build_character_block() -> VBoxContainer:
 	preview_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	preview_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(preview_frame)
-
-	var hint := _label("DRAG MODEL TO ROTATE  //  FLOAT POSE", 10, RED_MUTED)
-	hint.name = "CharacterHint"
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(hint)
 	return column
+
+
+func _build_ability_column() -> VBoxContainer:
+	var column := VBoxContainer.new()
+	column.name = "HeroAbilityColumn"
+	column.custom_minimum_size.x = 360.0
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.size_flags_stretch_ratio = 3.0
+	column.add_theme_constant_override(&"separation", 10)
+
+	column.add_child(_build_hotbar_block())
+	column.add_child(_build_library_block())
+	column.add_child(_build_description_block())
+	return column
+
+
+func _build_hotbar_block() -> PanelContainer:
+	var column := VBoxContainer.new()
+	column.name = "HotbarContent"
+	column.add_theme_constant_override(&"separation", 6)
+
+	_hotbar_row = HBoxContainer.new()
+	_hotbar_row.name = "HotbarSlots"
+	_hotbar_row.add_theme_constant_override(&"separation", 7)
+	_hotbar_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_hotbar_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(_hotbar_row)
+
+	for logical_index in HOTBAR_BADGES.size():
+		var slot := RedItemSlot.new()
+		var badge: String = HOTBAR_BADGES[logical_index]
+		slot.name = "HotbarSlot_%s" % badge
+		slot.set_meta(&"logical_input", badge)
+		slot.set_edge(WIDE_HOTBAR_EDGE)
+		slot.badge = badge
+		slot.placeholder = "X"
+		slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		slot.interactive = true
+		slot.draggable = true
+		slot.picked.connect(_on_hotbar_picked)
+		slot.quick_move_requested.connect(_on_hotbar_clear)
+		slot.item_dropped.connect(_on_hotbar_dropped)
+		_hotbar_row.add_child(slot)
+		_hotbar_slots.append(slot)
+
+	_hotbar_frame = _glow_frame(column, "HotbarFrame", 10.0)
+	_hotbar_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_bind_hotbar_slots()
+	return _hotbar_frame
+
+
+func _build_library_block() -> PanelContainer:
+	var column := VBoxContainer.new()
+	column.name = "AbilityLibraryContent"
+	column.add_theme_constant_override(&"separation", 6)
+	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+	_library_scroll = ScrollContainer.new()
+	_library_scroll.name = "AbilityLibraryScroll"
+	_library_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_library_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_library_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_library_scroll.custom_minimum_size.y = 150.0
+	column.add_child(_library_scroll)
+
+	_library_grid = GridContainer.new()
+	_library_grid.name = "AbilityLibrarySlots"
+	_library_grid.columns = 4
+	_library_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_library_grid.add_theme_constant_override(&"h_separation", int(LIBRARY_GAP))
+	_library_grid.add_theme_constant_override(&"v_separation", int(LIBRARY_GAP))
+	_library_scroll.add_child(_library_grid)
+	_library_grid.resized.connect(_fit_library_columns)
+
+	var frame := _glow_frame(column, "AbilityLibraryFrame", 10.0)
+	frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	frame.size_flags_stretch_ratio = 1.2
+	return frame
+
+
+func _build_description_block() -> PanelContainer:
+	var column := VBoxContainer.new()
+	column.name = "AbilityDescriptionContent"
+	column.add_theme_constant_override(&"separation", 6)
+	column.custom_minimum_size.y = 132.0
+
+	_description_title = _label("NO ABILITY SELECTED", 16, RED_BRIGHT, true)
+	_description_title.name = "AbilityDescriptionTitle"
+	column.add_child(_description_title)
+	column.add_child(_rule())
+
+	_description_body = _label(
+		"CLICK A POWER TO READ IT  //  DRAG OR SHIFT+CLICK INTO THE HOTBAR",
+		11,
+		RED_TEXT,
+		true
+	)
+	_description_body.name = "AbilityDescriptionBody"
+	column.add_child(_scroll_text(_description_body, "AbilityDescriptionScroll"))
+
+	var frame := _glow_frame(column, "AbilityDescriptionFrame", 10.0)
+	frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	frame.size_flags_stretch_ratio = 0.72
+	return frame
+
+
+func _build_stats_frame() -> PanelContainer:
+	var column := VBoxContainer.new()
+	column.name = "StatsContent"
+	column.add_theme_constant_override(&"separation", 6)
+	_stats_heading = _section_heading("PLAYER STATS  //  LIVE READOUT")
+	_stats_heading.name = "StatsHeading"
+	column.add_child(_stats_heading)
+	column.add_child(_rule())
+
+	_stats_scroll = ScrollContainer.new()
+	_stats_scroll.name = "StatsScroll"
+	_stats_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_stats_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_stats_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_stats_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_stats_scroll.clip_contents = true
+	column.add_child(_stats_scroll)
+
+	var stack := VBoxContainer.new()
+	stack.name = "StatsStack"
+	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stack.add_theme_constant_override(&"separation", 6)
+	_stats_scroll.add_child(stack)
+
+	_stats_rows = VBoxContainer.new()
+	_stats_rows.name = "StatRows"
+	_stats_rows.add_theme_constant_override(&"separation", 5)
+	_stats_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stack.add_child(_stats_rows)
+
+	_status_section = VBoxContainer.new()
+	_status_section.name = "StatusSection"
+	_status_section.add_theme_constant_override(&"separation", 6)
+	_status_section.visible = false
+	stack.add_child(_status_section)
+
+	var status_heading := _section_heading("TEMPORARY EFFECTS  //  LIVE", 13)
+	status_heading.name = "StatusHeading"
+	_status_section.add_child(status_heading)
+	_status_section.add_child(_rule())
+
+	_status_rows = VBoxContainer.new()
+	_status_rows.name = "StatusRows"
+	_status_rows.add_theme_constant_override(&"separation", 5)
+	_status_section.add_child(_status_rows)
+
+	var frame := _glow_frame(column, "StatsFrame", 10.0)
+	frame.visible = false
+	frame.mouse_filter = Control.MOUSE_FILTER_STOP
+	frame.clip_contents = true
+	return frame
 
 
 func _build_stats_toggle() -> Button:
@@ -366,6 +504,9 @@ func _toggle_stats() -> void:
 		"Hide player stats" if _stats_open else "Show player stats"
 	)
 	_style_stats_toggle(_stats_toggle)
+	if _stats_open:
+		_fill_stats()
+		_fill_status_effects()
 
 
 func _style_stats_toggle(button: Button) -> void:
@@ -385,111 +526,9 @@ func _style_stats_toggle(button: Button) -> void:
 	)
 
 
-func _build_apparel_frame() -> PanelContainer:
-	var column := VBoxContainer.new()
-	column.name = "ApparelContent"
-	column.add_theme_constant_override(&"separation", 8)
-	column.add_child(_section_heading("EQUIPPED APPAREL"))
-	column.add_child(_rule())
-
-	var centre := CenterContainer.new()
-	centre.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	centre.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(centre)
-
-	_apparel_grid = GridContainer.new()
-	_apparel_grid.name = "ApparelSlots"
-	_apparel_grid.columns = 5
-	_apparel_grid.add_theme_constant_override(&"h_separation", 7)
-	_apparel_grid.add_theme_constant_override(&"v_separation", 7)
-	centre.add_child(_apparel_grid)
-
-	for index in ItemDB.SLOT_ORDER.size():
-		var body_slot: String = ItemDB.SLOT_ORDER[index]
-		var slot := RedItemSlot.new()
-		slot.name = "ApparelSlot_%02d" % index
-		slot.set_meta(&"body_slot", body_slot)
-		slot.set_edge(WIDE_APPAREL_EDGE)
-		slot.placeholder = ""
-		slot.badge = String(ItemDB.SLOT_LABELS.get(body_slot, body_slot)).to_upper()
-		slot.draggable = false
-		slot.bind(_equipment, index)
-		slot.picked.connect(_on_apparel_picked)
-		slot.quick_move_requested.connect(_on_apparel_quick_move)
-		_apparel_grid.add_child(slot)
-		_apparel_slots.append(slot)
-
-		var glyph := RedMenuGlyph.new()
-		glyph.name = "EmptyGlyph_%02d" % index
-		glyph.glyph = APPAREL_GLYPHS[index]
-		glyph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		glyph.offset_left = 11.0
-		glyph.offset_top = 11.0
-		glyph.offset_right = -11.0
-		glyph.offset_bottom = -11.0
-		slot.add_child(glyph)
-		_apparel_glyphs.append(glyph)
-
-	_apparel_hint = _label(
-		"CLICK TO IDENTIFY  //  SHIFT+CLICK TO STOW",
-		10,
-		RED_MUTED,
-		true
-	)
-	_apparel_hint.name = "ApparelHint"
-	_apparel_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(_apparel_hint)
-
-	var frame := _glow_frame(column, "ApparelFrame", 12.0)
-	frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	frame.size_flags_stretch_ratio = 1.0
-	return frame
-
-
-func _build_hotbar_block() -> PanelContainer:
-	var column := VBoxContainer.new()
-	column.name = "HotbarContent"
-	column.add_theme_constant_override(&"separation", 6)
-
-	var heading := _section_heading("ACTIVE HOTBAR  //  LMB  RMB  1  2  3", 13)
-	column.add_child(heading)
-	column.add_child(_rule())
-
-	_hotbar_row = HBoxContainer.new()
-	_hotbar_row.name = "HotbarSlots"
-	_hotbar_row.add_theme_constant_override(&"separation", 7)
-	_hotbar_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_hotbar_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_hotbar_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	column.add_child(_hotbar_row)
-
-	for logical_index in HOTBAR_BADGES.size():
-		var slot := RedItemSlot.new()
-		var badge: String = HOTBAR_BADGES[logical_index]
-		slot.name = "HotbarSlot_%s" % badge
-		slot.set_meta(&"logical_input", badge)
-		slot.set_edge(WIDE_HOTBAR_EDGE)
-		slot.badge = badge
-		slot.placeholder = "X"
-		slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		slot.interactive = false
-		slot.draggable = false
-		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_hotbar_row.add_child(slot)
-		_hotbar_slots.append(slot)
-
-	_hotbar_frame = _glow_frame(column, "HotbarFrame", 10.0)
-	_hotbar_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_hotbar_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_hotbar_frame.size_flags_stretch_ratio = 1.0
-	_bind_hotbar_slots()
-	return _hotbar_frame
-
-
 func _bind_slots() -> void:
-	for index in _apparel_slots.size():
-		_apparel_slots[index].bind(_equipment, index)
+	if _hat_slot != null:
+		_hat_slot.bind(_equipment, 0)
 	_bind_hotbar_slots()
 
 
@@ -497,49 +536,228 @@ func _bind_hotbar_slots() -> void:
 	if _hotbar_slots.size() != HOTBAR_BADGES.size():
 		return
 	for logical_index in _hotbar_slots.size():
-		if logical_index < 2:
-			_hotbar_slots[logical_index].bind(_abilities, logical_index)
-		else:
-			_hotbar_slots[logical_index].bind(_weapons, logical_index - 2)
+		_hotbar_slots[logical_index].bind(_abilities, logical_index)
+
+
+func _refresh_hat() -> void:
+	if _hat_slot == null:
+		return
+	_hat_slot.bind(_equipment, 0)
+	var id := _hat_slot.item_id()
+	_hat_slot.equipped = not id.is_empty()
+	_hat_slot.tooltip_text = (
+		"%s\nSHIFT+CLICK TO STOW" % ItemDB.title(id)
+		if not id.is_empty()
+		else "HAT // EMPTY"
+	)
+	if _hat_glyph != null:
+		_hat_glyph.visible = id.is_empty()
+	_hat_slot.queue_redraw()
+
+
+func _refresh_hotbar() -> void:
+	for index in _hotbar_slots.size():
+		var slot := _hotbar_slots[index]
+		var id := slot.item_id()
+		slot.equipped = not id.is_empty()
+		slot.selected = id == _selected_ability_id and not id.is_empty()
+		slot.tooltip_text = (
+			"%s // %s" % [HOTBAR_BADGES[index], ItemDB.title(id)]
+			if not id.is_empty()
+			else "%s // EMPTY" % HOTBAR_BADGES[index]
+		)
+		slot.queue_redraw()
+
+
+func _refresh_library() -> void:
+	var ids := ItemDB.ability_ids()
+	if _library_grid == null or _library_slots.size() != ids.size():
+		_rebuild_library()
+		return
+	for index in ids.size():
+		if _library_slots[index].item_id() != ids[index]:
+			_rebuild_library()
+			return
+	_mark_library_selection()
+
+
+func _rebuild_library() -> void:
+	if _library_grid == null:
+		return
+	_clear_children(_library_grid)
+	_library_slots.clear()
+	var ids := ItemDB.ability_ids()
+	var contents: Array = []
+	for id: String in ids:
+		contents.append(id)
+	_ability_library = ItemContainer.new(contents.size(), contents)
+	for index in _ability_library.size():
+		_ability_library.set_filter(index, ItemDB.ABILITY)
+		var id := _ability_library.get_item(index)
+		var slot := RedItemSlot.new()
+		slot.name = "AbilityLibrary_%s" % id
+		slot.set_edge(LIBRARY_EDGE)
+		slot.copy_on_drag = true
+		slot.bind(_ability_library, index)
+		slot.equipped = _abilities != null and _abilities.find(id) >= 0
+		slot.selected = id == _selected_ability_id
+		slot.tooltip_text = "%s\nDRAG OR SHIFT+CLICK TO ASSIGN" % ItemDB.title(id)
+		slot.picked.connect(_on_library_picked)
+		slot.quick_move_requested.connect(_on_library_quick_move)
+		_library_grid.add_child(slot)
+		_library_slots.append(slot)
+	call_deferred(&"_fit_library_columns")
+
+
+func _fill_description() -> void:
+	if _description_title == null:
+		return
+	var id := _selected_ability_id
+	if id.is_empty() or not ItemDB.is_ability(id):
+		_description_title.text = "NO ABILITY SELECTED"
+		_description_body.text = (
+			"CLICK A POWER TO READ IT  //  DRAG OR SHIFT+CLICK INTO THE HOTBAR"
+		)
+		return
+	_description_title.text = ItemDB.title(id).to_upper()
+	var description := ItemDB.description(id).strip_edges()
+	if description.is_empty():
+		description = "NO DESCRIPTION FILED."
+	var lines: PackedStringArray = [description]
+	var profile := ItemDB.ability_profile(id)
+	if not profile.is_empty():
+		lines.append("PROFILE //  %s" % profile)
+	var written_stats := PackedStringArray()
+	for line: String in ItemDB.stat_lines(id):
+		written_stats.append(line.replace("\t", "  //  "))
+	if not written_stats.is_empty():
+		lines.append("STATS\n%s" % "\n".join(written_stats))
+	_description_body.text = "\n\n".join(lines)
+
+
+func _assign_ability(id: String, dest := -1) -> void:
+	if _abilities == null or not ItemDB.accepts_ability(id):
+		return
+	if dest < 0:
+		dest = _abilities.first_accepting(id)
+	if dest < 0:
+		dest = 0
+	if dest >= _abilities.size():
+		return
+	_abilities.set_item(dest, id)
+	_selected_ability_id = id
+
+
+func _on_library_picked(slot: RedItemSlot) -> void:
+	_selected_ability_id = slot.item_id()
+	_refresh_hotbar()
+	_mark_library_selection()
+	_fill_description()
+
+
+func _on_library_quick_move(slot: RedItemSlot) -> void:
+	var id := slot.item_id()
+	if id.is_empty():
+		return
+	_selected_ability_id = id
+	_assign_ability(id)
+	refresh()
+
+
+func _on_hotbar_picked(slot: RedItemSlot) -> void:
+	_selected_ability_id = slot.item_id()
+	_refresh_hotbar()
+	_mark_library_selection()
+	_fill_description()
+
+
+func _on_hotbar_clear(slot: RedItemSlot) -> void:
+	if slot.container != _abilities:
+		return
+	var id := slot.item_id()
+	slot.container.set_item(slot.index, "")
+	if _selected_ability_id == id:
+		_selected_ability_id = ""
+	refresh()
+
+
+func _on_hotbar_dropped(_target: RedItemSlot, source: RedItemSlot) -> void:
+	var id := source.item_id()
+	if id.is_empty():
+		return
+	_selected_ability_id = id
+	_fill_description()
+
+
+func _on_hat_picked(_slot: RedItemSlot) -> void:
+	_refresh_hat()
+
+
+func _on_hat_quick_move(slot: RedItemSlot) -> void:
+	if slot.container != _equipment or _backpack == null:
+		return
+	var id := slot.item_id()
+	if id.is_empty():
+		return
+	if not ItemContainer.quick_move(_equipment, slot.index, _backpack):
+		_equipment.set_item(slot.index, "")
+	refresh()
+
+
+func _mark_library_selection() -> void:
+	for slot: RedItemSlot in _library_slots:
+		var id := slot.item_id()
+		slot.selected = id == _selected_ability_id
+		slot.equipped = _abilities != null and _abilities.find(id) >= 0
+		slot.queue_redraw()
 
 
 func _fill_stats() -> void:
 	if _stats_rows == null:
 		return
 	_clear_children(_stats_rows)
+	if _stats_heading != null:
+		_stats_heading.text = "PLAYER STATS  //  LIVE READOUT"
 	if _stats == null:
 		_stats_rows.add_child(_label("NO STAT DATA", 12, RED_MUTED))
 		return
 
-	for id_text: String in PlayerStats.ids():
-		var id := StringName(id_text)
-		var data: Dictionary = _stats.row(id)
-		var row_panel := PanelContainer.new()
-		row_panel.name = "Stat_%s" % id_text
-		row_panel.tooltip_text = PlayerStats.description_of(id)
-		row_panel.add_theme_stylebox_override(
-			&"panel",
-			_style(BLACK_42, Color(RED, 0.42), 1, 7.0)
+	for row_variant: Variant in CrawlerMeta.hero_stat_rows():
+		if typeof(row_variant) != TYPE_DICTIONARY:
+			continue
+		var row := row_variant as Dictionary
+		_add_stat_row(
+			str(row.get("id", "")),
+			str(row.get("title", "")),
+			str(row.get("description", "")),
+			str(row.get("text", ""))
 		)
-		_stats_rows.add_child(row_panel)
 
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override(&"separation", 12)
-		row_panel.add_child(row)
 
-		var title := _label(PlayerStats.title_of(id), 12, RED_TEXT)
-		title.name = "Stat_%s_Name" % id_text
-		title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(title)
+func _add_stat_row(id_text: String, title_text: String, description: String,
+		value_text: String) -> void:
+	var row_panel := PanelContainer.new()
+	row_panel.name = "Stat_%s" % id_text
+	row_panel.tooltip_text = description
+	row_panel.add_theme_stylebox_override(
+		&"panel",
+		_style(BLACK_42, Color(RED, 0.42), 1, 6.0)
+	)
+	_stats_rows.add_child(row_panel)
 
-		var value := _label(
-			_format_stat_number(id, float(data.get("value", 0.0))),
-			18,
-			GREEN
-		)
-		value.name = "Stat_%s_Value" % id_text
-		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		row.add_child(value)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override(&"separation", 8)
+	row_panel.add_child(row)
+
+	var title := _label(title_text, 11, RED_TEXT)
+	title.name = "Stat_%s_Name" % id_text
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(title)
+
+	var value := _label(value_text, 14, GREEN)
+	value.name = "Stat_%s_Value" % id_text
+	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(value)
 
 
 func _fill_status_effects() -> void:
@@ -590,98 +808,29 @@ func _format_stat_number(id: StringName, value: float) -> String:
 	return "%.*f" % [precision, value]
 
 
-func _refresh_apparel() -> void:
-	if _selected_apparel >= 0 and (
-			_equipment == null
-			or _equipment.get_item(_selected_apparel).is_empty()
-	):
-		_selected_apparel = -1
-
-	for index in _apparel_slots.size():
-		var slot := _apparel_slots[index]
-		var id := slot.item_id()
-		slot.selected = index == _selected_apparel
-		slot.equipped = not id.is_empty()
-		slot.tooltip_text = (
-			"%s\nSHIFT+CLICK TO MOVE TO BACKPACK" % ItemDB.title(id)
-			if not id.is_empty()
-			else "%s // EMPTY" % _apparel_slot_label(index)
-		)
-		slot.queue_redraw()
-		_apparel_glyphs[index].visible = id.is_empty()
-
-
-func _refresh_hotbar() -> void:
-	for index in _hotbar_slots.size():
-		var slot := _hotbar_slots[index]
-		var id := slot.item_id()
-		slot.equipped = not id.is_empty()
-		slot.tooltip_text = (
-			"%s // %s" % [HOTBAR_BADGES[index], ItemDB.title(id)]
-			if not id.is_empty()
-			else "%s // EMPTY" % HOTBAR_BADGES[index]
-		)
-		slot.queue_redraw()
-
-
 func _request_icons() -> void:
 	if _icons == null:
 		return
 	var ids: Array = []
-	for source: ItemContainer in [_equipment, _weapons, _abilities, _backpack]:
+	for source: ItemContainer in [_equipment, _abilities]:
 		if source == null:
 			continue
 		for id: String in source.items():
 			if not id.is_empty() and not ids.has(id):
 				ids.append(id)
+	for id: String in ItemDB.ability_ids():
+		if not ids.has(id):
+			ids.append(id)
 	_icons.request(ids)
 
 
 func _on_icon_ready(_id: String, _texture: Texture2D) -> void:
-	for slot: RedItemSlot in _apparel_slots:
-		slot.queue_redraw()
+	if _hat_slot != null:
+		_hat_slot.queue_redraw()
 	for slot: RedItemSlot in _hotbar_slots:
 		slot.queue_redraw()
-
-
-func _on_apparel_picked(slot: RedItemSlot) -> void:
-	if slot.container != _equipment:
-		return
-	_selected_apparel = slot.index
-	var id := slot.item_id()
-	_apparel_hint.text = (
-		"%s  //  SHIFT+CLICK TO STOW" % ItemDB.title(id).to_upper()
-		if not id.is_empty()
-		else "%s  //  EMPTY" % _apparel_slot_label(slot.index)
-	)
-	_refresh_apparel()
-
-
-func _on_apparel_quick_move(slot: RedItemSlot) -> void:
-	if slot.container != _equipment or _backpack == null:
-		return
-	var id := slot.item_id()
-	if id.is_empty():
-		return
-	var title := ItemDB.title(id).to_upper()
-	var moved := ItemContainer.quick_move(_equipment, slot.index, _backpack)
-	if moved:
-		_selected_apparel = -1
-		_apparel_hint.text = "%s  //  MOVED TO BACKPACK" % title
-	else:
-		_apparel_hint.text = "BACKPACK FULL  //  %s REMAINS WORN" % title
-	refresh()
-
-
-func _apparel_slot_label(index: int) -> String:
-	var body_slot := (
-		_equipment.filter_of(index)
-		if _equipment != null
-		else ""
-	)
-	if body_slot.is_empty() and index >= 0 and index < ItemDB.SLOT_ORDER.size():
-		body_slot = ItemDB.SLOT_ORDER[index]
-	return String(ItemDB.SLOT_LABELS.get(body_slot, body_slot)).to_upper()
+	for slot: RedItemSlot in _library_slots:
+		slot.queue_redraw()
 
 
 func _update_responsive_layout() -> void:
@@ -692,32 +841,79 @@ func _update_responsive_layout() -> void:
 		available_width = get_viewport_rect().size.x
 	var narrow := available_width < NARROW_WIDTH
 	if _responsive_initialized and narrow == _narrow:
+		_fit_library_columns()
 		return
 	_responsive_initialized = true
 	_narrow = narrow
 
-	_main_grid.columns = 1 if narrow else 2
-	_character_block.custom_minimum_size.x = 0.0 if narrow else 430.0
-	_loadout_column.custom_minimum_size.x = 0.0 if narrow else 480.0
-	_preview.custom_minimum_size = (
-		Vector2(260.0, 300.0)
-		if narrow
-		else Vector2(410.0, 350.0)
-	)
+	_main_grid.vertical = narrow
+	_character_block.custom_minimum_size.x = 0.0 if narrow else 168.0
+	_character_block.size_flags_stretch_ratio = 0.0 if narrow else 1.0
+	_ability_column.custom_minimum_size.x = 0.0 if narrow else 360.0
+	_ability_column.size_flags_stretch_ratio = 1.0 if narrow else 3.0
+	var preview_min := Vector2(150.0, 180.0) if narrow else Vector2(168.0, 210.0)
+	_preview.custom_minimum_size = preview_min
+	var stage := _character_block.find_child("CharacterStage", true, false) as Control
+	if stage != null:
+		stage.custom_minimum_size = preview_min
 
-	_apparel_grid.columns = 5
-	for slot: RedItemSlot in _apparel_slots:
-		slot.set_edge(
-			NARROW_APPAREL_EDGE if narrow else WIDE_APPAREL_EDGE
-		)
+	var hat_edge := NARROW_HAT_EDGE if narrow else WIDE_HAT_EDGE
+	if _hat_slot != null:
+		_hat_slot.set_edge(hat_edge)
+		_hat_slot.offset_left = -(hat_edge + 10.0)
+		_hat_slot.offset_top = 10.0
+		_hat_slot.offset_right = -10.0
+		_hat_slot.offset_bottom = hat_edge + 10.0
 	for slot: RedItemSlot in _hotbar_slots:
 		slot.set_edge(NARROW_HOTBAR_EDGE if narrow else WIDE_HOTBAR_EDGE)
+	_fit_library_columns()
+
+
+func _fit_library_columns() -> void:
+	if _library_grid == null or _library_scroll == null:
+		return
+	var available := _library_scroll.size.x - 8.0
+	if available <= 0.0:
+		return
+	_library_grid.columns = maxi(
+		3,
+		int((available + LIBRARY_GAP) / (LIBRARY_EDGE + LIBRARY_GAP))
+	)
 
 
 func _section_heading(text: String, font_size := 16) -> Label:
 	var heading := _label(text, font_size, RED_BRIGHT)
 	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return heading
+
+
+func _scroll_text(label: Label, node_name: String) -> ScrollContainer:
+	var scroll := ScrollContainer.new()
+	scroll.name = node_name
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	scroll.add_child(label)
+	scroll.resized.connect(_fit_description_scroll)
+	_description_scroll = scroll
+	return scroll
+
+
+func _fit_description_scroll() -> void:
+	if _description_scroll == null or _description_body == null:
+		return
+	var bar := _description_scroll.get_v_scroll_bar()
+	var gutter := 18.0 if bar != null and bar.visible else 0.0
+	_description_body.custom_minimum_size.x = maxf(
+		_description_scroll.size.x - gutter, 8.0)
+	_description_body.custom_minimum_size.y = 0.0
+	_description_body.reset_size()
+	_description_body.custom_minimum_size.y = maxf(
+		_description_body.get_minimum_size().y, 8.0)
 
 
 func _label(

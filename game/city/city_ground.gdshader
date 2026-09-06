@@ -68,13 +68,11 @@ void fragment() {
 		lamp = texture(lamp_map, city_uv).rgb;
 	}
 	float amount = clamp(dot(lamp, vec3(0.33, 0.33, 0.34)), 0.0, 1.0);
-	// Night pad stays the painted road/walk colour. The lamp map is
-	// intensity only, so a pool brightens that colour instead of stamping
-	// a yellow disc over it.
-	ALBEDO = base * mix(1.0, 0.20, night);
+	ALBEDO = base * mix(1.0, 0.18, night);
 	ROUGHNESS = 0.92;
 	METALLIC = 0.03;
 	SPECULAR = 0.16;
-	vec3 light_col = vec3(1.0, 0.88, 0.70);
-	EMISSION = base * amount * night * light_col * 3.1;
+	// Coloured neon / amber wash so downtown magenta and cyan land on
+	// the pavement instead of a pastel intensity lift.
+	EMISSION = mix(base * amount, lamp, 0.82) * night * 4.6;
 }

@@ -1,7 +1,7 @@
 class_name Ability
 extends RefCounted
 
-## One power in one of the player's two mouse slots.
+## One power in one of the player's numbered ability slots.
 ##
 ## An ability is not a node and owns nothing in the scene. It is handed the
 ## player, told when its button goes down, held and released, and asked whether
@@ -22,11 +22,14 @@ var allowed_stances: Array[int] = []
 var blocked_underwater := false
 
 var player: OnlinePlayer
-## Which mouse button this is bound to: 0 is attack, 1 is aim.
+## Which hotbar slot this is bound to. Keys 1-4 select it; click fires it.
 var slot := 0
 var ability_id := ""
 var definition: AbilityDefinition
 var stats: Dictionary = {}
+## Crawler modifier catalogue ids currently seated on this instance.
+var modifiers: PackedStringArray = []
+var crawler_uid := ""
 
 ## Seconds until it may be used again, counted down by the controller.
 var _cooldown_left := 0.0
@@ -53,7 +56,25 @@ func configure(owner: OnlinePlayer, index: int, id: String,
 			allowed_stances.append(stance_value)
 	elif record is Dictionary:
 		stats = record as Dictionary
+	modifiers = PackedStringArray()
+	crawler_uid = ""
 	_configure()
+
+
+func apply_crawler(card: CrawlerCard) -> void:
+	if card == null:
+		return
+	crawler_uid = card.uid
+	modifiers = card.filled_modifier_ids()
+	var kit := player.crawler_kit if player != null else null
+	if kit != null:
+		stats = kit.stats_for(card)
+	else:
+		stats = CrawlerCatalog.resolve_stats(ability_id, modifiers, stats)
+
+
+func has_modifier(id: String) -> bool:
+	return modifiers.has(id) or stat(id, 0.0) > 0.0
 
 
 func _configure() -> void:
@@ -63,7 +84,17 @@ func _configure() -> void:
 ## A number out of the catalogue, with a fallback for an ability whose entry
 ## does not mention it.
 func stat(key: String, fallback: float) -> float:
-	return float(stats.get(key, fallback))
+	var value := float(stats.get(key, fallback))
+	if key == "damage" and player != null and CrawlerRules.active() \
+			and player.has_method(&"crawler_damage_scale"):
+		value *= float(player.call(&"crawler_damage_scale"))
+	if key == "knockback" and player != null and CrawlerRules.active() \
+			and player.has_method(&"crawler_knockback_scale"):
+		value *= float(player.call(&"crawler_knockback_scale"))
+	if key == "range" and player != null and CrawlerRules.active() \
+			and player.has_method(&"crawler_range_scale"):
+		value *= float(player.call(&"crawler_range_scale"))
+	return value
 
 
 func cooldown() -> float:
@@ -102,6 +133,8 @@ func press() -> bool:
 	if _held or not can_use():
 		return false
 	_held = true
+	if player != null:
+		player.note_crawler_cast(stats)
 	if not _press():
 		_held = false
 		return false

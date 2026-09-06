@@ -66,6 +66,8 @@ static func create_miss(world: Node, caster: OnlinePlayer,
 	tether._miss = true
 	var from := caster.hand_point(false)
 	var reach := maxf(float(record.stats.get("range", 30.0)), 1.0)
+	if caster.has_method(&"crawler_range_scale"):
+		reach *= float(caster.call(&"crawler_range_scale"))
 	var along := caster.aim_direction(from).normalized()
 	if along.length_squared() < 0.5:
 		along = caster.look_direction().normalized()

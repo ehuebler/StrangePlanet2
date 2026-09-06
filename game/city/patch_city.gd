@@ -31,9 +31,13 @@ const WALL_SHADER: Shader = preload("res://game/city/city_wall.gdshader")
 const WINDOW_SHADER: Shader = preload("res://game/city/city_window.gdshader")
 const GROUND_SHADER: Shader = preload("res://game/city/city_ground.gdshader")
 const SURFACE_MATERIAL: ShaderMaterial = preload("res://game/planet/planet_surface.tres")
+const APRON_SHADER: Shader = preload("res://shaders/vivid/vivid_terrain_apron.gdshader")
 const MAP_FONT: FontFile = preload("res://fonts/Bungee-Regular.ttf")
 const CITY_BUILDING_SCRIPT := preload("res://game/city/city_building.gd")
 const BAKE := preload("res://game/city/patch_city_bake.gd")
+
+signal siege_destroyed
+signal building_wrecked(building: Node)
 
 const DISTRICT_LIFT := 2.5
 ## Level slab: one height for a whole touching group, a little above its peak.
@@ -54,6 +58,9 @@ const RAMP_THICK := 0.48
 ## invisible collider in the gap under the pad.
 const APRON_CLEAR := 0.85
 const APRON_VISUAL := 0.55
+## GPU-only push along planet-up so the photographed sheet sits above the
+## interpolated chunk mesh. Collision stays on the authored verts.
+const APRON_SHADER_LIFT := 0.85
 ## If a merged pad sits this far above the ground, that stretch is split off
 ## and paved again as its own, lower slab.
 const PAD_FLOAT := 20.0
@@ -130,6 +137,8 @@ const PAVEMENT_THICK := 0.55
 ## How far pavement walls bury into the true surface so a drop at the rim
 ## cannot be walked under.
 const PAVEMENT_EMBED := 2.4
+## How far a building stem bites into the true surface under a floating hull.
+const BUILDING_EMBED := 1.6
 const PAVE_CHUNK := 8
 ## Crater depth that would punch a hole in the deck. Hole punching is off for
 ## now (full remesh hitch); the slab only absorbs depth.
@@ -161,8 +170,8 @@ const GROUND_TEX_MAX := 4096
 const LAMP_SPACING := 27.5
 const LAMP_KEEP := 11.9
 const LAMP_HEIGHT := 5.1
-const LAMP_LIGHTS := 32
-const LAMP_SEEK := 78.0
+const LAMP_LIGHTS := 48
+const LAMP_SEEK := 88.0
 const LAMP_HOLD := 1.6
 const LAMP_FADE := 5.5
 ## Visual layer 3. Pooled street OmniLights skip this so hulls do not pop
@@ -170,7 +179,9 @@ const LAMP_FADE := 5.5
 const BUILDING_VISUAL_LAYER := 4
 const LAMP_LIGHT_MASK := 0xFFFFB
 const LAMP_POOL_M := 22.0
+const NEON_POOL_M := 34.0
 const LAMP_MAP_MAX := 1024
+const LAMP_AMBER := Color(1.0, 0.52, 0.16)
 const MINIMAP_NEAR := 78.0
 const MINIMAP_FAR_ALT := 380.0
 const STREET_LABEL_ALT := 120.0
@@ -305,6 +316,12 @@ var _apron_mat: ShaderMaterial
 var _lot_root: Node3D
 var _buildings: Array = []
 var _pending_blasts: Array = []
+## Sticky crawler siege flag. Once more than 60% of the lots have collapsed the
+## city stays dead even if a later rebuild tool were to touch a single house.
+var _siege_destroyed := false
+## Building meshes stay up only while this city faces the camera. The far side
+## of the planet keeps its lots in memory for siege, but it does not draw them.
+var _buildings_rendered := true
 var _planet_shape: PlanetShape
 var _pavement: MeshInstance3D
 var _pavement_body: StaticBody3D
@@ -321,6 +338,8 @@ var _lamps: Node3D
 var _lamp_bulb_mat: StandardMaterial3D
 var _lamp_spots := PackedVector3Array()
 var _lamp_uvs := PackedVector2Array()
+var _lamp_cols := PackedColorArray()
+var _street_lamp_count := 0
 var _lamp_map: ImageTexture
 var _lamp_lights: Array[OmniLight3D] = []
 var _lamp_bind := PackedInt32Array()
@@ -421,6 +440,8 @@ func apply(next: PatchCityGenerator.Plan, shape: PlanetShape) -> void:
 	_lamp_bulb_mat = null
 	_lamp_spots = PackedVector3Array()
 	_lamp_uvs = PackedVector2Array()
+	_lamp_cols = PackedColorArray()
+	_street_lamp_count = 0
 	_lamp_map = null
 	_lamp_lights.clear()
 	_lamp_bind = PackedInt32Array()
@@ -546,10 +567,23 @@ func restore_bake(bake: Resource, shape: PlanetShape) -> void:
 	_rebind_lamps()
 	if phase >= PHASE_BUILT:
 		_index_city_roads()
-		_place_lamps(shape)
+		# Baked cities already packed their lamp posts. Rebuilding them here
+		# discarded every bulb and asked the renderer for a new instance-uniform
+		# slot per city, which is what overflowed the shader buffer when crawler
+		# dropped seven towns in one frame.
+		if is_instance_valid(_lamps) and not _lamp_spots.is_empty():
+			_street_lamp_count = _lamp_spots.size()
+			if _lamp_lights.is_empty():
+				_fill_lamp_lights()
+		else:
+			_place_lamps(shape)
 		set_process(true)
 	if phase >= PHASE_PAINTED:
 		_refresh_baked_night_paint(shape)
+		_refresh_night_glow(shape)
+		if _ground_tex != null and not _pad_tops.is_empty():
+			_remap_pavement_map()
+		_bind_apron_material()
 	if phase >= PHASE_PAVED:
 		_register_flora_pad()
 	if phase >= PHASE_MAPPED and is_inside_tree() and not is_in_group(MAP_GROUP):
@@ -660,6 +694,7 @@ func _rebind_packed_nodes() -> void:
 		_windows_small.material_override = _window_small_mat
 	if is_instance_valid(_windows_large):
 		_windows_large.material_override = _window_large_mat
+	_bind_apron_material()
 
 
 func _rebind_buildings(shape: PlanetShape) -> void:
@@ -746,7 +781,7 @@ func _refresh_baked_night_paint(shape: PlanetShape) -> void:
 
 func _baked_night_paint_stale() -> bool:
 	var seen := 0
-	var neon_trim := 0
+	var sampled := 0
 	var white_panes := 0
 	var colour_panes := 0
 	for building in _buildings:
@@ -755,19 +790,18 @@ func _baked_night_paint_stale() -> bool:
 		if not building.has_method(&"is_large") or not bool(building.call(&"is_large")):
 			continue
 		seen += 1
-		var hull: Mesh = building.call(&"hull_mesh") if building.has_method(&"hull_mesh") else null
-		if hull != null and hull.get_surface_count() > 0:
-			var cols: PackedColorArray = hull.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
-			var step := maxi(int(cols.size() / 24), 1)
-			var index := 0
-			while index < cols.size():
-				if absi(int(round(cols[index].a * 20.0)) - PAINT_NEON) == 0:
-					neon_trim += 1
-					break
-				index += step
 		var glass: Mesh = building.call(&"glass_mesh") if building.has_method(&"glass_mesh") else null
 		if glass != null and glass.get_surface_count() > 0:
-			var panes: PackedColorArray = glass.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+			var arrays := glass.surface_get_arrays(0)
+			if arrays.size() <= Mesh.ARRAY_COLOR:
+				continue
+			var color_data: Variant = arrays[Mesh.ARRAY_COLOR]
+			if color_data == null or not (color_data is PackedColorArray):
+				continue
+			var panes: PackedColorArray = color_data
+			if panes.is_empty():
+				continue
+			sampled += 1
 			var step := maxi(int(panes.size() / 20), 1)
 			var index := 0
 			while index < panes.size():
@@ -781,8 +815,12 @@ func _baked_night_paint_stale() -> bool:
 				index += step
 		if seen >= 14:
 			break
-	return seen > 0 and (
-		neon_trim == 0 or colour_panes == 0 or white_panes > colour_panes)
+	# Authored hulls no longer carry lot-rectangle neon, so a missing trim
+	# must not force a remesh. That rebuild was flipping windings and
+	# dropping paint on J load. Unreadable glass arrays also skip remesh.
+	if sampled == 0:
+		return false
+	return seen > 0 and (colour_panes == 0 or white_panes > colour_panes)
 
 
 func _pack_tree() -> PackedScene:
@@ -1052,6 +1090,97 @@ func world_up() -> Vector3:
 	return (global_transform.basis * up).normalized()
 
 
+func world_east() -> Vector3:
+	var east := _east.normalized()
+	if east.length_squared() < 0.0001:
+		east = Vector3.RIGHT
+	if not is_inside_tree():
+		return east
+	return (global_transform.basis * east).normalized()
+
+
+func city_id() -> int:
+	return plan.patch_id if plan != null else -1
+
+
+func city_name() -> String:
+	return plan.patch_name if plan != null and not plan.patch_name.is_empty() \
+		else "City"
+
+
+func ensure_crawler_waypoint() -> Landmark:
+	if not CrawlerRules.active() or not _is_first_crawler_city():
+		return get_node_or_null("CrawlerWaypoint") as Landmark
+	var mark := get_node_or_null("CrawlerWaypoint") as Landmark
+	if mark == null:
+		mark = Landmark.new()
+		mark.name = "CrawlerWaypoint"
+	mark.title = city_name()
+	mark.waypoint = true
+	mark.hide_beyond = 0.0
+	mark.show_beyond = 0.0
+	mark.aimed_beyond = 0.0
+	mark.direction = _up if _up.length_squared() > 0.25 else Vector3.UP
+	mark.planet = _planet_host()
+	mark.clearance = 6.0
+	if mark.get_parent() != self:
+		add_child(mark)
+	if not mark.is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP):
+		mark.add_to_group(CrawlerRules.CITY_WAYPOINT_GROUP)
+	if mark.is_inside_tree() and mark.planet != null:
+		mark.place()
+	return mark
+
+
+func _is_first_crawler_city() -> bool:
+	var ids: Variant = NetworkManager.session_options.get("crawler_cities", [])
+	if ids is Array and not (ids as Array).is_empty():
+		return city_id() == int((ids as Array)[0])
+	return city_name() == CrawlerRules.CITY_PATCH \
+		or city_name().begins_with(CrawlerRules.CITY_PATCH)
+
+
+func influence_radius() -> float:
+	return CrawlerRules.influence_radius_for_extent(city_extent())
+
+
+## Whether the city's lots sit on the camera's side of the planet limb.
+static func facing_horizon(eye: Vector3, centre: Vector3, radius: float,
+		extent: float) -> bool:
+	if not eye.is_finite() or not centre.is_finite() or radius <= 1.0:
+		return true
+	var eye_len := eye.length()
+	var city_len := centre.length()
+	if eye_len < 1.0 or city_len < 1.0:
+		return true
+	var horizon := radius / maxf(eye_len, radius)
+	var facing := eye.normalized().dot(centre.normalized())
+	var angular := maxf(extent, 0.0) / maxf(eye_len, 1.0)
+	return facing >= horizon - angular - 0.04
+
+
+func buildings_visible_from(eye: Vector3) -> bool:
+	return facing_horizon(eye, world_centre(), _radius, city_extent())
+
+
+func buildings_rendered() -> bool:
+	return _buildings_rendered
+
+
+## Pad top, not the flying hover used for respawns. The crawler safe box has to
+## sit where a body can walk into it.
+func pad_surface_point(clearance := 0.4) -> Vector3:
+	var up := _up.normalized()
+	var height := 0.0
+	for key in _pad_tops:
+		height = maxf(height, float(_pad_tops[key]))
+	var planet := _planet_host()
+	if height < 0.5 and planet != null and planet.shape != null:
+		height = planet.shape.elevation(up, 0.0)
+	var local := up * (_radius + height + maxf(clearance, 0.0))
+	return global_transform * local if is_inside_tree() else local
+
+
 func hover_point(clearance := 96.0) -> Vector3:
 	var up := _up.normalized()
 	var height := 0.0
@@ -1066,6 +1195,8 @@ func hover_point(clearance := 96.0) -> Vector3:
 
 static func flora_covers(direction: Vector3) -> bool:
 	var at := direction.normalized()
+	if BuildingFloraClear.covers(at):
+		return true
 	for pad in _flora_pads:
 		if pad.covers(at):
 			return true
@@ -1838,18 +1969,25 @@ func _emit_island_apron(st: SurfaceTool, shape: PlanetShape, island: PadIsland) 
 			h = maxf(h, ground + APRON_CLEAR * 0.7 + APRON_VISUAL * mid)
 			if t >= 0.999:
 				h = ground + APRON_CLEAR
+			if t <= 0.001:
+				h = pad_h
 			var bot := lerpf(
 				island.bot_h,
 				minf(h - RAMP_THICK, ground - 0.7),
 				ease)
 			top_row[index] = _height_mark(uv, h)
 			bot_row[index] = _height_mark(uv, bot)
-			col_row[index] = _apron_ink(shape, uv, t)
+			var ink := _apron_ink(shape, uv, t)
+			# Vertex alpha is the GPU lift weight, not wetness. Zero at both
+			# ends so the photographed sheet meets the pavement and the planet.
+			ink.a = mid
+			col_row[index] = ink
 		if prev_top.size() == n:
 			for index in n:
 				var next := (index + 1) % n
-				if float(runs[index]) < 0.35 and float(runs[next]) < 0.35:
-					continue
+				# Always keep a strip off the rim. A short run is a steep
+				# skirt, not a hole — skipping those was the leftover
+				# invisible edge after the two-sided winding fix.
 				_face_cols_two_sided(
 					st, prev_top[index], prev_top[next], top_row[next], top_row[index],
 					prev_col[index], prev_col[next], col_row[next], col_row[index],
@@ -1859,8 +1997,6 @@ func _emit_island_apron(st: SurfaceTool, shape: PlanetShape, island: PadIsland) 
 		prev_col = col_row
 	for index in n:
 		var next := (index + 1) % n
-		if float(runs[index]) < 0.35 and float(runs[next]) < 0.35:
-			continue
 		_face_cols_two_sided(
 			st, prev_top[index], prev_top[next], prev_bot[next], prev_bot[index],
 			prev_col[index], prev_col[next], prev_col[next], prev_col[index],
@@ -1894,7 +2030,7 @@ func _apron_run(
 		if _pad_tops.has(key):
 			var owner := int(_pad_owner.get(key, -1))
 			if owner != home:
-				run = minf(run, maxf(dist - cell * 0.55, 0.0))
+				run = minf(run, maxf(dist - cell * 0.55, 1.1))
 				break
 			own_pad += 1
 			if own_pad >= 4 and dist > cell * 3.2:
@@ -1937,18 +2073,19 @@ func _apron_ground(shape: PlanetShape, uv: Vector2, t: float) -> float:
 	return high
 
 
-func _apron_ink(shape: PlanetShape, uv: Vector2, t: float) -> Color:
+func _apron_ink(shape: PlanetShape, uv: Vector2, _t: float) -> Color:
+	# Walk and asphalt stay on the pad mesh. This ramp is the planet: the
+	# same biome tint the chunks write at this heading, so the surface
+	# shader picks the matching ground photograph instead of pavement.
 	var biome := DISTRICT_COLOR
 	biome.a = 0.0
-	if shape != null:
-		# Same dry-land sample the chunks write, without city lawn/concrete
-		# and without wetness in alpha — the planet shader treats 1.0 as ocean.
-		biome = shape.biome_color_at(_from_uv(uv), 0.0)
-		biome.a = 0.0
-	if t <= 0.12 and (_dressed or not _road_index.is_empty()):
-		var paint := _pavement_ink(uv)
-		paint.a = 0.0
-		return paint.lerp(biome, clampf(t / 0.12, 0.0, 1.0))
+	if shape == null:
+		return biome
+	var up := _from_uv(uv)
+	if up.length_squared() < 0.0001:
+		return biome
+	biome = shape.biome_color_at(up, 0.0)
+	biome.a = 0.0
 	return biome
 
 
@@ -2661,6 +2798,8 @@ func _register_flora_pad() -> void:
 	_stamp_flora_run(pad.keys, pad.cell, plan.extension, HIGHWAY_HALF * 0.72 + 4.0)
 	for exit in plan.exits:
 		_stamp_flora_run(pad.keys, pad.cell, _exit_flora_run(exit), EXIT_HALF + 4.0)
+	_stamp_flora_lots(pad.keys, pad.cell)
+	_dilate_flora_keys(pad.keys, pad.cell, BuildingFloraClear.PAD_METRES)
 	var farthest := 0.0
 	for key in pad.keys:
 		var at: Vector2i = key
@@ -2673,6 +2812,46 @@ func _register_flora_pad() -> void:
 	_flora_pads = next
 	_publish_flora_pads()
 	add_to_group(PAD_GROUP)
+
+
+func _stamp_flora_lots(keys: Dictionary, cell: float) -> void:
+	if cell <= 0.1:
+		return
+	for lot in fabric.get("lots", []):
+		var row: Dictionary = lot
+		var centre: Vector2 = row.get("centre", Vector2.ZERO)
+		var half := maxf(float(row.get("width", 8.0)), float(row.get("depth", 8.0))) \
+				* 0.5 + BuildingFloraClear.PAD_METRES
+		_stamp_flora_disk(keys, cell, centre, half)
+
+
+func _dilate_flora_keys(keys: Dictionary, cell: float, metres: float) -> void:
+	if keys.is_empty() or cell <= 0.1 or metres <= 0.0:
+		return
+	var reach := maxi(1, int(ceili(metres / cell)))
+	var extra: Array[Vector2i] = []
+	for key_variant: Variant in keys.keys():
+		var origin: Vector2i = key_variant
+		for ox in range(-reach, reach + 1):
+			for oy in range(-reach, reach + 1):
+				if Vector2(float(ox), float(oy)).length() * cell <= metres + cell * 0.51:
+					extra.append(Vector2i(origin.x + ox, origin.y + oy))
+	for key in extra:
+		keys[key] = true
+
+
+func _stamp_flora_disk(keys: Dictionary, cell: float, uv: Vector2, half: float) -> void:
+	if cell <= 0.1 or half <= 0.0:
+		return
+	var reach := maxi(1, int(ceili(half / cell)))
+	var cx := roundi(uv.x / cell)
+	var cy := roundi(uv.y / cell)
+	for ox in range(-reach, reach + 1):
+		for oy in range(-reach, reach + 1):
+			var key := Vector2i(cx + ox, cy + oy)
+			var at := Vector2(float(key.x) * cell, float(key.y) * cell)
+			if at.distance_to(uv) <= half:
+				keys[key] = true
 
 
 func _stamp_flora_run(keys: Dictionary, cell: float, dirs: PackedVector3Array, half: float) -> void:
@@ -2962,6 +3141,10 @@ func _build_city(shape: PlanetShape) -> void:
 	set_process(true)
 	print("patch_city: built %s — %d buildings, %d lamps"
 		% [plan.patch_name, fabric.get("lots", []).size(), _lamp_spots.size()])
+	if _pad != null:
+		_stamp_flora_lots(_pad.keys, _pad.cell)
+		_publish_flora_pads()
+		_clear_flora()
 
 
 func _dress_city(shape: PlanetShape) -> void:
@@ -2974,6 +3157,7 @@ func _dress_city(shape: PlanetShape) -> void:
 		_emit_island_aprons(shape, _pad_islands)
 	print("patch_city: painting facades %s" % plan.patch_name)
 	_dress_buildings(shape)
+	_refresh_night_glow(shape)
 	print("patch_city: painted %s — %d buildings"
 		% [plan.patch_name, fabric.get("lots", []).size()])
 
@@ -3060,6 +3244,8 @@ func _assign_paint_styles() -> void:
 				_paint_variant_lot(row, rng)
 				if int(row.get("typology", 0)) >= TYPE_APARTMENT:
 					_paint_midrise_night(row, rng)
+				else:
+					_paint_house_night(row, rng)
 	_ensure_sky_paint(rng)
 
 
@@ -3088,19 +3274,32 @@ func _paint_sky_lot(row: Dictionary, style: int, rng: RandomNumberGenerator) -> 
 	row["paint_glass"] = _sky_paint_glass(family)
 	var neons := _sky_paint_neons(family)
 	var pick := rng.randi() % neons.size()
-	row["paint_neon"] = neons[pick]
-	row["paint_neon_alt"] = neons[(pick + 1 + rng.randi() % maxi(neons.size() - 1, 1)) % neons.size()]
+	row["paint_neon"] = _saturate_neon(neons[pick])
+	row["paint_neon_alt"] = _saturate_neon(
+		neons[(pick + 1 + rng.randi() % maxi(neons.size() - 1, 1)) % neons.size()])
 	row["night_trim"] = true
 	row["night_crown"] = rng.randf() < 0.62
 
 
-func _paint_midrise_night(row: Dictionary, rng: RandomNumberGenerator) -> void:
-	var family := PAINT_SKY_DARK + rng.randi() % 4
-	var neons := _sky_paint_neons(family)
+func _paint_house_night(row: Dictionary, rng: RandomNumberGenerator) -> void:
+	if rng.randf() >= 0.16:
+		return
+	var neons := _warm_neons()
 	var pick := rng.randi() % neons.size()
 	row["paint_neon"] = neons[pick]
-	row["paint_neon_alt"] = neons[(pick + 1 + rng.randi() % maxi(neons.size() - 1, 1)) % neons.size()]
-	row["night_trim"] = rng.randf() < 0.58
+	row["paint_neon_alt"] = neons[(pick + 1) % neons.size()]
+	row["night_trim"] = true
+	row["night_crown"] = false
+
+
+func _paint_midrise_night(row: Dictionary, rng: RandomNumberGenerator) -> void:
+	if rng.randf() >= 0.28:
+		return
+	var neons := _warm_neons()
+	var pick := rng.randi() % neons.size()
+	row["paint_neon"] = neons[pick]
+	row["paint_neon_alt"] = neons[(pick + 1) % neons.size()]
+	row["night_trim"] = true
 	row["night_crown"] = false
 
 
@@ -3180,27 +3379,42 @@ func _sky_paint_neons(style: int) -> Array:
 	match style:
 		PAINT_SKY_SILVER:
 			return [
-				Color(0.18, 0.92, 1.0),
-				Color(0.28, 0.52, 1.0),
-				Color(0.12, 0.78, 0.92),
+				Color(0.05, 0.95, 1.0),
+				Color(0.12, 0.42, 1.0),
+				Color(0.02, 0.82, 1.0),
 			]
 		PAINT_SKY_COPPER:
 			return [
-				Color(0.32, 1.0, 0.42),
-				Color(0.12, 0.92, 0.72),
-				Color(0.72, 1.0, 0.28),
+				Color(0.12, 1.0, 0.28),
+				Color(0.02, 1.0, 0.68),
+				Color(0.72, 1.0, 0.08),
 			]
 		PAINT_SKY_ORANGE:
 			return [
-				Color(1.0, 0.52, 0.10),
-				Color(1.0, 0.22, 0.28),
-				Color(1.0, 0.78, 0.16),
+				Color(1.0, 0.38, 0.04),
+				Color(1.0, 0.12, 0.22),
+				Color(1.0, 0.72, 0.06),
 			]
 	return [
-		Color(1.0, 0.18, 0.72),
-		Color(0.68, 0.22, 1.0),
-		Color(0.28, 0.48, 1.0),
+		Color(1.0, 0.06, 0.72),
+		Color(0.72, 0.04, 1.0),
+		Color(0.12, 0.28, 1.0),
 	]
+
+
+func _warm_neons() -> Array:
+	return [
+		Color(1.0, 0.38, 0.05),
+		Color(1.0, 0.48, 0.07),
+		Color(1.0, 0.28, 0.04),
+	]
+
+
+func _saturate_neon(colour: Color) -> Color:
+	var peak := maxf(colour.r, maxf(colour.g, colour.b))
+	if peak < 0.08:
+		return colour
+	return Color(colour.r / peak, colour.g / peak, colour.b / peak, 1.0)
 
 
 func _bake_wall_shade() -> void:
@@ -3509,6 +3723,7 @@ func _remap_pavement_map() -> void:
 			continue
 		var at: Vector2i = key
 		_emit_mapped_cell(st, at, cell)
+		_emit_mapped_steps(st, at, cell)
 	var mesh := st.commit()
 	if mesh.get_surface_count() == 0:
 		return
@@ -3545,6 +3760,59 @@ func _emit_mapped_cell(st: SurfaceTool, at: Vector2i, cell: float) -> void:
 			(uv.x - _ground_origin.x) / _ground_span.x,
 			(uv.y - _ground_origin.y) / _ground_span.y)
 	_face_uv(st, pts[0], pts[1], pts[2], pts[3], uvs[0], uvs[1], uvs[2], uvs[3], pts[0])
+
+
+func _city_map_uv(uv: Vector2) -> Vector2:
+	if _ground_span.x < 0.1 or _ground_span.y < 0.1:
+		return Vector2.ZERO
+	return Vector2(
+		(uv.x - _ground_origin.x) / _ground_span.x,
+		(uv.y - _ground_origin.y) / _ground_span.y)
+
+
+func _emit_mapped_steps(st: SurfaceTool, at: Vector2i, cell: float) -> void:
+	# Terrace neighbours sit at a different pad height. The painted remap
+	# used to emit lids only, so those drops were holes and the planet
+	# showed through as missing squares. The high cell owns the riser.
+	var top_h := float(_pad_tops[at]) + PAVEMENT_LIFT
+	var corners := _cell_corners(at, cell)
+	var dirs: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	]
+	var edge_a: PackedInt32Array = PackedInt32Array([1, 3, 2, 0])
+	var edge_b: PackedInt32Array = PackedInt32Array([2, 0, 3, 1])
+	for index in 4:
+		var other: Vector2i = at + dirs[index]
+		if not _pad_tops.has(other) or _pavement_holes.has(other):
+			continue
+		var bot_h := float(_pad_tops[other]) + PAVEMENT_LIFT
+		if bot_h >= top_h - 0.04:
+			continue
+		_emit_mapped_riser(
+			st, corners[edge_a[index]], corners[edge_b[index]], top_h, bot_h)
+
+
+func _emit_mapped_riser(
+		st: SurfaceTool,
+		uv_a: Vector2,
+		uv_b: Vector2,
+		top_h: float,
+		bot_h: float
+	) -> void:
+	var da := _from_uv(uv_a).normalized()
+	var db := _from_uv(uv_b).normalized()
+	if da.length_squared() < 0.01 or db.length_squared() < 0.01:
+		return
+	var ta := da * (_radius + top_h)
+	var tb := db * (_radius + top_h)
+	var ba := da * (_radius + bot_h)
+	var bb := db * (_radius + bot_h)
+	var ua := _city_map_uv(uv_a)
+	var ub := _city_map_uv(uv_b)
+	var outward: Vector3 = (tb - ta).cross(ta - ba)
+	if outward.length_squared() < 0.0001:
+		outward = (ta + tb) * 0.5
+	_face_uv(st, ta, tb, bb, ba, ua, ub, ub, ua, outward)
 
 
 func _ground_map_color(uv: Vector2) -> Color:
@@ -3659,6 +3927,7 @@ func _lot_facade_rings(lot: Dictionary) -> Array:
 			"height": body,
 			"door": true,
 			"bury": true,
+			"round": variant == VARIANT_CYLINDER or _poly_is_round(poly),
 		})
 	if variant != VARIANT_CYL_HALF and variant != VARIANT_RECT_CAP:
 		return rings
@@ -3676,7 +3945,8 @@ func _lot_facade_rings(lot: Dictionary) -> Array:
 			"lift": body,
 			"height": cap_h,
 			"door": false,
-			"bury": false,
+			"bury": true,
+			"round": true,
 		})
 	return rings
 
@@ -3759,18 +4029,21 @@ func _dress_lot_facade(
 	var win_h := 2.15 if large else 1.45
 	var door_w := 2.7 if large else 1.2
 	var door_h := 3.4 if large else 2.4
-	var blockers := _lot_wall_polys(lot)
-	for ring in _lot_facade_rings(lot):
+	var rings: Array = _lot_facade_rings(lot)
+	for ring in rings:
 		var row: Dictionary = ring
 		var poly: PackedVector2Array = row["poly"]
 		var lift := float(row["lift"])
 		var wall_h := float(row["height"])
 		if poly.size() < 3 or wall_h < 2.2 or not _poly_building_ok(poly):
 			continue
+		var round_part := bool(row.get("round", false)) or _poly_is_round(poly)
+		var part_pitch := 1.35 if round_part else pitch
+		var part_win_w := 0.82 if round_part else win_w
 		_dress_poly_facade(
 			hull, glass, shape, lot, poly, lift, wall_h, large, bool(row["door"]),
-			bool(row.get("bury", true)), blockers, road_at, trim, door, glass_col,
-			pitch, win_w, win_h, door_w, door_h)
+			bool(row.get("bury", true)), rings, road_at, trim, door, glass_col,
+			part_pitch, part_win_w, win_h, door_w, door_h, lift, wall_h)
 
 
 func _dress_poly_facade(
@@ -3793,7 +4066,9 @@ func _dress_poly_facade(
 		win_w: float,
 		win_h: float,
 		door_w: float,
-		door_h: float
+		door_h: float,
+		self_lift: float = 0.0,
+		self_h: float = 99.0
 	) -> void:
 	var mid := _poly_mid(poly)
 	var door_edge := _door_edge(poly, mid, road_at) if want_door else -1
@@ -3810,15 +4085,15 @@ func _dress_poly_facade(
 		var out2 := Vector2(-along.y, along.x)
 		if (mid - (a + b) * 0.5).dot(out2) > 0.0:
 			out2 = -out2
-		if bury and _edge_buried(a, b, out2, poly, blockers):
+		if bury and _edge_buried(a, b, out2, poly, blockers, self_lift, self_h):
 			continue
 		var up_a := _from_uv(a).normalized()
 		var up_b := _from_uv(b).normalized()
-		var base_a := _deck_mark(shape, up_a, STREET_LIFT)
-		var base_b := _deck_mark(shape, up_b, STREET_LIFT)
+		var base_a := _lot_deck_mark(shape, lot, a)
+		var base_b := _lot_deck_mark(shape, lot, b)
 		var up_mid := up_a.lerp(up_b, 0.5).normalized()
 		var out3 := (base_b - base_a).cross(up_mid).normalized()
-		var inward := _deck_mark(shape, _from_uv(mid).normalized(), STREET_LIFT)
+		var inward := _lot_deck_mark(shape, lot, mid)
 		var edge_pt := base_a.lerp(base_b, 0.5)
 		if out3.dot(inward - edge_pt) > 0.0:
 			out3 = -out3
@@ -3857,14 +4132,15 @@ func _dress_poly_facade(
 
 
 func _lot_neon_trim(lot: Dictionary, large: bool) -> Color:
-	var typology := int(lot.get("typology", 0))
-	if not large and typology < TYPE_APARTMENT:
-		return Color(0, 0, 0, 0)
 	if not bool(lot.get("night_crown", false)) and not bool(lot.get("night_trim", false)):
 		return Color(0, 0, 0, 0)
 	var neon: Color = lot.get("paint_neon", Color(0, 0, 0, 0))
 	if neon.r + neon.g + neon.b < 0.45:
 		return Color(0, 0, 0, 0)
+	if not large and int(lot.get("typology", 0)) < TYPE_TOWER:
+		neon = _saturate_neon(Color(1.0, clampf(neon.g, 0.28, 0.52), clampf(neon.b, 0.04, 0.12)))
+	else:
+		neon = _saturate_neon(neon)
 	neon.a = float(PAINT_NEON) / 20.0
 	return neon
 
@@ -3930,14 +4206,15 @@ func _lit_window_color(
 		_glass_col: Color
 	) -> Color:
 	var centre: Vector2 = lot.get("centre", Vector2.ZERO)
-	var typology := int(lot.get("typology", 0))
-	if not large and typology < TYPE_APARTMENT:
-		# Houses and walk-ups: occupied rooms glow warm orange.
+	if not large:
+		# Houses, shops and walk-ups stay warm. A rare neon sign is still amber.
 		var house := _hash21(centre + Vector2(
 			float(story) * 2.11 + float(edge) * 0.37,
 			float(bay) * 4.07))
 		if house < 0.18:
 			return Color(0.22, 0.16, 0.10)
+		if bool(lot.get("night_trim", false)) and house > 0.78:
+			return Color(1.0, 0.32, 0.04)
 		if house < 0.34:
 			return Color(1.0, 0.42, 0.06)
 		return Color(1.0, 0.50, 0.08)
@@ -3949,13 +4226,11 @@ func _lit_window_color(
 	if roll < 0.22:
 		return Color(1.0, 0.58, 0.16)
 	if roll < 0.52:
-		var neon: Color = lot.get("paint_neon", Color(1.0, 0.18, 0.72))
-		neon.a = 1.0
-		return neon
+		var neon: Color = lot.get("paint_neon", Color(1.0, 0.06, 0.72))
+		return _saturate_neon(neon)
 	if roll < 0.78:
-		var alt: Color = lot.get("paint_neon_alt", Color(0.18, 0.92, 1.0))
-		alt.a = 1.0
-		return alt
+		var alt: Color = lot.get("paint_neon_alt", Color(0.05, 0.95, 1.0))
+		return _saturate_neon(alt)
 	var extra := _extra_neon_color(roll)
 	extra.a = 1.0
 	return extra
@@ -3963,13 +4238,13 @@ func _lit_window_color(
 
 func _extra_neon_color(roll: float) -> Color:
 	var pal: Array = [
-		Color(1.0, 0.18, 0.72),
-		Color(0.18, 0.92, 1.0),
-		Color(0.68, 0.22, 1.0),
-		Color(0.32, 1.0, 0.42),
-		Color(1.0, 0.52, 0.10),
+		Color(1.0, 0.06, 0.72),
+		Color(0.05, 0.95, 1.0),
+		Color(0.72, 0.04, 1.0),
+		Color(0.12, 1.0, 0.28),
+		Color(1.0, 0.38, 0.04),
 	]
-	return pal[int(floor(roll * 80.0)) % pal.size()]
+	return _saturate_neon(pal[int(floor(roll * 80.0)) % pal.size()])
 
 
 func _door_edge(poly: PackedVector2Array, mid: Vector2, road_at: Vector2) -> int:
@@ -4002,7 +4277,9 @@ func _edge_buried(
 		b: Vector2,
 		out2: Vector2,
 		self_poly: PackedVector2Array,
-		blockers: Array
+		blockers: Array,
+		self_lift: float = 0.0,
+		self_h: float = 99.0
 	) -> bool:
 	var probe: Vector2 = (a + b) * 0.5 + out2 * 0.65
 	var self_ring := _poly_ccw(self_poly)
@@ -4010,8 +4287,19 @@ func _edge_buried(
 		return true
 	var home := _poly_mid(self_poly)
 	for item in blockers:
-		var other: PackedVector2Array = item
+		var other := PackedVector2Array()
+		var o_lift := 0.0
+		var o_h := 99.0
+		if item is Dictionary:
+			var row: Dictionary = item
+			other = PackedVector2Array(row.get("poly", PackedVector2Array()))
+			o_lift = float(row.get("lift", 0.0))
+			o_h = float(row.get("height", 99.0))
+		else:
+			other = PackedVector2Array(item)
 		if other.size() < 3:
+			continue
+		if o_lift + o_h < self_lift + 0.35 or self_lift + self_h < o_lift + 0.35:
 			continue
 		var ring := _poly_ccw(other)
 		if ring.size() < 3:
@@ -4135,18 +4423,18 @@ func window_material_for(large: bool) -> ShaderMaterial:
 func _ensure_wall_materials() -> void:
 	if _wall_small_mat == null:
 		_wall_small_mat = ShaderMaterial.new()
-		_wall_small_mat.shader = WALL_SHADER
 		_wall_small_mat.set_shader_parameter(&"roughness_val", 0.88)
 		_wall_small_mat.set_shader_parameter(&"metallic_val", 0.05)
 		_wall_small_mat.set_shader_parameter(&"night", 0.0)
 		_wall_small_mat.set_shader_parameter(&"use_paint", 0.0)
+	_wall_small_mat.shader = WALL_SHADER
 	if _wall_large_mat == null:
 		_wall_large_mat = ShaderMaterial.new()
-		_wall_large_mat.shader = WALL_SHADER
 		_wall_large_mat.set_shader_parameter(&"roughness_val", 0.52)
 		_wall_large_mat.set_shader_parameter(&"metallic_val", 0.08)
 		_wall_large_mat.set_shader_parameter(&"night", 0.0)
 		_wall_large_mat.set_shader_parameter(&"use_paint", 0.0)
+	_wall_large_mat.shader = WALL_SHADER
 
 
 func _ensure_window_materials() -> void:
@@ -4156,14 +4444,16 @@ func _ensure_window_materials() -> void:
 		_window_small_mat.set_shader_parameter(&"night", 0.0)
 	_window_small_mat.shader = WINDOW_SHADER
 	_window_small_mat.set_shader_parameter(
-		&"fallback_glow", Color(1.0, 0.52, 0.16))
+		&"fallback_glow", Color(1.0, 0.42, 0.06))
+	_window_small_mat.set_shader_parameter(&"warm_only", 1.0)
 	if _window_large_mat == null:
 		_window_large_mat = ShaderMaterial.new()
 		_window_large_mat.shader = WINDOW_SHADER
 		_window_large_mat.set_shader_parameter(&"night", 0.0)
 	_window_large_mat.shader = WINDOW_SHADER
 	_window_large_mat.set_shader_parameter(
-		&"fallback_glow", Color(1.0, 0.28, 0.72))
+		&"fallback_glow", Color(1.0, 0.06, 0.78))
+	_window_large_mat.set_shader_parameter(&"warm_only", 0.0)
 
 
 func _make_paint_hook(mesh_name: String, large: bool) -> MeshInstance3D:
@@ -4210,6 +4500,47 @@ func destructible_buildings() -> Array:
 	return _buildings
 
 
+func building_count() -> int:
+	var total := 0
+	for building in _buildings:
+		if is_instance_valid(building):
+			total += 1
+	return total
+
+
+func wrecked_building_count() -> int:
+	var wrecked := 0
+	for building in _buildings:
+		if is_instance_valid(building) and building.has_method(&"is_wrecked") \
+				and bool(building.call(&"is_wrecked")):
+			wrecked += 1
+	return wrecked
+
+
+func destruction_ratio() -> float:
+	return CrawlerRules.destruction_ratio(wrecked_building_count(), building_count())
+
+
+func is_destroyed() -> bool:
+	return _siege_destroyed or CrawlerRules.is_city_destroyed(
+		wrecked_building_count(), building_count())
+
+
+func refresh_siege_state() -> void:
+	if _siege_destroyed:
+		return
+	if not CrawlerRules.is_city_destroyed(wrecked_building_count(), building_count()):
+		return
+	_siege_destroyed = true
+	siege_destroyed.emit()
+
+
+func note_building_wrecked(building: Node) -> void:
+	if building != null and is_instance_valid(building):
+		building_wrecked.emit(building)
+	refresh_siege_state()
+
+
 func apply_damage(hit: DamageHit) -> float:
 	if hit == null or _buildings.is_empty():
 		return 0.0
@@ -4222,11 +4553,18 @@ func apply_damage(hit: DamageHit) -> float:
 		return 0.0
 	var absorbed := 0.0
 	for building in _buildings:
-		if is_instance_valid(building):
-			var lost: float = float(building.apply_hit(hit))
-			absorbed += lost
-			if lost > 0.0:
-				_report_building_hit(building, lost, hit)
+		if not is_instance_valid(building):
+			continue
+		var was_wrecked: bool = building.has_method(&"is_wrecked") \
+			and bool(building.call(&"is_wrecked"))
+		var lost: float = float(building.apply_hit(hit))
+		absorbed += lost
+		if lost > 0.0:
+			_report_building_hit(building, lost, hit)
+		if not was_wrecked and building.has_method(&"is_wrecked") \
+				and bool(building.call(&"is_wrecked")):
+			note_building_wrecked(building)
+	refresh_siege_state()
 	return absorbed
 
 
@@ -4715,10 +5053,12 @@ func _bind_apron_material() -> void:
 	if not is_instance_valid(_apron):
 		_apron_mat = null
 		return
-	# Planet ground photographs, not the homemade apron card. That shader
-	# culls back faces, so the mesh writes both windings; this only swaps
-	# the default StandardMaterial for the terrain look.
+	# Same photographs as the planet. The apron wrapper disables cull so a
+	# steep skirt is still there from downhill, and lifts the sheet so
+	# chunk interpolation cannot bury it.
 	_apron_mat = SURFACE_MATERIAL.duplicate() as ShaderMaterial
+	_apron_mat.shader = APRON_SHADER
+	_apron_mat.set_shader_parameter(&"ground_lift", APRON_SHADER_LIFT)
 	_apron_mat.render_priority = 1
 	_apron.material_override = _apron_mat
 	_apron.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
@@ -4733,31 +5073,63 @@ func _bake_lamp_map() -> void:
 	var size := clampi(int(round(span_m / 1.15)), 256, LAMP_MAP_MAX)
 	var img := Image.create(size, size, false, Image.FORMAT_RGB8)
 	img.fill(Color.BLACK)
-	var radius_px := maxi(int(ceili(LAMP_POOL_M / span_m * float(size))), 4)
+	for index in _lamp_uvs.size():
+		var colour := LAMP_AMBER
+		if index < _lamp_cols.size():
+			colour = _lamp_cols[index]
+		var street := index < _street_lamp_count
+		var reach := LAMP_POOL_M
+		var strength := 0.40
+		if street:
+			reach = LAMP_POOL_M
+			strength = 0.40
+		elif _spectrum_neon(colour):
+			reach = NEON_POOL_M
+			strength = 0.74
+		else:
+			reach = LAMP_POOL_M * 1.05
+			strength = 0.56
+		_stamp_glow(img, size, _lamp_uvs[index], colour, reach, strength)
+	img.generate_mipmaps()
+	_lamp_map = ImageTexture.create_from_image(img)
+
+
+func _stamp_glow(
+		img: Image,
+		size: int,
+		uv: Vector2,
+		colour: Color,
+		radius_m: float,
+		strength: float
+	) -> void:
+	var span_m := maxf(_ground_span.x, _ground_span.y)
+	var radius_px := maxi(int(ceili(radius_m / span_m * float(size))), 4)
 	var inner := float(radius_px) * 0.42
 	var edge := 1.0 / (1.0 + (float(radius_px) / inner) * (float(radius_px) / inner))
 	var peak := 1.0 - edge
-	for uv in _lamp_uvs:
-		var cx := (uv.x - _ground_origin.x) / _ground_span.x * float(size)
-		var cy := (uv.y - _ground_origin.y) / _ground_span.y * float(size)
-		var x0 := clampi(int(floor(cx)) - radius_px, 0, size - 1)
-		var x1 := clampi(int(ceil(cx)) + radius_px, 0, size - 1)
-		var y0 := clampi(int(floor(cy)) - radius_px, 0, size - 1)
-		var y1 := clampi(int(ceil(cy)) + radius_px, 0, size - 1)
-		for py in range(y0, y1 + 1):
-			for px in range(x0, x1 + 1):
-				var dx := float(px) + 0.5 - cx
-				var dy := float(py) + 0.5 - cy
-				var dist := sqrt(dx * dx + dy * dy)
-				if dist >= float(radius_px):
-					continue
-				var raw := 1.0 / (1.0 + (dist / inner) * (dist / inner))
-				var fall := (raw - edge) / maxf(peak, 0.001) * 0.38
-				var was := img.get_pixel(px, py)
-				var amount := minf(was.r + fall, 0.72)
-				img.set_pixel(px, py, Color(amount, amount, amount))
-	img.generate_mipmaps()
-	_lamp_map = ImageTexture.create_from_image(img)
+	var cx := (uv.x - _ground_origin.x) / _ground_span.x * float(size)
+	var cy := (uv.y - _ground_origin.y) / _ground_span.y * float(size)
+	var x0 := clampi(int(floor(cx)) - radius_px, 0, size - 1)
+	var x1 := clampi(int(ceil(cx)) + radius_px, 0, size - 1)
+	var y0 := clampi(int(floor(cy)) - radius_px, 0, size - 1)
+	var y1 := clampi(int(ceil(cy)) + radius_px, 0, size - 1)
+	for py in range(y0, y1 + 1):
+		for px in range(x0, x1 + 1):
+			var dx := float(px) + 0.5 - cx
+			var dy := float(py) + 0.5 - cy
+			var dist := sqrt(dx * dx + dy * dy)
+			if dist >= float(radius_px):
+				continue
+			var raw := 1.0 / (1.0 + (dist / inner) * (dist / inner))
+			var fall := (raw - edge) / maxf(peak, 0.001) * strength
+			var add := Color(colour.r * fall, colour.g * fall, colour.b * fall)
+			var was := img.get_pixel(px, py)
+			var add_l := add.r * 0.30 + add.g * 0.50 + add.b * 0.20
+			var was_l := was.r * 0.30 + was.g * 0.50 + was.b * 0.20
+			# Keep the stronger hue instead of stacking magenta onto cyan
+			# and washing the street white.
+			if add_l > was_l:
+				img.set_pixel(px, py, add)
 
 
 func _bind_lamp_map(material: ShaderMaterial) -> void:
@@ -4897,16 +5269,18 @@ func _place_lamps(shape: PlanetShape) -> void:
 	_lamps = null
 	_lamp_spots = PackedVector3Array()
 	_lamp_uvs = PackedVector2Array()
+	_lamp_cols = PackedColorArray()
+	_street_lamp_count = 0
 	_lamp_map = null
 	_lamp_lights.clear()
 	_lamp_bind = PackedInt32Array()
 	_lamp_bulb_mat = null
 	var posts := _collect_lamp_posts()
 	if posts.is_empty():
+		_ensure_lamp_rig()
+		_fill_lamp_lights()
 		return
-	_lamps = Node3D.new()
-	_lamps.name = "CityLamps"
-	add_child(_lamps)
+	_ensure_lamp_rig()
 	var pole_mesh := CylinderMesh.new()
 	pole_mesh.top_radius = 0.07
 	pole_mesh.bottom_radius = 0.09
@@ -4925,9 +5299,9 @@ func _place_lamps(shape: PlanetShape) -> void:
 	bulb_mesh.radial_segments = 8
 	bulb_mesh.rings = 4
 	_lamp_bulb_mat = StandardMaterial3D.new()
-	_lamp_bulb_mat.albedo_color = Color(1.0, 0.92, 0.72)
+	_lamp_bulb_mat.albedo_color = LAMP_AMBER
 	_lamp_bulb_mat.emission_enabled = true
-	_lamp_bulb_mat.emission = Color(1.0, 0.88, 0.62)
+	_lamp_bulb_mat.emission = LAMP_AMBER
 	_lamp_bulb_mat.emission_energy_multiplier = 0.0
 	var bulbs := MultiMesh.new()
 	bulbs.transform_format = MultiMesh.TRANSFORM_3D
@@ -4953,6 +5327,8 @@ func _place_lamps(shape: PlanetShape) -> void:
 		bulbs.set_instance_transform(index, Transform3D(basis, bulb_at))
 		_lamp_spots.append(bulb_at)
 		_lamp_uvs.append(uv)
+		_lamp_cols.append(LAMP_AMBER)
+	_street_lamp_count = _lamp_spots.size()
 	var pole_inst := MultiMeshInstance3D.new()
 	pole_inst.name = "Poles"
 	pole_inst.multimesh = poles
@@ -4963,20 +5339,7 @@ func _place_lamps(shape: PlanetShape) -> void:
 	bulb_inst.multimesh = bulbs
 	bulb_inst.material_override = _lamp_bulb_mat
 	_lamps.add_child(bulb_inst)
-	_lamp_bind.resize(LAMP_LIGHTS)
-	_lamp_bind.fill(-1)
-	for _i in LAMP_LIGHTS:
-		var light := OmniLight3D.new()
-		light.light_color = Color(1.0, 0.86, 0.62)
-		light.light_energy = 0.0
-		light.omni_range = 30.0
-		light.omni_attenuation = 1.7
-		light.light_size = 0.85
-		light.light_specular = 0.0
-		light.shadow_enabled = false
-		light.light_cull_mask = LAMP_LIGHT_MASK
-		_lamps.add_child(light)
-		_lamp_lights.append(light)
+	_fill_lamp_lights()
 	if _ground_image != null:
 		_bake_lamp_map()
 		if _pavement_mat != null:
@@ -4987,6 +5350,101 @@ func _place_lamps(shape: PlanetShape) -> void:
 				_pavement_mat = paved
 				_bind_lamp_map(paved)
 	_bind_wall_lamp_maps()
+
+
+func _ensure_lamp_rig() -> void:
+	if is_instance_valid(_lamps):
+		return
+	_lamps = Node3D.new()
+	_lamps.name = "CityLamps"
+	add_child(_lamps)
+
+
+func _fill_lamp_lights() -> void:
+	_ensure_lamp_rig()
+	if not _lamp_lights.is_empty():
+		return
+	_lamp_bind.resize(LAMP_LIGHTS)
+	_lamp_bind.fill(-1)
+	for _i in LAMP_LIGHTS:
+		var light := OmniLight3D.new()
+		light.light_color = LAMP_AMBER
+		light.light_energy = 0.0
+		light.omni_range = 30.0
+		light.omni_attenuation = 1.7
+		light.light_size = 0.85
+		light.light_specular = 0.0
+		light.shadow_enabled = false
+		light.light_cull_mask = LAMP_LIGHT_MASK
+		_lamps.add_child(light)
+		_lamp_lights.append(light)
+
+
+func _refresh_night_glow(shape: PlanetShape) -> void:
+	if shape == null:
+		return
+	var keep := clampi(_street_lamp_count, 0, _lamp_spots.size())
+	_lamp_spots.resize(keep)
+	_lamp_uvs.resize(keep)
+	_lamp_cols.resize(keep)
+	_collect_neon_lamp_spots(shape)
+	_fill_lamp_lights()
+	if _ground_image != null and not _lamp_uvs.is_empty():
+		_bake_lamp_map()
+		if _pavement_mat != null:
+			_bind_lamp_map(_pavement_mat)
+		elif is_instance_valid(_pavement):
+			var paved := _pavement.material_override as ShaderMaterial
+			if paved != null:
+				_pavement_mat = paved
+				_bind_lamp_map(paved)
+	_bind_wall_lamp_maps()
+
+
+func _collect_neon_lamp_spots(shape: PlanetShape) -> void:
+	for lot in fabric.get("lots", []):
+		var row: Dictionary = lot
+		if not _lot_on_slab(row):
+			continue
+		var typology := int(row.get("typology", 0))
+		var large := typology >= TYPE_TOWER or bool(row.get("mega", false))
+		var trim := bool(row.get("night_trim", false)) or bool(row.get("night_crown", false))
+		var neon: Color = row.get("paint_neon", Color(0, 0, 0, 0))
+		if not large and not trim:
+			# Houses without a painted sign still get a rare amber pool so
+			# J cities pick up the same density without a remesh.
+			if typology >= TYPE_APARTMENT:
+				continue
+			var seed: Vector2 = row.get("centre", Vector2.ZERO)
+			if _hash21(seed * Vector2(1.17, 0.91)) >= 0.16:
+				continue
+			neon = Color(1.0, 0.38, 0.05)
+		elif neon.r + neon.g + neon.b < 0.45:
+			if large:
+				neon = Color(1.0, 0.06, 0.72)
+			else:
+				continue
+		if large:
+			neon = _saturate_neon(neon)
+		else:
+			neon = _saturate_neon(Color(1.0, clampf(neon.g, 0.28, 0.52), clampf(neon.b, 0.04, 0.12)))
+		var stories := maxf(float(row.get("stories", 2.0)), 2.0)
+		var lift := 3.4 + minf(stories * 3.15 * 0.42, 8.5)
+		if large:
+			lift = 5.2 + minf(stories * 3.15 * 0.38, 18.0)
+		var uv: Vector2 = row.get("centre", Vector2.ZERO)
+		var at := _lot_deck_mark(shape, row, uv, lift)
+		_lamp_spots.append(at)
+		_lamp_uvs.append(uv)
+		_lamp_cols.append(neon)
+
+
+func _spectrum_neon(colour: Color) -> bool:
+	var sat := maxf(colour.r, maxf(colour.g, colour.b)) - minf(colour.r, minf(colour.g, colour.b))
+	if sat < 0.28:
+		return false
+	var warm := colour.r > 0.82 and colour.g < 0.58 and colour.b < 0.22
+	return not warm
 
 
 func _collect_lamp_posts() -> Array:
@@ -5086,10 +5544,17 @@ func _night_at(world: Vector3) -> float:
 func _process(delta: float) -> void:
 	if phase < PHASE_BUILT:
 		return
+	var cam := get_viewport().get_camera_3d() if is_inside_tree() else null
+	var eye := cam.global_position if cam != null \
+		else (global_position if is_inside_tree() else Vector3.ZERO)
+	_set_buildings_rendered(buildings_visible_from(eye))
+	if not _buildings_rendered:
+		return
 	var origin := global_transform * (_up * _radius) if is_inside_tree() else _up * _radius
 	var night := _night_at(origin)
 	if _lamp_bulb_mat != null:
 		_lamp_bulb_mat.emission_energy_multiplier = night * 6.4
+	if not _lamp_lights.is_empty():
 		_retarget_lamp_lights(night, delta)
 	_apply_city_night(night)
 	if phase >= PHASE_PAINTED:
@@ -5105,6 +5570,25 @@ func _process(delta: float) -> void:
 			if building != null and is_instance_valid(building) \
 					and building.has_method(&"set_night"):
 				building.call(&"set_night", night)
+
+
+func _set_buildings_rendered(on: bool) -> void:
+	if _buildings_rendered == on:
+		return
+	_buildings_rendered = on
+	if is_instance_valid(_lot_root):
+		_lot_root.visible = on
+	for node_variant in [
+		_paint_small, _paint_large, _windows_small, _windows_large,
+		_solid_buildings, _fabric_buildings, _lamps
+	]:
+		var node := node_variant as Node3D
+		if is_instance_valid(node):
+			node.visible = on
+	for building in _buildings:
+		if building != null and is_instance_valid(building) \
+				and building.has_method(&"set_collision_enabled"):
+			building.call(&"set_collision_enabled", on)
 
 
 func _retarget_lamp_lights(night: float, delta: float = 0.016) -> void:
@@ -5129,13 +5613,14 @@ func _retarget_lamp_lights(night: float, delta: float = 0.016) -> void:
 	for index in _lamp_spots.size():
 		var dist := _lamp_spots[index].distance_squared_to(eye_local)
 		if dist <= seek2:
-			ranked.append({"i": index, "d": dist})
+			ranked.append({"i": index, "d": _lamp_rank_dist(index, dist)})
 	if ranked.size() < mini(_lamp_lights.size(), _lamp_spots.size()):
 		ranked.clear()
 		for index in _lamp_spots.size():
+			var dist := _lamp_spots[index].distance_squared_to(eye_local)
 			ranked.append({
 				"i": index,
-				"d": _lamp_spots[index].distance_squared_to(eye_local),
+				"d": _lamp_rank_dist(index, dist),
 			})
 	ranked.sort_custom(_closer_lamp)
 	var claimed: Dictionary = {}
@@ -5162,7 +5647,6 @@ func _retarget_lamp_lights(night: float, delta: float = 0.016) -> void:
 		_lamp_bind[slot] = pick
 		claimed[pick] = slot
 		next += 1
-	var energy := night * 2.4
 	var step := maxf(delta, 0.0) * LAMP_FADE
 	for slot in _lamp_lights.size():
 		var light := _lamp_lights[slot]
@@ -5173,7 +5657,27 @@ func _retarget_lamp_lights(night: float, delta: float = 0.016) -> void:
 		if light.position.distance_squared_to(_lamp_spots[lamp_i]) > 0.25:
 			light.light_energy = 0.0
 		light.position = _lamp_spots[lamp_i]
+		var colour := LAMP_AMBER
+		if lamp_i < _lamp_cols.size():
+			colour = _lamp_cols[lamp_i]
+		light.light_color = colour
+		var energy := night * 2.8
+		var reach := 30.0
+		if lamp_i >= _street_lamp_count:
+			if _spectrum_neon(colour):
+				energy = night * 4.2
+				reach = 40.0
+			else:
+				energy = night * 3.2
+				reach = 28.0
+		light.omni_range = reach
 		light.light_energy = move_toward(light.light_energy, energy, step)
+
+
+func _lamp_rank_dist(index: int, dist: float) -> float:
+	if index >= _street_lamp_count:
+		return dist * 0.58
+	return dist
 
 
 func _closer_lamp(p: Dictionary, q: Dictionary) -> bool:
@@ -5458,6 +5962,7 @@ func _lot_on_slab(lot: Dictionary) -> bool:
 	var centre_key := Vector2i(roundi(centre.x / _pad_cell), roundi(centre.y / _pad_cell))
 	if not _pad_tops.has(centre_key):
 		return false
+	var home := float(_pad_tops[centre_key])
 	var spots: Array = [centre]
 	for piece in lot.get("footprints", []):
 		var poly: PackedVector2Array = piece
@@ -5466,8 +5971,13 @@ func _lot_on_slab(lot: Dictionary) -> bool:
 	var hits := 0
 	for uv in spots:
 		var key := Vector2i(roundi(uv.x / _pad_cell), roundi(uv.y / _pad_cell))
-		if _pad_tops.has(key):
-			hits += 1
+		if not _pad_tops.has(key):
+			continue
+		hits += 1
+		# A higher terrace under a corner used to stretch the hull up the
+		# slope. Keep the lot only when every on-pad sample is this slab.
+		if float(_pad_tops[key]) > home + 0.45:
+			return false
 	return hits * 2 >= spots.size()
 
 
@@ -5651,12 +6161,12 @@ func _emit_lot_box(st: SurfaceTool, shape: PlanetShape, lot: Dictionary, solid: 
 	if variant == VARIANT_CYLINDER:
 		var cylinder := _lot_cylinder_uv(lot)
 		if _poly_building_ok(cylinder):
-			_emit_lot_prism(st, shape, cylinder, rise, colour, solid, 0.0, true, jagged)
+			_emit_lot_prism(st, shape, cylinder, rise, colour, solid, 0.0, true, jagged, lot)
 		return
 	if variant == VARIANT_ROUND_END:
 		var round_end := _lot_round_end_uv(lot)
 		if _poly_building_ok(round_end):
-			_emit_lot_prism(st, shape, round_end, rise, colour, solid, 0.0, true, jagged)
+			_emit_lot_prism(st, shape, round_end, rise, colour, solid, 0.0, true, jagged, lot)
 		return
 	var footprints: Array = lot.get("footprints", [])
 	for piece in footprints:
@@ -5678,38 +6188,38 @@ func _emit_lot_variant(
 		jagged: bool = false
 	) -> void:
 	if jagged:
-		_emit_lot_prism(st, shape, poly, rise, colour, solid, 0.0, true, true)
+		_emit_lot_prism(st, shape, poly, rise, colour, solid, 0.0, true, true, lot)
 		return
 	match variant:
 		VARIANT_RECT_CAP:
 			var body := rise * _lot_body_frac(variant)
-			_emit_lot_prism(st, shape, poly, body, colour, solid)
+			_emit_lot_prism(st, shape, poly, body, colour, solid, 0.0, true, false, lot)
 			_emit_lot_prism(
 				st, shape, _lot_cap_cylinder_uv(lot, poly, _lot_cap_scale(variant)),
-				rise - body, colour, solid, body, false)
+				rise - body, colour, solid, body, false, false, lot)
 		VARIANT_GABLE:
 			var body := rise * _lot_body_frac(variant)
-			_emit_lot_prism(st, shape, poly, body, colour, solid)
+			_emit_lot_prism(st, shape, poly, body, colour, solid, 0.0, true, false, lot)
 			_emit_peak_cap(st, shape, lot, poly, body, rise - body, Vector2.ZERO, colour, solid)
 		VARIANT_TAPER:
 			_emit_taper_tower(st, shape, lot, poly, rise, colour, solid)
 		VARIANT_POINT_HALF:
 			var body := rise * _lot_body_frac(variant)
-			_emit_lot_prism(st, shape, poly, body, colour, solid)
+			_emit_lot_prism(st, shape, poly, body, colour, solid, 0.0, true, false, lot)
 			_emit_peak_cap(st, shape, lot, poly, body, rise - body, Vector2.ZERO, colour, solid)
 		VARIANT_SLANT_HALF:
 			var body := rise * _lot_body_frac(variant)
-			_emit_lot_prism(st, shape, poly, body, colour, solid)
+			_emit_lot_prism(st, shape, poly, body, colour, solid, 0.0, true, false, lot)
 			var shift := _lot_across(lot) * (float(lot["depth"]) * 0.14)
 			_emit_peak_cap(st, shape, lot, poly, body, rise - body, shift, colour, solid)
 		VARIANT_CYL_HALF:
 			var body := rise * _lot_body_frac(variant)
-			_emit_lot_prism(st, shape, poly, body, colour, solid)
+			_emit_lot_prism(st, shape, poly, body, colour, solid, 0.0, true, false, lot)
 			_emit_lot_prism(
 				st, shape, _lot_cap_cylinder_uv(lot, poly, _lot_cap_scale(variant)),
-				rise - body, colour, solid, body, false)
+				rise - body, colour, solid, body, false, false, lot)
 		_:
-			_emit_lot_prism(st, shape, poly, rise, colour, solid)
+			_emit_lot_prism(st, shape, poly, rise, colour, solid, 0.0, true, false, lot)
 
 
 func lot_has_design(lot: Dictionary) -> bool:
@@ -5734,6 +6244,7 @@ func _emit_authored_lot(
 	elif bool(lot.get("mega", false)) and not _dressed:
 		colour = Color(0.20, 0.26, 0.38, 1.0)
 	_append_mesh_tinted(st, mesh, _lot_model_xform(shape, lot), colour, solid)
+	_emit_lot_stems(st, shape, lot, colour, solid)
 	return true
 
 
@@ -5752,6 +6263,11 @@ func _dress_authored_neon(
 		lot: Dictionary,
 		large: bool
 	) -> void:
+	# Lot rings are the paved rectangle. Authored hulls that mix a drum
+	# with a box would get a rectangle of neon that misses the cylinder.
+	# Those buildings keep their authored glass instead.
+	if lot_has_design(lot):
+		return
 	var neon := _lot_neon_trim(lot, large)
 	if neon.a <= 0.5:
 		return
@@ -5782,11 +6298,11 @@ func _dress_authored_neon(
 				continue
 			var up_a := _from_uv(a).normalized()
 			var up_b := _from_uv(b).normalized()
-			var base_a := _deck_mark(shape, up_a, STREET_LIFT)
-			var base_b := _deck_mark(shape, up_b, STREET_LIFT)
+			var base_a := _lot_deck_mark(shape, lot, a)
+			var base_b := _lot_deck_mark(shape, lot, b)
 			var up_mid := up_a.lerp(up_b, 0.5).normalized()
 			var out3 := (base_b - base_a).cross(up_mid).normalized()
-			var inward := _deck_mark(shape, _from_uv(mid).normalized(), STREET_LIFT)
+			var inward := _lot_deck_mark(shape, lot, mid)
 			var edge_pt := base_a.lerp(base_b, 0.5)
 			if out3.dot(inward - edge_pt) > 0.0:
 				out3 = -out3
@@ -5806,7 +6322,7 @@ func _lot_model_xform(shape: PlanetShape, lot: Dictionary) -> Transform3D:
 		across = Vector2(-along.y, along.x)
 	across = across.normalized()
 	var up := _from_uv(centre).normalized()
-	var origin := _deck_mark(shape, up, STREET_LIFT)
+	var origin := _lot_deck_mark(shape, lot, centre)
 	var z_axis := (_from_uv(centre + across).normalized() - up)
 	z_axis = (z_axis - up * z_axis.dot(up)).normalized()
 	if z_axis.length_squared() < 0.0001:
@@ -6062,6 +6578,26 @@ func _poly_building_ok(poly: PackedVector2Array) -> bool:
 	return farthest <= radius * 12.0
 
 
+func _poly_is_round(poly: PackedVector2Array) -> bool:
+	if poly.size() < 8:
+		return false
+	var mid := _poly_mid(poly)
+	var radii := PackedFloat32Array()
+	radii.resize(poly.size())
+	var mean := 0.0
+	for index in poly.size():
+		var span := poly[index].distance_to(mid)
+		radii[index] = span
+		mean += span
+	mean /= float(poly.size())
+	if mean < 1.4:
+		return false
+	for span in radii:
+		if absf(span - mean) > mean * 0.18:
+			return false
+	return true
+
+
 func _poly_mid(poly: PackedVector2Array) -> Vector2:
 	var mid := Vector2.ZERO
 	if poly.is_empty():
@@ -6094,7 +6630,8 @@ func _emit_taper_tower(
 		var t := float(index) / float(maxi(floors - 1, 1))
 		var scale := 1.0 - 0.18 * t
 		_emit_lot_prism(
-			st, shape, _scale_poly(poly, scale), story, colour, solid, story * float(index), index == 0)
+			st, shape, _scale_poly(poly, scale), story, colour, solid,
+			story * float(index), index == 0, false, lot)
 
 
 func _peak_cap_height(lot: Dictionary, peak_h: float) -> float:
@@ -6134,10 +6671,13 @@ func _emit_peak_cap(
 	base.resize(ring.size())
 	top.resize(ring.size())
 	for index in ring.size():
-		var up := _from_uv(ring[index]).normalized()
-		base[index] = _deck_mark(shape, up, STREET_LIFT) + up * lift
-		var top_up := _from_uv(top_uv[index]).normalized()
-		top[index] = _deck_mark(shape, top_up, STREET_LIFT) + top_up * (lift + height)
+		base[index] = _lot_deck_mark(shape, lot, ring[index], lift)
+		top[index] = _lot_deck_mark(shape, lot, top_uv[index], lift + height)
+	var mid_uv := Vector2.ZERO
+	for point in ring:
+		mid_uv += point
+	mid_uv /= float(maxi(ring.size(), 1))
+	var inward_pt := _lot_deck_mark(shape, lot, mid_uv, lift + height * 0.45)
 	var indices := Geometry2D.triangulate_polygon(top_uv)
 	if indices.size() < 3:
 		var flipped := PackedVector2Array(top_uv)
@@ -6159,6 +6699,9 @@ func _emit_peak_cap(
 		if ring[index].distance_squared_to(ring[next]) < 0.16:
 			continue
 		var outward: Vector3 = (base[next] - base[index]).cross(top[index] - base[index])
+		var edge_pt := base[index].lerp(base[next], 0.5)
+		if outward.dot(inward_pt - edge_pt) > 0.0:
+			outward = -outward
 		if solid:
 			_face(st, base[index], base[next], top[next], top[index], colour, outward)
 		else:
@@ -6228,7 +6771,8 @@ func _emit_lot_prism(
 		solid: bool = false,
 		lift: float = 0.0,
 		emit_bottom: bool = true,
-		jagged: bool = false
+		jagged: bool = false,
+		lot: Dictionary = {}
 	) -> void:
 	if poly.size() < 3:
 		return
@@ -6249,14 +6793,19 @@ func _emit_lot_prism(
 	top.resize(ring.size())
 	for index in ring.size():
 		var up := _from_uv(ring[index]).normalized()
-		var origin := _deck_mark(shape, up, STREET_LIFT) + up * lift
-		base[index] = origin
+		var origin := _lot_deck_mark(shape, lot, ring[index], lift)
+		base[index] = _lot_stem_foot(shape, lot, ring[index], origin, up, lift)
 		var drop := 0.0
 		if jagged:
 			var n := sin(ring[index].x * 0.37) * 12.9898 + cos(ring[index].y * 0.41) * 78.233
 			var h := fposmod(sin(n) * 43758.5453, 1.0)
 			drop = rise * (0.05 + 0.32 * h)
 		top[index] = origin + up * maxf(rise - drop, rise * 0.42)
+	var mid_uv := Vector2.ZERO
+	for point in ring:
+		mid_uv += point
+	mid_uv /= float(ring.size())
+	var inward_pt := _lot_deck_mark(shape, lot, mid_uv, lift + rise * 0.45)
 	for step in range(0, indices.size(), 3):
 		var a: int = indices[step]
 		var b: int = indices[step + 1]
@@ -6275,6 +6824,9 @@ func _emit_lot_prism(
 		if ring[index].distance_squared_to(ring[next]) < 0.16:
 			continue
 		var outward: Vector3 = (base[next] - base[index]).cross(top[index] - base[index])
+		var edge_pt := base[index].lerp(base[next], 0.5)
+		if outward.dot(inward_pt - edge_pt) > 0.0:
+			outward = -outward
 		if solid:
 			_face(st, base[index], base[next], top[next], top[index], colour, outward)
 		else:
@@ -6372,6 +6924,149 @@ func _commit_ghost(st: SurfaceTool, mesh_name: String) -> MeshInstance3D:
 	instance.sorting_offset = 3.0
 	add_child(instance)
 	return instance
+
+
+func _emit_lot_stems(
+		st: SurfaceTool,
+		shape: PlanetShape,
+		lot: Dictionary,
+		colour: Color,
+		solid: bool
+	) -> void:
+	var footprints: Array = lot.get("footprints", [])
+	if footprints.is_empty():
+		var centre: Vector2 = lot.get("centre", Vector2.ZERO)
+		var along: Vector2 = lot.get("along", Vector2.RIGHT)
+		if along.length_squared() < 0.0001:
+			along = Vector2.RIGHT
+		along = along.normalized()
+		var across := Vector2(-along.y, along.x)
+		var half_w := maxf(float(lot.get("width", 8.0)), 1.6) * 0.5
+		var half_d := maxf(float(lot.get("depth", 8.0)), 1.6) * 0.5
+		footprints = [PackedVector2Array([
+			centre - along * half_w - across * half_d,
+			centre + along * half_w - across * half_d,
+			centre + along * half_w + across * half_d,
+			centre - along * half_w + across * half_d,
+		])]
+	for piece in footprints:
+		var poly: PackedVector2Array = piece
+		if not _poly_building_ok(poly):
+			continue
+		_emit_lot_stem_walls(st, shape, lot, poly, colour, solid)
+
+
+func _emit_lot_stem_walls(
+		st: SurfaceTool,
+		shape: PlanetShape,
+		lot: Dictionary,
+		poly: PackedVector2Array,
+		colour: Color,
+		solid: bool
+	) -> void:
+	var ring := PackedVector2Array(poly)
+	if Geometry2D.is_polygon_clockwise(ring):
+		ring.reverse()
+	var indices := Geometry2D.triangulate_polygon(ring)
+	if indices.size() < 3:
+		ring.reverse()
+		indices = Geometry2D.triangulate_polygon(ring)
+	if indices.size() < 3:
+		return
+	var floor_pts: Array[Vector3] = []
+	var foot_pts: Array[Vector3] = []
+	floor_pts.resize(ring.size())
+	foot_pts.resize(ring.size())
+	var deepest := 0.0
+	for index in ring.size():
+		var up := _from_uv(ring[index]).normalized()
+		var floor_pt := _lot_deck_mark(shape, lot, ring[index], 0.0)
+		var foot_pt := _lot_stem_foot(shape, lot, ring[index], floor_pt, up, 0.0)
+		floor_pts[index] = floor_pt
+		foot_pts[index] = foot_pt
+		deepest = maxf(deepest, floor_pt.distance_to(foot_pt))
+	if deepest < 0.12:
+		return
+	var mid_uv := Vector2.ZERO
+	for point in ring:
+		mid_uv += point
+	mid_uv /= float(ring.size())
+	var inward := _lot_deck_mark(shape, lot, mid_uv, 0.0)
+	for step in range(0, indices.size(), 3):
+		var a: int = indices[step]
+		var b: int = indices[step + 1]
+		var c: int = indices[step + 2]
+		var mid: Vector3 = (foot_pts[a] + foot_pts[b] + foot_pts[c]) / 3.0
+		if solid:
+			_paint_tri(st, foot_pts[a], foot_pts[c], foot_pts[b], colour, -mid)
+		else:
+			_ghost_tri(st, foot_pts[a], foot_pts[c], foot_pts[b], colour, -mid)
+	for index in ring.size():
+		var next := (index + 1) % ring.size()
+		if ring[index].distance_squared_to(ring[next]) < 0.16:
+			continue
+		if floor_pts[index].distance_to(foot_pts[index]) < 0.08 \
+				and floor_pts[next].distance_to(foot_pts[next]) < 0.08:
+			continue
+		var outward: Vector3 = (foot_pts[next] - foot_pts[index]).cross(
+			floor_pts[index] - foot_pts[index])
+		var edge := foot_pts[index].lerp(foot_pts[next], 0.5)
+		if outward.dot(inward - edge) > 0.0:
+			outward = -outward
+		if solid:
+			_face(st, foot_pts[index], foot_pts[next], floor_pts[next], floor_pts[index],
+				colour, outward)
+		else:
+			_ghost_quad(st, foot_pts[index], foot_pts[next], floor_pts[next], floor_pts[index],
+				colour, outward)
+
+
+func _lot_stem_foot(
+		shape: PlanetShape,
+		lot: Dictionary,
+		uv: Vector2,
+		floor_pt: Vector3,
+		up: Vector3,
+		lift: float
+	) -> Vector3:
+	if lift > 0.05:
+		return floor_pt
+	var floor_h := floor_pt.dot(up) - _radius
+	var ground_h := shape.elevation(up, MAP_STEP)
+	var foot_h := minf(floor_h, ground_h) - BUILDING_EMBED
+	return up * (_radius + foot_h)
+
+
+func _lot_slab_h(lot: Dictionary) -> float:
+	# One height for the whole building: the pad cell under the lot centre.
+	# Per-corner `_deck_mark` used to pick a neighbour terrace or the slope
+	# itself and shear the hull.
+	if lot.is_empty() or _pad_cell <= 0.1:
+		return NAN
+	if lot.has("pad_h"):
+		return float(lot["pad_h"])
+	var centre: Vector2 = lot.get("centre", Vector2.ZERO)
+	var key := Vector2i(roundi(centre.x / _pad_cell), roundi(centre.y / _pad_cell))
+	if _pad_tops.has(key):
+		var pad := float(_pad_tops[key])
+		lot["pad_h"] = pad
+		return pad
+	return NAN
+
+
+func _lot_deck_mark(
+		shape: PlanetShape,
+		lot: Dictionary,
+		uv: Vector2,
+		extra_lift: float = 0.0
+	) -> Vector3:
+	var up := _from_uv(uv).normalized()
+	if up.length_squared() < 0.0001:
+		up = Vector3.UP
+	var pad := _lot_slab_h(lot)
+	if is_nan(pad):
+		return _deck_mark(shape, up, STREET_LIFT) + up * extra_lift
+	return up * (_radius + pad + STREET_LIFT + extra_lift)
 
 
 func _deck_mark(shape: PlanetShape, direction: Vector3, lift: float) -> Vector3:
@@ -6857,10 +7552,9 @@ func _face_cols_two_sided(
 		cd: Color,
 		outward: Vector3
 	) -> void:
-	# Planet ground uses `cull_back`. `_bind_apron_material` replaces the
-	# two-sided StandardMaterial, so the slope must exist as both windings.
-	# Keep the same planet-up normal on the back so the terrain shader still
-	# reads dirt, not cliff rock.
+	# Apron shader disables cull, but a baked mesh may still be viewed
+	# under the planet wrapper. Write both windings and keep the planet-up
+	# normal on the back so the terrain look still reads dirt, not cliff.
 	_face_cols(st, a, b, c, d, ca, cb, cc, cd, outward)
 	var aim := outward
 	if aim.length_squared() < 0.0001:

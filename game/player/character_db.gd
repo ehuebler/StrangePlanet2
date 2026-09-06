@@ -7,24 +7,20 @@ extends RefCounted
 ## stays the same shape, but the meshes only bind cleanly to the skeleton they
 ## were cut from.
 ##
-## `playable` is what the home screen and the character editor offer. The
-## astronaut is switched off rather than deleted: its body, its five garments and
-## its `ItemDB` entries are all still good, `dev/_check_character.gd` and friends
-## still measure it, and turning it back on is this one flag. What being off means
-## is that [method sanitize_body] sends it to the default, so a `settings.cfg`
-## saved when it was the default quietly becomes a settler rather than spawning a
-## body nothing offers.
+## `playable` is what the home screen and the character editor offer. Extra
+## settler-skeleton ids share the settler mesh through a `template` field so the
+## character grid can show more tiles without duplicating measurements.
 
 const DEFAULT_BODY := "settler"
 const HOTBAR_SLOTS := 3
-const ABILITY_SLOTS := 2
+const ABILITY_SLOTS := 4
 const BACKPACK_SLOTS := 36
 ## One-time ownership seed. Revision five repairs the known partial-wardrobe
 ## state where Settler Hair alone was never granted. Revision six grants the
 ## first twenty-five settler hats. Revision seven grants the next batch. Other
 ## missing pieces remain finite ownership: once this revision is recorded,
 ## dropped apparel stays gone.
-const STARTER_INVENTORY_REVISION := 7
+const STARTER_INVENTORY_REVISION := 8
 
 ## Headwear added after the original settler wardrobe. Granted once by revision
 ## six without resurrecting garments a player already dropped.
@@ -67,18 +63,6 @@ const SKINS := {
 }
 
 const BODIES := {
-	"astronaut": {
-		"title": "Astronaut",
-		"playable": false,
-		"scene": "res://assets/runtime/characters/player_character.glb",
-		"height": 1.45,
-		"eye_height": 1.29,
-		"eye_offset": Vector3(0.076, 0.102, -0.192),
-		"lean_pivot": 0.72,
-		"apparel": ["straw_hat", "flight_goggles", "rust_long_sleeve", "denim_trousers",
-			"leather_shoes"],
-		"skins": [],
-	},
 	"settler": {
 		"title": "Settler",
 		"playable": true,
@@ -89,6 +73,7 @@ const BODIES := {
 		"lean_pivot": 0.85,
 		"apparel": [
 			"c3_hair",
+			"crawler_gale_hat", "crawler_ward_hat", "crawler_luck_hat",
 			"c3_party_hat", "c3_bunny_ears", "c3_top_hat", "c3_crown", "c3_beanie",
 			"c3_cowboy_hat", "c3_propeller_cap", "c3_flower_crown", "c3_antlers",
 			"c3_halo", "c3_wizard_hat", "c3_sombrero", "c3_newsboy_cap", "c3_helmet",
@@ -100,10 +85,50 @@ const BODIES := {
 			"c3_tiara", "c3_bandana", "c3_rice_hat", "c3_laurel", "c3_nightcap",
 			"c3_deerstalker", "c3_frog_hood", "c3_rainbow", "c3_paper_crown",
 			"c3_space_helmet", "c3_cake_hat", "c3_leaf_wreath", "c3_mohawk",
-			"c3_goggles", "c3_tunic", "c3_boots",
 		],
 		# First is the fallback for an old settings file with no skin key.
 		"skins": ["luke", "clean_robotic", "integrated_robotic"],
+		# Mixamo clips retargeted onto this skeleton. Existing locomotion
+		# names stay on the body .glb; these are extra names only.
+		"extra_animations": [
+			"res://assets/runtime/characters/player_character_3_m2m.glb",
+		],
+	},
+	"pioneer": {
+		"title": "Pioneer",
+		"playable": true,
+		"template": "settler",
+	},
+	"ranger": {
+		"title": "Ranger",
+		"playable": true,
+		"template": "settler",
+	},
+	"warden": {
+		"title": "Warden",
+		"playable": true,
+		"template": "settler",
+	},
+	"scout": {
+		"title": "Scout",
+		"playable": true,
+		"template": "settler",
+	},
+	"drifter": {
+		"title": "Drifter",
+		"playable": true,
+		"template": "settler",
+	},
+	"astronaut": {
+		"title": "Astronaut",
+		"playable": true,
+		"scene": "res://assets/runtime/characters/player_character.glb",
+		"height": 1.45,
+		"eye_height": 1.29,
+		"eye_offset": Vector3(0.076, 0.102, -0.192),
+		"lean_pivot": 0.72,
+		"apparel": ["straw_hat"],
+		"skins": [],
 	},
 }
 
@@ -117,8 +142,10 @@ static func body_ids() -> PackedStringArray:
 ## walking them to measure or check an asset wants [method body_ids].
 static func playable_ids() -> PackedStringArray:
 	var out := PackedStringArray()
+	if is_playable(DEFAULT_BODY):
+		out.append(DEFAULT_BODY)
 	for id: String in BODIES:
-		if bool(_field(id, "playable", false)):
+		if is_playable(id) and not out.has(id):
 			out.append(id)
 	return out
 
@@ -178,6 +205,18 @@ static func lean_pivot(id: String) -> float:
 	return float(_field(id, "lean_pivot", 0.72))
 
 
+## Extra AnimationPlayer libraries for this body. Used for clips retargeted
+## from another skeleton; they must not replace names the body .glb already has.
+static func extra_animation_paths(id: String) -> PackedStringArray:
+	var raw: Variant = _field(id, "extra_animations", [])
+	var out := PackedStringArray()
+	for entry: Variant in raw:
+		var path := str(entry)
+		if not path.is_empty():
+			out.append(path)
+	return out
+
+
 static func skin_ids(body_id: String) -> PackedStringArray:
 	var raw: Variant = _field(body_id, "skins", [])
 	var out := PackedStringArray()
@@ -225,6 +264,19 @@ static func apparel_ids(id: String) -> PackedStringArray:
 ## True when this garment was authored for this body's skeleton.
 static func apparel_fits(body_id: String, item_id: String) -> bool:
 	return item_id in apparel_ids(body_id)
+
+
+## Hats every new save owns without a gem spend. Extra catalogue hats are
+## unlocked from the home-screen Hats tab.
+static func free_apparel_ids(body_id: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var wardrobe := apparel_ids(body_id)
+	for item_id: String in CrawlerMeta.FREE_HATS:
+		if wardrobe.has(item_id) and not out.has(item_id):
+			out.append(item_id)
+	if out.is_empty() and not wardrobe.is_empty():
+		out.append(wardrobe[0])
+	return out
 
 
 static func sanitize_body(id: String) -> String:
@@ -287,6 +339,7 @@ static func load_look() -> Dictionary:
 	if tint_raw is Dictionary:
 		look["tints"] = (tint_raw as Dictionary).duplicate(true)
 	_seed_starter_inventory(look)
+	CrawlerMeta.note_owned_apparel(look)
 	return look
 
 
@@ -334,54 +387,48 @@ static func _seed_starter_inventory(look: Dictionary) -> void:
 
 	var body_id := sanitize_body(str(look.get("body", DEFAULT_BODY)))
 	var wardrobe := apparel_ids(body_id)
-	var should_seed := revision < 1
-	if revision >= 1:
-		should_seed = true
-		for item_id: String in wardrobe:
-			if owned.has(item_id):
-				should_seed = false
-				break
-	if should_seed:
-		for item_id: String in wardrobe:
+	# Fresh saves own only the free starter hats. The rest of the catalogue is
+	# a gem unlock on the home screen. Older revision markers still repair the
+	# historical free-wardrobe rollouts so existing profiles keep what they had.
+	if revision < 1:
+		for item_id: String in free_apparel_ids(body_id):
 			if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
 				continue
 			backpack.append(item_id)
 			owned[item_id] = true
+	elif revision >= 1:
+		var should_seed := true
+		for item_id: String in wardrobe:
+			if owned.has(item_id):
+				should_seed = false
+				break
+		if should_seed:
+			for item_id: String in wardrobe:
+				if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
+					continue
+				backpack.append(item_id)
+				owned[item_id] = true
 	# Revision four treated any one owned garment as proof that the whole starter
 	# wardrobe had been granted. That preserved genuinely dropped items, but it
 	# also preserved the specific broken rollout now seen in existing profiles:
 	# goggles, tunic and boots present while Settler Hair never existed. Repair
 	# that known item once without manufacturing every other absent garment.
-	if revision < 5 and body_id == "settler" and not owned.has("c3_hair") \
-			and backpack.size() < BACKPACK_SLOTS:
+	if revision >= 1 and revision < 5 and body_id == "settler" \
+			and not owned.has("c3_hair") and backpack.size() < BACKPACK_SLOTS:
 		backpack.append("c3_hair")
 		owned["c3_hair"] = true
-	if revision < 6 and body_id == "settler":
+	if revision >= 1 and revision < 6 and body_id == "settler":
 		for item_id: String in SETTLER_HEADWEAR:
 			if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
 				continue
 			backpack.append(item_id)
 			owned[item_id] = true
-	if revision < 7 and body_id == "settler":
+	if revision >= 1 and revision < 7 and body_id == "settler":
 		for item_id: String in SETTLER_HEADWEAR_MORE:
 			if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
 				continue
 			backpack.append(item_id)
 			owned[item_id] = true
-	# Weapons were authored before finite ownership was introduced, but older
-	# profiles were never granted them. Fill open numbered slots first so both
-	# weapons are immediately usable without disturbing an existing assignment.
-	for item_id: String in ItemDB.weapon_ids():
-		if owned.has(item_id):
-			continue
-		var target := hotbar.find("")
-		if target >= 0:
-			hotbar[target] = item_id
-		elif backpack.size() < BACKPACK_SLOTS:
-			backpack.append(item_id)
-		else:
-			continue
-		owned[item_id] = true
 	look["hotbar"] = hotbar
 	look["rack"] = hotbar.duplicate()
 	look["backpack"] = backpack
@@ -507,7 +554,14 @@ static func _trimmed_array(items: PackedStringArray) -> Array:
 ## measurements are, or `scene_path("astronaut")` starts returning the settler and
 ## every asset check quietly measures the wrong body.
 static func _field(id: String, key: String, fallback: Variant) -> Variant:
-	var body: Variant = BODIES.get(id if has_body(id) else DEFAULT_BODY, {})
+	var resolved := id if has_body(id) else DEFAULT_BODY
+	var body: Variant = BODIES.get(resolved, {})
 	if body is Dictionary and (body as Dictionary).has(key):
 		return (body as Dictionary)[key]
+	if body is Dictionary:
+		var template := str((body as Dictionary).get("template", ""))
+		if not template.is_empty() and template != resolved and has_body(template):
+			var parent: Variant = BODIES.get(template, {})
+			if parent is Dictionary and (parent as Dictionary).has(key):
+				return (parent as Dictionary)[key]
 	return fallback

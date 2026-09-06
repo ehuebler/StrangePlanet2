@@ -39,13 +39,13 @@ const EDGE_GAP := 28.0
 
 ## The page consumes the width formerly reserved for the side actions. Navigation
 ## and the circular session actions share the band directly beneath it.
-const CONTENT_RECT := Rect2(0.065, 0.035, 0.870, 0.715)
-const SELECTOR_RECT := Rect2(0.250, 0.765, 0.220, 0.210)
-const ADMIN_RECT := Rect2(0.035, 0.875, 0.135, 0.090)
-const ACTIONS_RECT := Rect2(0.500, 0.765, 0.435, 0.140)
+const CONTENT_RECT := Rect2(0.065, 0.030, 0.870, 0.700)
+const SELECTOR_RECT := Rect2(0.250, 0.742, 0.220, 0.188)
+const ADMIN_RECT := Rect2(0.035, 0.848, 0.135, 0.090)
+const ACTIONS_RECT := Rect2(0.500, 0.742, 0.435, 0.128)
 
 var _player: OnlinePlayer
-var _tab: Tab = Tab.ITEMS
+var _tab: Tab = Tab.HERO
 var _data_kind: StringName = JournalDB.QUEST
 var _closing := false
 
@@ -95,7 +95,8 @@ func close() -> void:
 
 
 ## Opens a canonical page. Legacy aliases remain source-compatible:
-## INVENTORY -> Items, QUESTS -> Data/Quests, ACHIEVEMENTS -> Data/Achievements.
+## INVENTORY / ITEMS / ABILITIES -> Hero, QUESTS -> Data/Quests,
+## ACHIEVEMENTS -> Data/Achievements.
 func show_tab(tab: Tab) -> void:
 	if tab == Tab.QUESTS:
 		_data_kind = JournalDB.QUEST
@@ -122,15 +123,14 @@ func current_tab() -> Tab:
 
 
 func _canonical_tab(tab: Tab) -> Tab:
-	if tab == Tab.INVENTORY:
-		return Tab.ITEMS
+	if tab == Tab.INVENTORY or tab == Tab.ITEMS or tab == Tab.ABILITIES:
+		return Tab.HERO
 	if tab == Tab.QUESTS or tab == Tab.ACHIEVEMENTS:
 		return Tab.DATA
-	if tab == Tab.HERO or tab == Tab.APPAREL or tab == Tab.ITEMS \
-			or tab == Tab.ABILITIES or tab == Tab.DATA \
-			or tab == Tab.SETTINGS or tab == Tab.ADMIN:
+	if tab == Tab.HERO or tab == Tab.APPAREL \
+			or tab == Tab.DATA or tab == Tab.SETTINGS or tab == Tab.ADMIN:
 		return tab
-	return Tab.ITEMS
+	return Tab.HERO
 
 
 # --- Shell ------------------------------------------------------------------
@@ -220,6 +220,7 @@ func _build_bottom_selector() -> void:
 	var stack := VBoxContainer.new()
 	stack.name = "SelectorStack"
 	stack.add_theme_constant_override(&"separation", 2)
+	stack.alignment = BoxContainer.ALIGNMENT_CENTER
 	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	inset.add_child(stack)
@@ -228,17 +229,9 @@ func _build_bottom_selector() -> void:
 	_add_selector_button(
 		stack,
 		"TabApparel",
-		"Apparel",
-		RedMenuGlyph.Glyph.APPAREL_ALL,
+		"Hats",
+		RedMenuGlyph.Glyph.HAT,
 		Tab.APPAREL
-	)
-	_add_selector_button(stack, "TabItems", "Items", RedMenuGlyph.Glyph.ITEMS, Tab.ITEMS)
-	_add_selector_button(
-		stack,
-		"TabAbilities",
-		"Abilities",
-		RedMenuGlyph.Glyph.ABILITIES,
-		Tab.ABILITIES
 	)
 	_add_selector_button(stack, "TabData", "Data", RedMenuGlyph.Glyph.DATA, Tab.DATA)
 
@@ -256,7 +249,7 @@ func _add_selector_button(
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.custom_minimum_size.y = 18.0
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	button.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.focus_mode = Control.FOCUS_ALL
 	_style_selector_button(button, false)
@@ -304,7 +297,7 @@ func _build_right_actions() -> void:
 	var cluster := HBoxContainer.new()
 	cluster.name = "SessionActions"
 	cluster.alignment = BoxContainer.ALIGNMENT_CENTER
-	cluster.add_theme_constant_override(&"separation", 28)
+	cluster.add_theme_constant_override(&"separation", 20)
 	_apply_anchor_rect(cluster, ACTIONS_RECT)
 	_shell.add_child(cluster)
 
@@ -332,7 +325,9 @@ func _build_right_actions() -> void:
 	respawn_action.green_color = GREEN
 	respawn_action.active = true
 	respawn_action.circular = true
-	respawn_action.tooltip_text = "Hold to respawn above the nearest city"
+	respawn_action.tooltip_text = "Hold to respawn at the start pad" \
+		if CrawlerRules.active() \
+		else "Hold to respawn above the nearest city"
 	respawn_action.completed.connect(_on_respawn_completed)
 	cluster.add_child(_action_entry(respawn_action, "HOLD RESPAWN"))
 	var respawn_glyph := respawn_action.get_node_or_null("Glyph") as RedMenuGlyph
@@ -391,9 +386,9 @@ func _action_button(node_name: String, glyph_kind: RedMenuGlyph.Glyph) -> Button
 
 func _action_entry(control: Control, label_text: String) -> VBoxContainer:
 	var entry := VBoxContainer.new()
-	entry.custom_minimum_size = Vector2(108.0, 82.0)
+	entry.custom_minimum_size = Vector2(96.0, 74.0)
 	entry.alignment = BoxContainer.ALIGNMENT_CENTER
-	entry.add_theme_constant_override(&"separation", 4)
+	entry.add_theme_constant_override(&"separation", 2)
 	entry.add_child(control)
 
 	var label := Label.new()
@@ -443,15 +438,16 @@ func _replace_active_page() -> void:
 func _build_page(tab: Tab) -> Control:
 	match tab:
 		Tab.HERO:
+			if CrawlerRules.active():
+				var crawler := CrawlerHeroPage.new()
+				crawler.configure(_player)
+				crawler.drop_requested.connect(_on_crawler_drop_requested)
+				return crawler
 			var hero := RedHeroPage.new()
 			hero.configure(_player)
 			return hero
 		Tab.APPAREL:
 			return _catalogue_page(RedCataloguePage.Mode.APPAREL)
-		Tab.ITEMS:
-			return _catalogue_page(RedCataloguePage.Mode.ITEMS)
-		Tab.ABILITIES:
-			return _catalogue_page(RedCataloguePage.Mode.ABILITIES)
 		Tab.DATA:
 			var data := RedDataPage.new()
 			data.configure(_player.journal if _player != null else null)
@@ -463,9 +459,11 @@ func _build_page(tab: Tab) -> Control:
 			settings.configure(true)
 			return settings
 		Tab.ADMIN:
-			var blank := Control.new()
-			blank.name = "AdminBlank"
-			return blank
+			var admin := AdminPage.new()
+			admin.name = "AdminPage"
+			if _player != null:
+				admin.configure(_player.backpack, _player.stats, _player.body_id())
+			return admin
 	return null
 
 
@@ -489,6 +487,14 @@ func _on_drop_requested(source: String, index: int, item_id: String) -> void:
 	var world := _surrounding_world()
 	if world != null and world.has_method(&"request_drop"):
 		world.call(&"request_drop", _player.peer_id, source, index, item_id)
+
+
+func _on_crawler_drop_requested(source: String, index: int, token: String) -> void:
+	if _player == null:
+		return
+	var world := _surrounding_world()
+	if world != null and world.has_method(&"request_crawler_drop"):
+		world.call(&"request_crawler_drop", _player.peer_id, source, index, token)
 
 
 func _surrounding_world() -> Node:
@@ -523,14 +529,6 @@ func _refresh_navigation() -> void:
 		_tab == Tab.APPAREL
 	)
 	_style_selector_button(
-		_selector_buttons[Tab.ITEMS] as Button,
-		_tab == Tab.ITEMS
-	)
-	_style_selector_button(
-		_selector_buttons[Tab.ABILITIES] as Button,
-		_tab == Tab.ABILITIES
-	)
-	_style_selector_button(
 		_selector_buttons[Tab.DATA] as Button,
 		_tab == Tab.DATA
 	)
@@ -539,6 +537,8 @@ func _refresh_navigation() -> void:
 
 
 func _style_selector_button(button: Button, selected: bool) -> void:
+	if button == null:
+		return
 	var accent := GREEN if selected else RED
 	var text_color := GREEN_TEXT if selected else RED_TEXT
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if selected else BLACK_82
