@@ -6,10 +6,10 @@ uid="uid://bagha7wxm4nb"
 
 [deps]
 
-files=["res://assets/runtime/abilities/crawler_catalog.id.translation", "res://assets/runtime/abilities/crawler_catalog.title.translation", "res://assets/runtime/abilities/crawler_catalog.description.translation", "res://assets/runtime/abilities/crawler_catalog.scope.translation", "res://assets/runtime/abilities/crawler_catalog.default.translation", "res://assets/runtime/abilities/crawler_catalog.icon.translation"]
+files=["res://assets/runtime/abilities/crawler_catalog.id.translation", "res://assets/runtime/abilities/crawler_catalog.title.translation", "res://assets/runtime/abilities/crawler_catalog.description.translation", "res://assets/runtime/abilities/crawler_catalog.scope.translation", "res://assets/runtime/abilities/crawler_catalog.default.translation", "res://assets/runtime/abilities/crawler_catalog.icon.translation", "res://assets/runtime/abilities/crawler_catalog.ability.translation"]
 
 source_file="res://assets/runtime/abilities/crawler_catalog.csv"
-dest_files=["res://assets/runtime/abilities/crawler_catalog.id.translation", "res://assets/runtime/abilities/crawler_catalog.title.translation", "res://assets/runtime/abilities/crawler_catalog.description.translation", "res://assets/runtime/abilities/crawler_catalog.scope.translation", "res://assets/runtime/abilities/crawler_catalog.default.translation", "res://assets/runtime/abilities/crawler_catalog.icon.translation"]
+dest_files=["res://assets/runtime/abilities/crawler_catalog.id.translation", "res://assets/runtime/abilities/crawler_catalog.title.translation", "res://assets/runtime/abilities/crawler_catalog.description.translation", "res://assets/runtime/abilities/crawler_catalog.scope.translation", "res://assets/runtime/abilities/crawler_catalog.default.translation", "res://assets/runtime/abilities/crawler_catalog.icon.translation", "res://assets/runtime/abilities/crawler_catalog.ability.translation"]
 
 [params]
 

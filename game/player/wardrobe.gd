@@ -1,17 +1,17 @@
 class_name Wardrobe
 extends RefCounted
 
-## Puts apparel built by assets/source/blender/build_apparel.py onto a character
-## instanced from player_character.glb.
+## Puts apparel onto a character instanced from the body .glb.
 ##
-## Each garment is exported with the same 23 joints, in the same order, as the
-## body. That means a garment needs neither its own skeleton nor its own copy of
-## the locomotion clips: reparenting its MeshInstance3D onto the body's
-## Skeleton3D leaves it driven by whatever the body is already playing.
+## Skinned garments from assets/source/blender/build_apparel.py share the body's
+## 23 joints, so lifting the MeshInstance3D onto the body's Skeleton3D leaves
+## them driven by whatever the body is already playing. Script-built cloth
+## (a cape) keeps its own node so it can simulate in world space; Wardrobe
+## instances that scene whole and asks it to pin itself to the shoulders.
 ##
 ## OnlinePlayer derives its pencil materials by walking every MeshInstance3D
 ## under the character, so equip before that runs and garments are shaded like
-## the rest of the body, picking up the colour baked into their .glb.
+## the rest of the body.
 
 const APPAREL := {
 	"shoes": "res://assets/runtime/apparel/apparel_shoes.glb",
@@ -55,10 +55,17 @@ static func equip(character: Node, slot: String, source := "") -> MeshInstance3D
 		return null
 
 	var instance := scene.instantiate()
-	var garment: MeshInstance3D = null
-	for node in instance.find_children("*", "MeshInstance3D", true, false):
-		garment = node as MeshInstance3D
-		break
+	unequip(character, slot)
+	if instance.has_method(&"attach_to_skeleton"):
+		instance.name = NODE_PREFIX + slot
+		skeleton.add_child(instance)
+		instance.call(&"attach_to_skeleton", skeleton)
+		var cloth := mesh_of(instance)
+		if cloth == null:
+			push_error("Wardrobe: %s attached without a MeshInstance3D" % source)
+		return cloth
+
+	var garment := mesh_of(instance)
 	if garment == null:
 		push_error("Wardrobe: %s contains no MeshInstance3D" % source)
 		instance.free()
@@ -69,13 +76,33 @@ static func equip(character: Node, slot: String, source := "") -> MeshInstance3D
 	garment.get_parent().remove_child(garment)
 	instance.free()
 
-	unequip(character, slot)
 	garment.name = NODE_PREFIX + slot
 	skeleton.add_child(garment)
 	garment.transform = Transform3D.IDENTITY
 	# Relative to the garment, so it resolves to the Skeleton3D it now sits under.
 	garment.skeleton = NodePath("..")
 	return garment
+
+
+static func mesh_of(root: Node) -> MeshInstance3D:
+	if root is MeshInstance3D:
+		return root as MeshInstance3D
+	if root == null:
+		return null
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		return node as MeshInstance3D
+	return null
+
+
+static func worn_node(character: Node, slot: String) -> Node:
+	var skeleton := skeleton_of(character)
+	if skeleton == null:
+		return null
+	return skeleton.get_node_or_null(NODE_PREFIX + slot)
+
+
+static func worn_mesh(character: Node, slot: String) -> MeshInstance3D:
+	return mesh_of(worn_node(character, slot))
 
 
 static func unequip(character: Node, slot: String) -> void:

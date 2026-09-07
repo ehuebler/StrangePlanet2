@@ -2,10 +2,12 @@ class_name CrawlerSite
 extends Landmark
 
 ## Named crawler place. The first city lights its tilde mark immediately;
-## spawn and later sites wait until the player walks in. Monuments keep
+## the spawn reveal turns the player to see it before tilde is needed.
+## Spawn and later sites wait until the player walks in. Monuments keep
 ## their own [PatchMonument] type and join the same poll.
 
 var site_id := ""
+var city_key := ""
 var enter_radius := 120.0
 
 
@@ -23,7 +25,10 @@ func _ready() -> void:
 		place()
 
 
-func unlock_waypoint() -> void:
+func unlock_waypoint(announce := true) -> void:
+	var first := not waypoint
 	waypoint = true
 	if not is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP):
 		add_to_group(CrawlerRules.CITY_WAYPOINT_GROUP)
+	if first and announce:
+		CrawlerSites.announce_unlock(self)

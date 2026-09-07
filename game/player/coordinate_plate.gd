@@ -274,4 +274,6 @@ func _nearest_place(at: Vector3) -> String:
 
 
 func _write(row: int, text: String) -> void:
-	(_lines.get_child(row) as Label).text = text
+	var label := CrtType.inner(_lines.get_child(row)) as Label
+	if label != null:
+		label.text = text

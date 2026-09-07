@@ -27,6 +27,35 @@
       }
     },
     {
+      "id": "kame",
+      "title": "Kame",
+      "description": "Both arms forward. One long burst from the hands roots you while it fires. You can still look around to steer it, but looking is slower. Much longer range than Laser Eyes. Will not fire under water.",
+      "implementation": "res://game/abilities/kame.gd",
+      "icon": "res://assets/runtime/abilities/icons/kame.svg",
+      "tint": "#3CB6FFFF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "BEAM",
+      "impact_type": "BURN",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "Kame"
+      },
+      "blocked_underwater": true,
+      "allowed_stances": [],
+      "stats": {
+        "damage": 1900.0,
+        "damage_unit": "/s",
+        "duration": 4.0,
+        "range": 240.0,
+        "cooldown": 2.4,
+        "radius": 0.72,
+        "beam_width": 1.2,
+        "damage_hz": 16.0
+      }
+    },
+    {
       "id": "meteor_punch",
       "title": "Meteor Punch",
       "description": "Fist out, and go. From the air you dive; from your feet you launch flat and land in a crater of your own making. Anything growing in the way is taken with you.",
@@ -54,6 +83,37 @@
         "radius": 4.0,
         "crater_radius": 6.0,
         "crater_depth": 2.5
+      }
+    },
+    {
+      "id": "hero_punch",
+      "title": "Hero Punch",
+      "description": "Hold to throw alternating left and right jabs. Each punch hits whatever is in front of the fist.",
+      "implementation": "res://game/abilities/hero_punch.gd",
+      "icon": "res://assets/runtime/abilities/icons/hero_punch.svg",
+      "tint": "#FFD147FF",
+      "activation_type": "SUSTAINED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "KNOCKBACK",
+      "affects_players": true,
+      "animations": {
+        "primary": "Fighting_Right_Jab",
+        "alternate": "Fighting_Left_Jab",
+        "hover": "Fighting_Right_Jab",
+        "alternate_hover": "Fighting_Left_Jab"
+      },
+      "blocked_underwater": true,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 80.0,
+        "range": 3.5,
+        "radius": 1.15,
+        "cooldown": 0.35,
+        "knockback": 10.0,
+        "animation_duration": 0.32
       }
     },
     {
@@ -127,7 +187,7 @@
     {
       "id": "nuke",
       "title": "Nuke",
-      "description": "Launch a giant energy core from the right hand. Its host-authoritative detonation tears out a massive crater, ragdolls and hurls everything nearby, and can launch its caster without dealing self-damage.",
+      "description": "Launch a giant energy core from the front of both hands. Its host-authoritative detonation tears out a massive crater, ragdolls and hurls everything nearby, and can launch its caster without dealing self-damage.",
       "implementation": "res://game/abilities/nuke.gd",
       "icon": "res://assets/runtime/abilities/icons/nuke.svg",
       "tint": "#FF7A2FFF",
@@ -141,8 +201,7 @@
       "self_launch": true,
       "blast_occlusion": true,
       "animations": {
-        "primary": "NukeThrow",
-        "hover": "NukeFloatThrow"
+        "primary": "Kame"
       },
       "blocked_underwater": true,
       "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
@@ -155,7 +214,7 @@
         "radius": 110.0,
         "cooldown": 10.0,
         "projectile_radius": 1.6,
-        "animation_duration": 0.55,
+        "animation_duration": 0.28,
         "crater_radius": 72.0,
         "crater_depth": 20.0,
         "crater_warp": 0.3,
@@ -163,6 +222,46 @@
         "lift": 30.0,
         "self_launch_speed": 68.0,
         "explosion_duration": 1.5
+      }
+    },
+    {
+      "id": "mini_nuke",
+      "title": "Mini Nuke",
+      "description": "A smaller energy core from the front of both hands. It flies faster and farther than Nuke before it bursts, then tears a modest crater and hurls whatever it reaches. Can launch its caster without dealing self-damage.",
+      "implementation": "res://game/abilities/nuke.gd",
+      "icon": "res://assets/runtime/abilities/icons/mini_nuke.svg",
+      "tint": "#FFB03AFF",
+      "activation_type": "INSTANT",
+      "projectile_type": "ENERGY_ORB",
+      "impact_type": "MASSIVE_BLAST",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "RAGDOLL",
+      "affects_players": true,
+      "self_launch": true,
+      "blast_occlusion": true,
+      "animations": {
+        "primary": "Kame"
+      },
+      "blocked_underwater": true,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 8000.0,
+        "impact": 6000.0,
+        "player_damage": 36.0,
+        "speed": 130.0,
+        "range": 300.0,
+        "radius": 38.0,
+        "cooldown": 4.5,
+        "projectile_radius": 0.55,
+        "animation_duration": 0.28,
+        "crater_radius": 24.0,
+        "crater_depth": 7.0,
+        "crater_warp": 0.3,
+        "knockback": 32.0,
+        "lift": 12.0,
+        "self_launch_speed": 28.0,
+        "explosion_duration": 0.85
       }
     },
     {
@@ -267,6 +366,418 @@
         "knockback": 18.0,
         "lift": 6.0,
         "explosion_duration": 0.5
+      }
+    },
+    {
+      "id": "lightning",
+      "title": "Lightning",
+      "description": "One bolt from the eyes. It snaps onto a body, then jumps to a nearby one if one stands close enough. Upgrade Arcs to chain farther, and Shock to lock victims in a freeze-and-twitch pulse. Will not fire under water.",
+      "implementation": "res://game/abilities/lightning.gd",
+      "icon": "res://assets/runtime/abilities/icons/lightning.svg",
+      "tint": "#7AD7FFFF",
+      "activation_type": "SUSTAINED",
+      "projectile_type": "BEAM",
+      "impact_type": "BURN",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {},
+      "blocked_underwater": true,
+      "allowed_stances": [],
+      "stats": {
+        "damage": 900.0,
+        "damage_unit": "/s",
+        "duration": 3.5,
+        "range": 50.0,
+        "cooldown": 0.8,
+        "radius": 0.32,
+        "beam_width": 0.7,
+        "arcs": 1.0,
+        "shock": 0.0
+      }
+    },
+    {
+      "id": "light_bolt",
+      "title": "Light Bolt",
+      "description": "Hold to spray small pulsating purple-pink bolts from the eyes, like a submachine gun. Each bolt pops on contact. Will not fire under water.",
+      "implementation": "res://game/abilities/light_bolt.gd",
+      "icon": "res://assets/runtime/abilities/icons/light_bolt.svg",
+      "tint": "#E24BFFFF",
+      "activation_type": "SUSTAINED",
+      "projectile_type": "ENERGY_BOLT",
+      "impact_type": "EXPLOSION_CRATER",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {},
+      "blocked_underwater": true,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 16.0,
+        "impact": 22.0,
+        "speed": 70.0,
+        "range": 48.0,
+        "radius": 0.85,
+        "cooldown": 0.1,
+        "projectile_radius": 0.1,
+        "crater_radius": 0.45,
+        "crater_depth": 0.1,
+        "knockback": 3.5
+      }
+    },
+    {
+      "id": "icicle",
+      "title": "Icicle",
+      "description": "Hold to throw sharp icicles from alternating fists, with the same jabs as Starfire. Each cast bursts snow from the hand. The spear hits and freezes, then shatters into a small white frost cloud that applies cold but deals no damage.",
+      "implementation": "res://game/abilities/icicle.gd",
+      "icon": "res://assets/runtime/abilities/icons/icicle.svg",
+      "tint": "#A8E8FFFF",
+      "activation_type": "SUSTAINED",
+      "projectile_type": "ENERGY_ICICLE",
+      "impact_type": "FROST_BURST",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "Fighting_Right_Jab",
+        "alternate": "Fighting_Left_Jab",
+        "hover": "Fighting_Right_Jab",
+        "alternate_hover": "Fighting_Left_Jab"
+      },
+      "blocked_underwater": true,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 72.0,
+        "cold_damage": 8.0,
+        "cold": 1.6,
+        "speed": 82.0,
+        "range": 44.0,
+        "radius": 2.2,
+        "cooldown": 0.48,
+        "projectile_radius": 0.16,
+        "animation_duration": 0.32,
+        "knockback": 6.0
+      }
+    },
+    {
+      "id": "teleport",
+      "title": "Teleport",
+      "description": "Throw a glowing white marker with an overhand toss. It arcs, leaves a white trail until it lands, and warps you there. No damage. Upgrade Swap to trade places with a struck mob.",
+      "implementation": "res://game/abilities/teleport.gd",
+      "icon": "res://assets/runtime/abilities/icons/teleport.svg",
+      "tint": "#FFFFFFFF",
+      "activation_type": "INSTANT",
+      "projectile_type": "TELEPORT_ORB",
+      "impact_type": "TELEPORT",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "NukeThrow",
+        "hover": "NukeFloatThrow"
+      },
+      "blocked_underwater": true,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 0.0,
+        "speed": 36.0,
+        "range": 42.0,
+        "radius": 1.2,
+        "cooldown": 4.5,
+        "projectile_radius": 0.22,
+        "animation_duration": 0.55,
+        "gravity": 28.0,
+        "loft": 0.38,
+        "swap": 0.0
+      }
+    },
+    {
+      "id": "fus",
+      "title": "Fus",
+      "description": "Scrunch in and bellow. Instead of a spherical shockwave, a bright green force cone bursts forward. It chips what it hits and throws them a long way. Will not fire under water.",
+      "implementation": "res://game/abilities/fus.gd",
+      "icon": "res://assets/runtime/abilities/icons/fus.svg",
+      "tint": "#39FF14FF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "ENERGY_CONE",
+      "impact_type": "KNOCKBACK_BURST",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "KNOCKBACK",
+      "animations": {
+        "primary": "Roar"
+      },
+      "blocked_underwater": true,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 8.0,
+        "speed": 42.0,
+        "range": 20.0,
+        "radius": 3.8,
+        "cooldown": 3.2,
+        "projectile_radius": 3.8,
+        "knockback": 72.0,
+        "animation_duration": 1.15
+      }
+    },
+    {
+      "id": "roar",
+      "title": "Roar",
+      "description": "Scrunch in, then throw your head back and bellow. A shockwave knocks enemies away and chips them.",
+      "implementation": "res://game/abilities/crawler_roar.gd",
+      "icon": "res://assets/runtime/abilities/icons/roar.svg",
+      "tint": "#F28C1EFF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "KNOCKBACK",
+      "animations": {
+        "primary": "Roar"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 18.0,
+        "range": 14.0,
+        "radius": 14.0,
+        "knockback": 16.0,
+        "cooldown": 5.0,
+        "animation_duration": 1.15
+      }
+    },
+    {
+      "id": "toxic_blast",
+      "title": "Toxic Blast",
+      "description": "The same roar, but the shockwave poisons anything it touches. Poison ticks over time. Elemental ranks raise the toxin.",
+      "implementation": "res://game/abilities/crawler_roar.gd",
+      "icon": "res://assets/runtime/abilities/icons/toxic_blast.svg",
+      "tint": "#52EB38FF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "Roar"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 8.0,
+        "range": 14.0,
+        "radius": 14.0,
+        "duration": 4.0,
+        "knockback": 0.0,
+        "cooldown": 5.0,
+        "animation_duration": 1.15
+      }
+    },
+    {
+      "id": "charming_aura",
+      "title": "Charming Aura",
+      "description": "Roar a pink shockwave that charms enemies. Charmed mobs are hunted by other mobs and fight them until the charm fades, then stay angry at you.",
+      "implementation": "res://game/abilities/crawler_roar.gd",
+      "icon": "res://assets/runtime/abilities/icons/charming_aura.svg",
+      "tint": "#F261B8FF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "Roar"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 0.0,
+        "range": 14.0,
+        "radius": 14.0,
+        "duration": 4.0,
+        "knockback": 0.0,
+        "cooldown": 5.0,
+        "animation_duration": 1.15
+      }
+    },
+    {
+      "id": "freeze_blast",
+      "title": "Freeze Blast",
+      "description": "Roar a frost shockwave that freezes enemies in place. Elemental ranks raise frost damage and how long they stay locked.",
+      "implementation": "res://game/abilities/crawler_roar.gd",
+      "icon": "res://assets/runtime/abilities/icons/freeze_blast.svg",
+      "tint": "#73D1FFFF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "Roar"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 0.0,
+        "range": 14.0,
+        "radius": 14.0,
+        "duration": 4.0,
+        "knockback": 0.0,
+        "cooldown": 5.0,
+        "animation_duration": 1.15
+      }
+    },
+    {
+      "id": "static_field",
+      "title": "Static Field",
+      "description": "Stand still for a second, then raise an opaque electric sphere from your chest. It expands to about seven metres. Mobs that enter are damaged and shocked. The field fades. Standing inside tints the view.",
+      "implementation": "res://game/abilities/crawler_field.gd",
+      "icon": "res://assets/runtime/abilities/icons/static_field.svg",
+      "tint": "#7AD7FFFF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "FieldCast"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 16.0,
+        "range": 7.0,
+        "radius": 7.0,
+        "duration": 6.0,
+        "fade_duration": 2.4,
+        "cooldown": 8.0,
+        "cast": 1.0,
+        "shock": 2.0,
+        "animation_duration": 0.9
+      }
+    },
+    {
+      "id": "toxic_field",
+      "title": "Toxic Field",
+      "description": "Stand still for a second, then raise an opaque poison sphere from your chest. It expands to about seven metres. Mobs inside keep stacking toxin. The field fades. Standing inside tints the view.",
+      "implementation": "res://game/abilities/crawler_field.gd",
+      "icon": "res://assets/runtime/abilities/icons/toxic_field.svg",
+      "tint": "#52EB38FF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "FieldCast"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 5.0,
+        "range": 7.0,
+        "radius": 7.0,
+        "duration": 6.0,
+        "fade_duration": 2.4,
+        "cooldown": 8.0,
+        "cast": 1.0,
+        "toxic": 4.0,
+        "animation_duration": 0.9
+      }
+    },
+    {
+      "id": "freeze_field",
+      "title": "Freeze Field",
+      "description": "Stand still for a second, then raise an opaque frost sphere from your chest. It expands to about seven metres. Mobs and shots inside crawl. The field fades. Standing inside tints the view.",
+      "implementation": "res://game/abilities/crawler_field.gd",
+      "icon": "res://assets/runtime/abilities/icons/freeze_field.svg",
+      "tint": "#73D1FFFF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "FieldCast"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 0.0,
+        "range": 7.0,
+        "radius": 7.0,
+        "duration": 6.0,
+        "fade_duration": 2.4,
+        "cooldown": 8.0,
+        "cast": 1.0,
+        "freeze": 72.0,
+        "animation_duration": 0.9
+      }
+    },
+    {
+      "id": "healing_field",
+      "title": "Healing Field",
+      "description": "Stand still for a second, then raise an opaque warm sphere from your chest. It expands to about seven metres. Standing inside restores you. The field fades. Standing inside tints the view.",
+      "implementation": "res://game/abilities/crawler_field.gd",
+      "icon": "res://assets/runtime/abilities/icons/healing_field.svg",
+      "tint": "#8AF0BFFF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "NONE",
+      "animations": {
+        "primary": "FieldCast"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "damage": 0.0,
+        "heal": 8.0,
+        "range": 7.0,
+        "radius": 7.0,
+        "duration": 6.0,
+        "fade_duration": 2.4,
+        "cooldown": 8.0,
+        "cast": 1.0,
+        "animation_duration": 0.9
+      }
+    },
+    {
+      "id": "overdrive",
+      "title": "Overdrive",
+      "description": "Scrunch in and bellow. For a short time every stat jumps, you grow, and mods seated here power your other abilities.",
+      "implementation": "res://game/abilities/overdrive.gd",
+      "icon": "res://assets/runtime/abilities/icons/overdrive.svg",
+      "tint": "#FF7314FF",
+      "activation_type": "COMMITTED",
+      "projectile_type": "NONE",
+      "impact_type": "NONE",
+      "grapple_type": "NONE",
+      "construct_type": "NONE",
+      "reaction_type": "KNOCKBACK",
+      "animations": {
+        "primary": "Roar"
+      },
+      "blocked_underwater": false,
+      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
+      "stats": {
+        "boost": 0.25,
+        "duration": 8.0,
+        "cooldown": 14.0,
+        "animation_duration": 1.15,
+        "range": 14.0,
+        "radius": 14.0,
+        "size": 1.0,
+        "damage": 0.0
       }
     }
   ]

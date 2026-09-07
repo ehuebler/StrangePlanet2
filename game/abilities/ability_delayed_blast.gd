@@ -12,6 +12,7 @@ var at := Vector3.ZERO
 var normal := Vector3.UP
 var delay := 1.0
 var simulates := false
+var overlay: Dictionary = {}
 
 var _age := 0.0
 var _detonated := false
@@ -23,7 +24,7 @@ var _lamp: OmniLight3D
 static func create(world: Node, caster: OnlinePlayer,
 		record: AbilityDefinition, beam_from: Vector3, landed_at: Vector3,
 		surface_normal: Vector3, warning: float,
-		host_simulates: bool) -> AbilityDelayedBlast:
+		host_simulates: bool, stats_overlay: Dictionary = {}) -> AbilityDelayedBlast:
 	if world == null or caster == null or record == null \
 			or not beam_from.is_finite() or not landed_at.is_finite():
 		return null
@@ -36,6 +37,10 @@ static func create(world: Node, caster: OnlinePlayer,
 		if surface_normal.length_squared() > 0.001 else caster.global_basis.y
 	effect.delay = clampf(warning, 0.1, 5.0)
 	effect.simulates = host_simulates
+	if stats_overlay.is_empty() and caster.has_method(&"crawler_ability_overlay"):
+		effect.overlay = caster.crawler_ability_overlay(record.ability_id)
+	else:
+		effect.overlay = stats_overlay.duplicate(true)
 	world.add_child(effect)
 	return effect
 
@@ -43,7 +48,7 @@ static func create(world: Node, caster: OnlinePlayer,
 func _ready() -> void:
 	top_level = true
 	var paint_radius := maxf(float(
-		definition.stats.get("paint_radius", 0.8)), 0.1)
+		_stats().get("paint_radius", 0.8)), 0.1)
 	_marker_material = _energy_material(definition.tint, 2.0, 0.58)
 	var marker_mesh := CylinderMesh.new()
 	marker_mesh.top_radius = paint_radius
@@ -88,8 +93,18 @@ func _process(delta: float) -> void:
 		return
 	_detonated = true
 	if simulates and is_instance_valid(source):
-		AbilityImpact.apply(source, definition, at, normal)
+		AbilityImpact.apply(source, definition, at, normal, overlay)
+		CrawlerImpactCast.emit(
+			source, definition.ability_id, at, normal, overlay)
 	queue_free()
+
+
+func _stats() -> Dictionary:
+	if overlay.is_empty() or definition == null:
+		return definition.stats if definition != null else {}
+	var merged := definition.stats.duplicate(true)
+	merged.merge(overlay, true)
+	return merged
 
 
 func _energy_material(tint: Color, energy: float,

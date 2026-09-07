@@ -31,6 +31,7 @@ func _init() -> void:
 func _ready() -> void:
 	_build()
 	_built = true
+	CrtType.watch(self)
 	refresh()
 
 
@@ -44,7 +45,7 @@ func refresh() -> void:
 	for child: Node in _rows.get_children():
 		_rows.remove_child(child)
 		child.queue_free()
-	for stat_id: String in CrawlerProgress.STAT_ORDER:
+	for stat_id: String in CrawlerMeta.shop_stats():
 		_rows.add_child(_make_stat_row(stat_id))
 
 

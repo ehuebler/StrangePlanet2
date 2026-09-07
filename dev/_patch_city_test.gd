@@ -60,6 +60,14 @@ func _ready() -> void:
 func _largest_patch(partition: LandPartition) -> int:
 	var best := -1
 	var best_area := -1.0
+	for home in partition.territories:
+		if home.area > best_area:
+			best_area = home.area
+			best = home.id
+	if best >= 0:
+		var cell := partition.first_cell_of(best)
+		if cell >= 0:
+			return cell
 	for patch in partition.patches:
 		if patch.area > best_area:
 			best_area = patch.area
@@ -73,9 +81,12 @@ func _check(
 		patch_id: int,
 		shape: PlanetShape
 	) -> void:
-	_expect(plan.patch_id == patch_id, "plan is for the requested patch")
+	var home_id := partition.territory_id_of(patch_id)
+	_expect(plan.patch_id == home_id, "plan is for the requested patch")
 	_expect(not plan.districts.is_empty(), "the patch was cut into districts")
-	var patch := partition.patches[patch_id]
+	var patch := partition.territory_of(patch_id)
+	if patch == null:
+		patch = partition.patches[patch_id]
 	var radius := shape.radius
 	for district in plan.districts:
 		_expect(not district.name.is_empty(), "every district is named")
@@ -83,7 +94,7 @@ func _check(
 			"%s is at least %d tiles" % [
 				district.name, PatchCityGenerator.MIN_GROUP])
 		for direction in district.dirs:
-			_expect(partition.owner_at(direction) == patch_id,
+			_expect(partition.belongs_to(direction, patch_id),
 				"%s stays inside the patch" % district.name)
 	_expect_districts_clear_spikes(plan, shape)
 	_expect(not plan.exits.is_empty(), "the loop has district exits")
@@ -114,7 +125,7 @@ func _check(
 		ranks[street.rank] = int(ranks.get(street.rank, 0)) + 1
 	print("patch_city_test: %s — %d districts, loop %d, stub %d, streets %d"
 		% [
-			partition.patches[patch_id].name,
+			plan.patch_name,
 			plan.districts.size(),
 			plan.loop.size(),
 			plan.extension.size(),

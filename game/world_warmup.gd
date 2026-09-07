@@ -4,10 +4,10 @@ extends Node3D
 ## Everything worth paying for before a game starts rather than during it.
 ##
 ## The world is never loaded when New Game is pressed — it has been rendering
-## behind the title screen the whole time — so there is no scene to stream in and
-## nothing a conventional loading bar would be measuring. What there is instead is
-## work the first few minutes of play would otherwise do a piece at a time, in
-## frames the player is trying to fly in:
+## behind the title screen the whole time — so there is no scene to stream in.
+## The home screen's small red/green bar measures this warm-up instead: work the
+## first few minutes of play would otherwise do a piece at a time, in frames
+## the player is trying to fly in:
 ##
 ##   - **Graphics pipelines.** A material costs a compile the first time it is
 ##     actually drawn, and from the spawn nine kilometres up almost nothing has
@@ -67,7 +67,7 @@ func run(world: Node, camera: Camera3D) -> void:
 	progressed.emit(0.0, "Waking the planet")
 	await get_tree().process_frame
 
-	var draws := _collect(world)
+	var draws := await _collect(world)
 	compiled = draws.size()
 	progressed.emit(0.15, "Preparing plants")
 
@@ -92,7 +92,9 @@ func _collect(world: Node) -> Array[Dictionary]:
 	var draws: Array[Dictionary] = []
 	var seen := {}
 	var species_seen := {}
-	for node in world.find_children("*", "Node3D", true, false):
+	var nodes := world.find_children("*", "Node3D", true, false)
+	for index in nodes.size():
+		var node: Node = nodes[index]
 		var cover := node as GroundCover
 		if cover != null:
 			for entry in cover.species:
@@ -105,34 +107,39 @@ func _collect(world: Node) -> Array[Dictionary]:
 					null)
 				_offer(draws, seen, plant.distant_mesh(), plant.far_material(),
 					null)
-			continue
-		var fauna := node as FaunaSpawner
-		if fauna != null:
-			# Creatures are invisible to a walk of the tree for the same reason
-			# stands are: none exist until the streamer places one, and the first
-			# one placed is the one that would otherwise stall the frame.
-			for entry in fauna.species:
-				var creature := entry as FaunaSpecies
-				if creature == null or not creature.enabled \
-						or species_seen.has(creature.get_instance_id()):
-					continue
-				species_seen[creature.get_instance_id()] = true
-				creature.prepare()
-				_offer(draws, seen, creature.template_mesh(),
-					creature.template_material(), null)
-			continue
-		var batch := node as MultiMeshInstance3D
-		if batch != null and batch.multimesh != null:
-			# Rebuilt at one instance rather than borrowed: a reef swarm's own
-			# MultiMesh holds thirty-six thousand fish and drawing it a metre
-			# from the camera to compile one pipeline would be worse than the
-			# stall it is avoiding.
-			_offer(draws, seen, batch.multimesh.mesh,
-				batch.material_override, batch.multimesh)
-			continue
-		var single := node as MeshInstance3D
-		if single != null:
-			_offer(draws, seen, single.mesh, single.material_override, null)
+		else:
+			var fauna := node as FaunaSpawner
+			if fauna != null:
+				# Creatures are invisible to a walk of the tree for the same reason
+				# stands are: none exist until the streamer places one, and the first
+				# one placed is the one that would otherwise stall the frame.
+				for entry in fauna.species:
+					var creature := entry as FaunaSpecies
+					if creature == null or not creature.enabled \
+							or species_seen.has(creature.get_instance_id()):
+						continue
+					species_seen[creature.get_instance_id()] = true
+					creature.prepare()
+					_offer(draws, seen, creature.template_mesh(),
+						creature.template_material(), null)
+			else:
+				var batch := node as MultiMeshInstance3D
+				if batch != null and batch.multimesh != null:
+					# Rebuilt at one instance rather than borrowed: a reef swarm's own
+					# MultiMesh holds thirty-six thousand fish and drawing it a metre
+					# from the camera to compile one pipeline would be worse than the
+					# stall it is avoiding.
+					_offer(draws, seen, batch.multimesh.mesh,
+						batch.material_override, batch.multimesh)
+				else:
+					var single := node as MeshInstance3D
+					if single != null:
+						_offer(draws, seen, single.mesh, single.material_override, null)
+		if index % 64 == 0:
+			progressed.emit(
+				lerpf(0.02, 0.14, float(index + 1) / float(maxi(nodes.size(), 1))),
+				"Preparing plants")
+			await get_tree().process_frame
 	return draws
 
 

@@ -53,9 +53,11 @@ var radius := 4.0
 var _shell: MeshInstance3D
 var _material: ShaderMaterial
 var _lamp: OmniLight3D
+var _extras: Array[MeshInstance3D] = []
 ## What the shader is being given now, eased toward [member _wanted].
 var _strength := 0.0
 var _wanted := 0.0
+var _copies := 1
 
 
 func _ready() -> void:
@@ -87,6 +89,13 @@ func _ready() -> void:
 	# not be applied on top of it.
 	top_level = true
 	visible = false
+
+
+func set_tint(color: Color) -> void:
+	if _material != null:
+		_material.set_shader_parameter(&"tint", Vector3(color.r, color.g, color.b))
+	if _lamp != null:
+		_lamp.light_color = color
 
 
 ## The shock surface: a paraboloid of revolution, nose at +Y, opening out to a
@@ -137,7 +146,7 @@ func _build_dome() -> ArrayMesh:
 
 ## Stands the shock off a fist travelling in a direction at a speed. Called
 ## every frame the punch is in the air, on every peer.
-func aim(fist: Vector3, along: Vector3, speed: float) -> void:
+func aim(fist: Vector3, along: Vector3, speed: float, copies := 1) -> void:
 	var forward := along.normalized()
 	if forward.length_squared() < 0.5:
 		return
@@ -151,13 +160,38 @@ func aim(fist: Vector3, along: Vector3, speed: float) -> void:
 	# The mesh's own +Y is its nose, so the basis puts that along the travel
 	# direction and carries the dome's size in the same step. The two across
 	# axes are the hit box's radius exactly; only the axial one moves.
+	var basis := Basis(side * radius, forward * reach, side.cross(forward) * radius)
 	global_transform = Transform3D(
-		Basis(side * radius, forward * reach, side.cross(forward) * radius),
-		fist - forward * (radius * SET_BACK))
+		basis, fist - forward * (radius * SET_BACK))
 	_lamp.global_position = fist + forward * (reach * 0.5)
+	_copies = clampi(copies, 1, CrawlerRules.MULTI_SHOTS_MAX)
+	_ensure_extras(_copies - 1)
+	for index in _extras.size():
+		var extra := _extras[index]
+		if index < _copies - 1:
+			extra.global_transform = Transform3D(
+				basis,
+				fist + forward * CrawlerRules.MULTI_PUNCH_GAP * float(index + 1)
+					- forward * (radius * SET_BACK))
+			extra.visible = true
+		else:
+			extra.visible = false
 	_wanted = 1.0
 	visible = true
 	set_process(true)
+
+
+func _ensure_extras(count: int) -> void:
+	if _shell == null:
+		return
+	while _extras.size() < count:
+		var extra := MeshInstance3D.new()
+		extra.mesh = _shell.mesh
+		extra.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		extra.sorting_offset = -1.0
+		extra.visible = false
+		add_child(extra)
+		_extras.append(extra)
 
 
 ## Lets the shock go. It is not switched off: the air the punch was pushing does

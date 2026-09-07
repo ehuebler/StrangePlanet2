@@ -135,8 +135,8 @@ func _tick_ai(delta: float) -> void:
 	_stick_to_surface()
 	_cooldown_left = maxf(_cooldown_left - delta, 0.0)
 	_gore_show_left = maxf(_gore_show_left - delta, 0.0)
-	var player := _nearest_player()
-	if player == null or not tick_agro(player, delta):
+	var player := _hunt_target(delta)
+	if player == null:
 		_abort_charge()
 		_patrol_ground(delta)
 		_face_along(_face if _face.length_squared() > 0.01 else velocity, delta)
@@ -418,7 +418,7 @@ func _spawn_meteor_vfx(at: Vector3, reach: float) -> void:
 
 func _apply_meteor_blow(at: Vector3, heading: Vector3, player: Node) -> void:
 	var blow := DamageHit.area(at, SLAM_RADIUS, damage(), SLAM_FALLOFF)
-	blow.faction = DamageHit.Faction.ENEMY
+	blow.faction = outgoing_faction()
 	blow.ability_id = "crawler_rhino_meteor"
 	blow.affects_flora = false
 	blow.parryable = true

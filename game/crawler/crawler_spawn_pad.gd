@@ -11,6 +11,14 @@ const DECK_RADIUS := 10.0
 const MARKER_LIFT := 0.30
 const PLAYER_CLEARANCE := 1.35
 const KEEPOUT_PAD := 8.0
+## Authored names on Relay 07, first match wins. The navigation console is the
+## computer the arrival faces; PHASE CONTROL is the labelled screen on it.
+const PANEL_NAMES := [
+	"30 Navigation console 1 | Panel",
+	"PHASE CONTROL",
+	"30 Navigation console 1 | Purple",
+	"ARRIVAL LOCK",
+]
 
 var force_model := false
 var _model: Node3D
@@ -53,8 +61,51 @@ func player_spawn_transform(clearance := PLAYER_CLEARANCE) -> Transform3D:
 	var up := at.basis.y
 	if up.length_squared() < 0.0001:
 		up = world_up()
-	at.origin += up.normalized() * (lift + maxf(clearance, 0.0))
+	up = up.normalized()
+	at.origin += up * (lift + maxf(clearance, 0.0))
+	var panel := control_panel_point()
+	if panel.is_finite():
+		var toward := panel - at.origin
+		toward -= up * toward.dot(up)
+		if toward.length_squared() > 0.0001:
+			at.basis = Basis.looking_at(toward.normalized(), up)
 	return at
+
+
+func player_spawn_transform_for(index: int, count: int,
+		clearance := PLAYER_CLEARANCE) -> Transform3D:
+	var at := player_spawn_transform(clearance)
+	var n := maxi(count, 1)
+	if n <= 1:
+		return at
+	var up := at.basis.y
+	if up.length_squared() < 0.0001:
+		up = world_up()
+	up = up.normalized()
+	var right := at.basis.x
+	if right.length_squared() < 0.0001 or absf(right.dot(up)) > 0.98:
+		right = up.cross(Vector3.FORWARD)
+		if right.length_squared() < 0.0001:
+			right = up.cross(Vector3.RIGHT)
+	right = (right - up * right.dot(up)).normalized()
+	var forward := up.cross(right).normalized()
+	var angle := TAU * float(posmod(index, n)) / float(n)
+	at.origin += (right * cos(angle) + forward * sin(angle)) * 2.4
+	return at
+
+
+## World point on the teleporter's computer console, or INF if the model is not
+## seated yet. Spawn facing and the home-screen handover both read this.
+func control_panel_point() -> Vector3:
+	var panel := _control_panel()
+	if panel == null:
+		return Vector3.INF
+	if panel is MeshInstance3D:
+		var mesh := panel as MeshInstance3D
+		var bounds := mesh.get_aabb()
+		if bounds.size.length_squared() > 0.0001:
+			return mesh.to_global(bounds.get_center())
+	return panel.global_position
 
 
 func blocks_near(point: Vector3) -> bool:
@@ -107,6 +158,21 @@ func _marker() -> Node3D:
 		var found := host.find_child(name, true, false) as Node3D
 		if found != null:
 			return found
+	return null
+
+
+func _control_panel() -> Node3D:
+	if _model == null:
+		_model = get_node_or_null("Relay") as Node3D
+	var host := _model if _model != null else self
+	for panel_name: String in PANEL_NAMES:
+		var found := host.find_child(panel_name, true, false) as Node3D
+		if found != null:
+			return found
+	for node: Node in host.find_children("*", "MeshInstance3D", true, false):
+		var label := String(node.name)
+		if label.contains("Navigation console") and label.contains("Panel"):
+			return node as Node3D
 	return null
 
 

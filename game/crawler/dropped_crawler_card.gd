@@ -9,16 +9,13 @@ extends StaticBody3D
 
 const TILE := 0.72
 const THICKNESS := 0.16
-const BOB_HEIGHT := 0.05
-const BOB_SPEED := 1.7
-const TURN_SPEED := 1.15
 const TARGET_SIZE := Vector3(0.86, 0.92, 0.28)
 
 var pickup_id := 0
 var payload: Dictionary = {}
 var _visual: Node3D
 var _visual_origin := Vector3.ZERO
-var _clock := 0.0
+var _motion: Dictionary = {}
 
 
 func configure(id: int, card_payload: Dictionary) -> void:
@@ -38,6 +35,10 @@ func interact_prompt() -> String:
 	return "Pick up %s" % title
 
 
+func begin_settle_to(at: Vector3) -> void:
+	_motion = DroppedWorldMotion.start_to(self, at)
+
+
 func interact(player: OnlinePlayer) -> void:
 	if player == null:
 		return
@@ -55,15 +56,12 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_PAUSABLE
 	_build_visual()
 	_build_collision()
+	if _motion.is_empty():
+		_motion = DroppedWorldMotion.start(self, THICKNESS)
 
 
 func _process(delta: float) -> void:
-	if not is_instance_valid(_visual):
-		return
-	_clock += delta
-	_visual.position = _visual_origin + Vector3.UP \
-		* (sin(_clock * BOB_SPEED) * BOB_HEIGHT)
-	_visual.rotate_y(delta * TURN_SPEED)
+	DroppedWorldMotion.tick(self, _visual, _motion, delta, _visual_origin)
 
 
 func _build_visual() -> void:

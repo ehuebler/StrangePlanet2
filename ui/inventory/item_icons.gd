@@ -93,7 +93,7 @@ func _render(id: String) -> Texture2D:
 	var ability_icon := ItemDB.ability_icon(CrawlerCatalog.catalog_id(id))
 	if ability_icon != null:
 		return ability_icon
-	var garment := _load_garment(ItemDB.scene_path(id))
+	var garment := _load_garment(ItemDB.scene_path(id), id)
 	if garment == null:
 		return null
 	_viewport.add_child(garment)
@@ -109,13 +109,15 @@ func _render(id: String) -> Texture2D:
 
 ## The garment mesh on its own, cut loose from the skeleton its .glb ships with so
 ## it renders in the rest pose without one.
-func _load_garment(path: String) -> MeshInstance3D:
+func _load_garment(path: String, item_id := "") -> MeshInstance3D:
 	if path.is_empty():
 		return null
 	var scene := load(path) as PackedScene
 	if scene == null:
 		return null
 	var instance := scene.instantiate()
+	if instance.has_method(&"apply_item") and not item_id.is_empty():
+		instance.call(&"apply_item", item_id)
 	var found: MeshInstance3D = null
 	for node in instance.find_children("*", "MeshInstance3D", true, false):
 		found = node as MeshInstance3D

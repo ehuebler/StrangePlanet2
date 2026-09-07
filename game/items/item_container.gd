@@ -26,6 +26,23 @@ func size() -> int:
 	return _items.size()
 
 
+## Grows or shrinks the slot run. Items past the new length are returned so a
+## caller can stash them; filters on kept slots stay put.
+func resize(slot_count: int) -> PackedStringArray:
+	var wanted := maxi(slot_count, 0)
+	var overflow := PackedStringArray()
+	if wanted == _items.size():
+		return overflow
+	if wanted < _items.size():
+		for index in range(wanted, _items.size()):
+			if not _items[index].is_empty():
+				overflow.append(_items[index])
+	_items.resize(wanted)
+	_filters.resize(wanted)
+	changed.emit()
+	return overflow
+
+
 func get_item(index: int) -> String:
 	if index < 0 or index >= _items.size():
 		return ""

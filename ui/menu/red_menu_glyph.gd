@@ -30,6 +30,11 @@ enum Glyph {
 	RESPAWN,
 	EMPTY_X,
 	STATS,
+	CAPE,
+	MOBS,
+	SHIELD,
+	SPEED,
+	GOLD,
 }
 
 @export var glyph: Glyph = Glyph.HERO:
@@ -126,6 +131,16 @@ func _draw() -> void:
 			_draw_empty()
 		Glyph.STATS:
 			_draw_stats()
+		Glyph.CAPE:
+			_draw_cape()
+		Glyph.MOBS:
+			_draw_mobs()
+		Glyph.SHIELD:
+			_draw_shield()
+		Glyph.SPEED:
+			_draw_speed()
+		Glyph.GOLD:
+			_draw_gold()
 
 
 func _draw_hero() -> void:
@@ -153,6 +168,92 @@ func _draw_apparel() -> void:
 		Vector2(25.0, 76.0),
 		Vector2(75.0, 76.0),
 	]), 5.5, _ink())
+
+
+func _draw_cape() -> void:
+	_stroke(PackedVector2Array([
+		Vector2(22.0, 28.0),
+		Vector2(50.0, 22.0),
+		Vector2(78.0, 28.0),
+	]), 6.0, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(22.0, 28.0),
+		Vector2(18.0, 78.0),
+		Vector2(50.0, 88.0),
+		Vector2(82.0, 78.0),
+		Vector2(78.0, 28.0),
+	]), 6.0, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(50.0, 28.0),
+		Vector2(50.0, 84.0),
+	]), 4.5, _ink())
+
+
+func _draw_mobs() -> void:
+	_circle(Vector2(50.0, 38.0), 16.0, 5.5, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(42.0, 34.0),
+		Vector2(46.0, 38.0),
+	]), 4.0, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(58.0, 34.0),
+		Vector2(54.0, 38.0),
+	]), 4.0, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(36.0, 70.0),
+		Vector2(50.0, 56.0),
+		Vector2(64.0, 70.0),
+	]), 6.0, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(20.0, 20.0),
+		Vector2(80.0, 80.0),
+	]), 7.0, _ink())
+
+
+func _draw_shield() -> void:
+	_stroke(PackedVector2Array([
+		Vector2(50.0, 16.0),
+		Vector2(80.0, 28.0),
+		Vector2(76.0, 58.0),
+		Vector2(50.0, 84.0),
+		Vector2(24.0, 58.0),
+		Vector2(20.0, 28.0),
+		Vector2(50.0, 16.0),
+	]), 6.0, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(50.0, 30.0),
+		Vector2(50.0, 68.0),
+	]), 5.0, _ink())
+
+
+func _draw_speed() -> void:
+	_polygon(PackedVector2Array([
+		Vector2(18.0, 50.0),
+		Vector2(58.0, 22.0),
+		Vector2(50.0, 50.0),
+		Vector2(58.0, 78.0),
+	]), _ink())
+	_stroke(PackedVector2Array([
+		Vector2(62.0, 32.0),
+		Vector2(84.0, 32.0),
+	]), 5.0, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(66.0, 50.0),
+		Vector2(88.0, 50.0),
+	]), 5.0, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(62.0, 68.0),
+		Vector2(84.0, 68.0),
+	]), 5.0, _ink())
+
+
+func _draw_gold() -> void:
+	_circle(Vector2(50.0, 50.0), 28.0, 6.0, _ink())
+	_circle(Vector2(50.0, 50.0), 16.0, 4.5, _ink())
+	_stroke(PackedVector2Array([
+		Vector2(50.0, 36.0),
+		Vector2(50.0, 64.0),
+	]), 5.0, _ink())
 
 
 func _draw_hat() -> void:
@@ -554,6 +655,8 @@ static func label_for(value: Glyph) -> String:
 			return "Apparel / All"
 		Glyph.HAT:
 			return "Hat"
+		Glyph.CAPE:
+			return "Cape"
 		Glyph.GOGGLES:
 			return "Goggles"
 		Glyph.BODY_TUNIC:
@@ -586,4 +689,12 @@ static func label_for(value: Glyph) -> String:
 			return "Empty"
 		Glyph.STATS:
 			return "Stats"
+		Glyph.MOBS:
+			return "No Mobs"
+		Glyph.SHIELD:
+			return "Invincible"
+		Glyph.SPEED:
+			return "Fast"
+		Glyph.GOLD:
+			return "Gold"
 	return ""

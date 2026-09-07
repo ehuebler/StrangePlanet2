@@ -153,6 +153,18 @@ func _check_status_object() -> void:
 	copy.tick(2.0)
 	_expect(not copy.has(CombatStatuses.FLIGHTLESS) and changes[0] > 0,
 		"status expires and emits changes")
+	var ailments := CombatStatuses.new()
+	_expect(ailments.apply_status(CombatStatuses.POISON, 3.0, 8.0)
+			and ailments.apply_status(CombatStatuses.CHARM, 2.0)
+			and ailments.apply_status(CombatStatuses.FREEZE, 1.5)
+			and ailments.apply_status(CombatStatuses.SHOCK, 2.0),
+		"poison, charm, freeze, and shock are known statuses")
+	_expect(is_equal_approx(ailments.strength(CombatStatuses.POISON), 8.0),
+		"poison stores its tick strength")
+	_expect(ailments.shock_locked(), "shock starts in a lock pulse")
+	ailments.tick(CombatStatuses.SHOCK_LOCK + 0.05)
+	_expect(not ailments.shock_locked(), "shock then lets the body twitch free")
+	_expect(ailments.rows().size() == 4, "each ailment exposes a HUD row")
 
 
 func _check_hit_geometry_and_wire() -> void:

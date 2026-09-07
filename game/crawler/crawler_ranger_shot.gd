@@ -17,6 +17,7 @@ var hit_radius := 1.45
 var knockback := 6.0
 var parryable := true
 var shooter: Node
+var _charmed_shot := false
 
 var _velocity := Vector3.ZERO
 var _planet: Planet
@@ -45,6 +46,7 @@ func _begin(host: Node, from: Vector3, along: Vector3, by: Node) -> bool:
 	name = "CrawlerRangerShot"
 	_velocity = along
 	shooter = by
+	_charmed_shot = _read_shooter_charmed()
 	var body := by as CollisionObject3D
 	if body != null:
 		_blocker = body.get_rid()
@@ -109,8 +111,10 @@ func _physics_process(delta: float) -> void:
 	var up := _up()
 	_velocity -= up * maxf(gravity, 0.0) * delta
 	var from := global_position
-	var to := from + _velocity * delta
-	var struck := _player_along(from, to)
+	var field_slow := CrawlerFieldVolume.speed_scale_at(self, from) \
+		* CrawlerLingerCloud.speed_scale_at(self, from)
+	var to := from + _velocity * field_slow * delta
+	var struck := _victim_along(from, to)
 	if struck != null:
 		global_position = _nearest_on(from, to, _combat_position(struck))
 		detonate()
@@ -128,23 +132,72 @@ func _physics_process(delta: float) -> void:
 	detonate()
 
 
-func _player_along(from: Vector3, to: Vector3) -> Node:
+func _victim_along(from: Vector3, to: Vector3) -> Node:
 	var sweep := DamageHit.beam(from, to, hit_radius, 0.0)
 	if not is_inside_tree():
 		return null
-	for player_variant: Variant in get_tree().get_nodes_in_group(&"network_players"):
-		var player := player_variant as Node3D
-		if player == null or player == shooter \
-				or not DamageHit.in_same_world(self, player):
-			continue
-		if player.has_method(&"is_dead") and bool(player.call(&"is_dead")):
+	for node in _hurt_targets():
+		if not is_instance_valid(node):
 			continue
 		var bounds := 0.4
-		if player.has_method(&"combat_radius"):
-			bounds = float(player.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(player), bounds):
-			return player
+		if node.has_method(&"combat_radius"):
+			bounds = float(node.call(&"combat_radius"))
+		if sweep.reaches(_combat_position(node), bounds):
+			return node
 	return null
+
+
+func _hurt_targets() -> Array[Node]:
+	var found: Array[Node] = []
+	var seen := {}
+	if not is_inside_tree():
+		return found
+	for group: StringName in [&"network_players", DamageHit.COMBATANT_GROUP]:
+		for node_variant: Variant in get_tree().get_nodes_in_group(group):
+			if not is_instance_valid(node_variant):
+				continue
+			var node := node_variant as Node
+			if node == null:
+				continue
+			var key := node.get_instance_id()
+			if seen.has(key) or not _should_hurt(node):
+				continue
+			seen[key] = true
+			found.append(node)
+	return found
+
+
+func _should_hurt(node: Node) -> bool:
+	if not is_instance_valid(node) or node == shooter:
+		return false
+	if not node is Node3D:
+		return false
+	if DamageHit.game_world_of(self) != null \
+			and not DamageHit.in_same_world(self, node):
+		return false
+	if node.has_method(&"is_dead") and bool(node.call(&"is_dead")):
+		return false
+	if node.has_method(&"is_alive") and not bool(node.call(&"is_alive")):
+		return false
+	if _shooter_charmed():
+		return node is CrawlerMob
+	if node.is_in_group(&"network_players"):
+		return true
+	var mob := node as CrawlerMob
+	return mob != null and mob.is_charmed()
+
+
+func _shooter_charmed() -> bool:
+	if is_instance_valid(shooter):
+		_charmed_shot = _read_shooter_charmed()
+	return _charmed_shot
+
+
+func _read_shooter_charmed() -> bool:
+	if not is_instance_valid(shooter):
+		return false
+	var mob := shooter as CrawlerMob
+	return mob != null and mob.is_charmed()
 
 
 func blast_radius() -> float:
@@ -173,22 +226,15 @@ func _deal_aoe(at: Vector3) -> void:
 	if not is_inside_tree():
 		return
 	var blast := _make_blast(at)
-	var locked := DamageHit.game_world_of(self) != null
-	for player_variant: Variant in get_tree().get_nodes_in_group(&"network_players"):
-		var player := player_variant as Node
-		if player == null or player == shooter \
-				or not player.has_method(&"apply_damage"):
-			continue
-		if locked and not DamageHit.in_same_world(self, player):
-			continue
-		if player.has_method(&"is_dead") and bool(player.call(&"is_dead")):
+	for node in _hurt_targets():
+		if not node.has_method(&"apply_damage"):
 			continue
 		var bounds := 0.4
-		if player.has_method(&"combat_radius"):
-			bounds = float(player.call(&"combat_radius"))
-		if not blast.reaches(_combat_position(player), bounds):
+		if node.has_method(&"combat_radius"):
+			bounds = float(node.call(&"combat_radius"))
+		if not blast.reaches(_combat_position(node), bounds):
 			continue
-		player.call(&"apply_damage", blast.resolved_for(player))
+		node.call(&"apply_damage", blast.resolved_for(node))
 
 
 func _make_blast(at: Vector3) -> DamageHit:
@@ -196,7 +242,8 @@ func _make_blast(at: Vector3) -> DamageHit:
 		if _velocity.length_squared() > 0.01 else -_up()
 	var blast := DamageHit.area(
 		at, blast_radius(), damage, CrawlerRules.RANGER_SHOT_AOE_FALLOFF)
-	blast.faction = DamageHit.Faction.ENEMY
+	blast.faction = DamageHit.Faction.PLAYER if _shooter_charmed() \
+		else DamageHit.Faction.ENEMY
 	blast.parryable = parryable
 	blast.reaction = DamageHit.Reaction.STAGGER
 	blast.world_impulse = along * knockback * 0.35
@@ -204,6 +251,7 @@ func _make_blast(at: Vector3) -> DamageHit:
 	blast.radial_lift = knockback * 0.18
 	blast.affects_flora = false
 	blast.ability_id = "crawler_ranger_shot"
+	blast.projectile = true
 	if is_instance_valid(shooter):
 		blast.set_source(shooter)
 	return blast
@@ -227,9 +275,12 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(player: Node) -> Vector3:
+	if not is_instance_valid(player):
+		return global_position
 	if player.has_method(&"combat_position"):
 		return player.call(&"combat_position")
-	return (player as Node3D).global_position
+	var body := player as Node3D
+	return body.global_position if body != null else global_position
 
 
 func _up() -> Vector3:

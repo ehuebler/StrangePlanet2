@@ -55,8 +55,8 @@ func combat_radius() -> float:
 func _tick_ai(delta: float) -> void:
 	_stick_to_surface()
 	_slam_left = maxf(_slam_left - delta, 0.0)
-	var player := _nearest_player()
-	if player == null or not tick_agro(player, delta):
+	var player := _hunt_target(delta)
+	if player == null:
 		_patrol_ground(delta)
 		return
 	var at := _combat_position_of(player)
@@ -130,7 +130,7 @@ func _slam(player: Node) -> void:
 	_slam_left = SLAM_COOLDOWN
 	var hit := DamageHit.area(combat_position(), REACH + 0.8, damage(), 0.4)
 	hit.kind = DamageHit.Kind.AREA
-	hit.faction = DamageHit.Faction.ENEMY
+	hit.faction = outgoing_faction()
 	hit.ability_id = "crawler_hulk_slam"
 	hit.affects_flora = false
 	hit.affects_combatants = true
@@ -138,7 +138,8 @@ func _slam(player: Node) -> void:
 	hit.radial_impulse = 8.0
 	hit.radial_lift = 4.0
 	hit.set_source(self)
-	if player != null and player.has_method(&"combat_peer_id"):
+	if not is_charmed() and player != null \
+			and player.has_method(&"combat_peer_id"):
 		hit.target_peer = int(player.call(&"combat_peer_id"))
 	if DamageHit.game_world_of(self) != null:
 		DamageHit.apply_to_combatants(self, hit)

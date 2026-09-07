@@ -36,18 +36,45 @@ const ABILITY_DISPLAY_NAMES := {
 	"bigfoot_trample": "Trample",
 	"grapple": "Grapple",
 	"lasso": "Lasso",
+	"kame": "Kame",
 	"laser_eyes": "Laser Eyes",
 	"meteor_punch": "Meteor Punch",
+	"hero_punch": "Hero Punch",
 	"nausicaa": "Nausicaä",
+	"lightning": "Lightning",
 	"nuke": "Nuke",
+	"mini_nuke": "Mini Nuke",
 	"building_collapse": "Collapse",
 	"parry_reflect": "Parry Reflection",
 	"starfire": "Starfire",
+	"light_bolt": "Light Bolt",
+	"icicle": "Icicle",
+	"teleport": "Teleport",
+	"fus": "Fus",
+	"roar": "Roar",
+	"toxic_blast": "Toxic Blast",
+	"charming_aura": "Charming Aura",
+	"freeze_blast": "Freeze Blast",
+	"static_field": "Static Field",
+	"toxic_field": "Toxic Field",
+	"freeze_field": "Freeze Field",
+	"healing_field": "Healing Field",
+	"overdrive": "Overdrive",
 	"wall": "Wall",
+	"bubble": "Bubble",
+	"hex": "Hex Missile",
+	"hat_mine": "Trail Mine",
+	"hat_juke": "Juke",
 	"crawler_ranger_shot": "Ranger Shot",
 	"crawler_ram": "Rammer",
 	"crawler_rhino_meteor": "Meteor Strike",
 	"crawler_hulk_slam": "Slam",
+	"crawler_gloam_bite": "Gloam Bite",
+	"crawler_vesper_beam": "Vesper Beam",
+	"crawler_threnody_column": "Cursed Column",
+	"crawler_gruk_swing": "Gruk Swing",
+	"crawler_nix_swing": "Nix Swing",
+	"crawler_vex_mortar": "Vex Mortar",
 	"fauna_body_slap": "Body Slam",
 	"fauna_quills": "Quills",
 	"fauna_spit": "Spit",
@@ -168,11 +195,20 @@ var radial_lift := 0.0
 var blocked_by_world := false
 var status := &""
 var status_duration := 0.0
+var status_strength := 0.0
+var status_stack := false
+## Extra statuses beyond the primary fields. Each entry is
+## `{id, duration, strength, stack}`.
+var extra_statuses: Array = []
 var parryable := false
 ## Damage dealt back to the source by a perfect parry. Zero falls back to amount.
 var reflection := 0.0
 ## Reliable combat event sequence. Networking code owns assignment.
 var sequence := 0
+## Blast volumes (nukes, craters, mines). Ordinance hats ignore these.
+var explosive := false
+## Flown shots (bolts, missiles, ranger fire). Phase hats can pass through these.
+var projectile := false
 
 
 ## A cutting line between two points.
@@ -245,10 +281,37 @@ func set_source(source: Variant, peer := -1) -> DamageHit:
 	return self
 
 
-func with_status(id: StringName, duration: float) -> DamageHit:
+func with_status(id: StringName, duration: float, strength := 0.0) -> DamageHit:
 	status = id
 	status_duration = maxf(duration, 0.0)
+	status_strength = maxf(strength, 0.0) if is_finite(strength) else 0.0
 	return self
+
+
+func status_entries() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not status.is_empty() and status_duration > 0.0:
+		out.append({
+			"id": String(status),
+			"duration": status_duration,
+			"strength": status_strength,
+			"stack": status_stack,
+		})
+	for item: Variant in extra_statuses:
+		if not item is Dictionary:
+			continue
+		var row: Dictionary = item
+		var id := StringName(str(row.get("id", "")))
+		var hold := maxf(float(row.get("duration", 0.0)), 0.0)
+		if id.is_empty() or hold <= 0.0:
+			continue
+		out.append({
+			"id": String(id),
+			"duration": hold,
+			"strength": maxf(float(row.get("strength", 0.0)), 0.0),
+			"stack": bool(row.get("stack", false)),
+		})
+	return out
 
 
 ## Middle of the volume, which is what a field measures its tiles against.
@@ -395,10 +458,18 @@ func affects_combatant(combatant: Node) -> bool:
 	var target_faction := int(combatant.call(&"combat_faction"))
 	match faction:
 		Faction.PLAYER:
-			if target_faction != Faction.ENEMY:
+			if target_faction == Faction.PLAYER:
+				if amount <= 0.0 or not CrawlerRules.duel_active():
+					return false
+				if source_peer > 0 and combatant.has_method(&"combat_peer_id") \
+						and int(combatant.call(&"combat_peer_id")) == source_peer:
+					return false
+			elif target_faction != Faction.ENEMY:
 				return false
 		Faction.ENEMY:
-			if target_faction != Faction.PLAYER:
+			if target_faction != Faction.PLAYER \
+					and not (combatant.has_method(&"is_charmed")
+						and bool(combatant.call(&"is_charmed"))):
 				return false
 	if target_peer > 0:
 		if not combatant.has_method(&"combat_peer_id") \
@@ -460,11 +531,13 @@ func resolved_for(combatant: Node) -> DamageHit:
 	var boxed := box.size.length_squared() > 0.0001
 	if boxed and not reaches_aabb(box):
 		delivered.amount = 0.0
+		_scale_statuses(delivered, 0.0)
 		return delivered
 	var point := _closest_on_aabb(box, centre()) if boxed \
 		else _combatant_position(combatant)
 	if not point.is_finite():
 		delivered.amount = 0.0
+		_scale_statuses(delivered, 0.0)
 		return delivered
 	var bounds := 0.0 if boxed else _combatant_radius(combatant)
 	var away := 0.0
@@ -473,12 +546,15 @@ func resolved_for(combatant: Node) -> DamageHit:
 	elif shape == Shape.CYLINDER:
 		if _cylinder_solid_distance(point) > bounds:
 			delivered.amount = 0.0
+			_scale_statuses(delivered, 0.0)
 			return delivered
 		away = maxf(_radial_axis_distance(point) - bounds, 0.0)
 	else:
 		away = maxf(distance_to(point) - bounds, 0.0)
 	var share := _share_for_distance(away)
 	delivered.amount = amount * share
+	if falloff > 0.0:
+		_scale_statuses(delivered, share)
 	if radial_impulse > 0.0 or radial_lift > 0.0:
 		var up := Vector3.UP
 		if combatant is Node3D:
@@ -711,9 +787,14 @@ func _copy() -> DamageHit:
 	copy.blocked_by_world = blocked_by_world
 	copy.status = status
 	copy.status_duration = status_duration
+	copy.status_strength = status_strength
+	copy.status_stack = status_stack
+	copy.extra_statuses = extra_statuses.duplicate(true)
 	copy.parryable = parryable
 	copy.reflection = reflection
 	copy.sequence = sequence
+	copy.explosive = explosive
+	copy.projectile = projectile
 	return copy
 
 
@@ -745,9 +826,14 @@ func to_wire() -> Dictionary:
 		"blocked_by_world": blocked_by_world,
 		"status": String(status),
 		"status_duration": status_duration,
+		"status_strength": status_strength,
+		"status_stack": status_stack,
+		"extra_statuses": extra_statuses.duplicate(true),
 		"parryable": parryable,
 		"reflection": reflection,
 		"sequence": sequence,
+		"explosive": explosive,
+		"projectile": projectile,
 	}
 
 
@@ -795,11 +881,18 @@ static func from_wire(wire: Dictionary) -> DamageHit:
 	hit.status_duration = clampf(
 		duration_value, 0.0, CombatStatuses.MAX_DURATION) \
 		if is_finite(duration_value) else 0.0
+	var strength_value := float(wire.get("status_strength", 0.0))
+	hit.status_strength = maxf(strength_value, 0.0) \
+		if is_finite(strength_value) else 0.0
+	hit.status_stack = bool(wire.get("status_stack", false))
+	hit.extra_statuses = _status_rows(wire.get("extra_statuses", []))
 	hit.parryable = bool(wire.get("parryable", false))
 	var reflection_value := float(wire.get("reflection", 0.0))
 	hit.reflection = maxf(reflection_value, 0.0) \
 		if is_finite(reflection_value) else 0.0
 	hit.sequence = maxi(int(wire.get("sequence", 0)), 0)
+	hit.explosive = bool(wire.get("explosive", false))
+	hit.projectile = bool(wire.get("projectile", false))
 	return hit
 
 
@@ -817,12 +910,60 @@ static func sanitize_player_packet(wire: Dictionary, sender: int,
 	hit.blocked_by_world = false
 	hit.status = &""
 	hit.status_duration = 0.0
+	hit.status_strength = 0.0
+	hit.status_stack = false
+	hit.extra_statuses.clear()
 	hit.parryable = false
 	hit.reflection = 0.0
 	hit.amount = clampf(hit.amount, 0.0, 100000.0)
 	hit.source_path = NodePath()
 	hit.set_source(source, sender)
+	if source is OnlinePlayer:
+		var player := source as OnlinePlayer
+		var overlay: Dictionary = {}
+		if player.has_method(&"crawler_ability_overlay"):
+			overlay = player.crawler_ability_overlay(hit.ability_id)
+		CrawlerElements.stamp(hit, player, hit.ability_id, overlay)
 	return hit
+
+
+static func _scale_statuses(hit: DamageHit, share: float) -> void:
+	var amount := clampf(share, 0.0, 1.0) if is_finite(share) else 0.0
+	hit.status_duration *= amount
+	hit.status_strength *= amount
+	if hit.extra_statuses.is_empty():
+		return
+	var scaled: Array = []
+	for item: Variant in hit.extra_statuses:
+		if not item is Dictionary:
+			continue
+		var row: Dictionary = (item as Dictionary).duplicate(true)
+		row["duration"] = float(row.get("duration", 0.0)) * amount
+		row["strength"] = float(row.get("strength", 0.0)) * amount
+		scaled.append(row)
+	hit.extra_statuses = scaled
+
+
+static func _status_rows(value: Variant) -> Array:
+	var out: Array = []
+	if not value is Array:
+		return out
+	for item: Variant in value:
+		if not item is Dictionary:
+			continue
+		var row: Dictionary = item
+		var id := str(row.get("id", "")).strip_edges()
+		var hold := float(row.get("duration", 0.0))
+		if id.is_empty() or not is_finite(hold) or hold <= 0.0:
+			continue
+		var strength := float(row.get("strength", 0.0))
+		out.append({
+			"id": id,
+			"duration": clampf(hold, 0.0, CombatStatuses.MAX_DURATION),
+			"strength": maxf(strength, 0.0) if is_finite(strength) else 0.0,
+			"stack": bool(row.get("stack", false)),
+		})
+	return out
 
 
 static func _finite_vector(value: Variant,

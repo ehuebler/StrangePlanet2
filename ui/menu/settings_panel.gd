@@ -46,6 +46,9 @@ var _in_game := false
 var _section := 0
 var _section_row: HBoxContainer
 var _content: MarginContainer
+var _save_button: Button
+var _load_button: Button
+var _save_note: Label
 
 
 ## Called before the panel enters the tree. In game it drops its own card,
@@ -63,6 +66,7 @@ func _ready() -> void:
 		_settings.name = "LocalSettingsManager"
 		add_child(_settings)
 	_build()
+	CrtType.watch(self)
 
 
 func _input(event: InputEvent) -> void:
@@ -180,6 +184,8 @@ func show_section(index: int) -> void:
 
 
 func _footer() -> Control:
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
 	var actions := HBoxContainer.new()
 	actions.add_theme_constant_override("separation", 14)
 	var reset := _settings_button("RESET DEFAULTS")
@@ -190,21 +196,91 @@ func _footer() -> Control:
 	)
 	actions.add_child(reset)
 
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	actions.add_child(spacer)
+	_save_button = _settings_button("SAVE GAME")
+	_save_button.name = "SettingsSaveGame"
+	_save_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_save_button.pressed.connect(_on_save_game)
+	actions.add_child(_save_button)
 
-	if _in_game:
-		return actions
+	_load_button = _settings_button("LOAD GAME")
+	_load_button.name = "SettingsLoadGame"
+	_load_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_load_button.pressed.connect(_on_load_game)
+	actions.add_child(_load_button)
 
-	var back := _settings_button("BACK", true)
-	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	back.pressed.connect(func() -> void:
-		_settings.save_settings()
+	if not _in_game:
+		var back := _settings_button("BACK", true)
+		back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		back.pressed.connect(func() -> void:
+			_settings.save_settings()
+			closed.emit()
+		)
+		actions.add_child(back)
+
+	column.add_child(actions)
+	_save_note = _settings_caption("")
+	_save_note.name = "SettingsSaveNote"
+	_save_note.visible = false
+	column.add_child(_save_note)
+	_refresh_save_buttons()
+	return column
+
+
+func _refresh_save_buttons() -> void:
+	var tree := get_tree() if is_inside_tree() else null
+	if _save_button != null:
+		var can_save := GameSave.can_write(tree)
+		_save_button.disabled = not can_save
+		_save_button.tooltip_text = "" if can_save else "The host can save during a run."
+	if _load_button != null:
+		var can_load := GameSave.can_apply(tree)
+		_load_button.disabled = not can_load
+		_load_button.tooltip_text = "" if can_load else (
+			"No saved game yet." if not GameSave.has_save() else "Only the host can load a run."
+		)
+
+
+func _on_save_game() -> void:
+	var world := GameSave.world_of(get_tree() if is_inside_tree() else null)
+	if not GameSave.write_from_world(world):
+		_set_save_note("Could not save the game.", true)
+		return
+	_set_save_note("Game saved.", false)
+	_refresh_save_buttons()
+
+
+func _on_load_game() -> void:
+	var payload := GameSave.read()
+	if payload.is_empty():
+		_set_save_note("No saved game yet.", true)
+		_refresh_save_buttons()
+		return
+	var world := GameSave.world_of(get_tree() if is_inside_tree() else null)
+	if world != null and world.has_method(&"session_is_open") \
+			and bool(world.call(&"session_is_open")):
+		if not bool(world.call(&"apply_disk_save", payload)):
+			_set_save_note("Could not load the save.", true)
+			return
+		_set_save_note("Game loaded.", false)
+		var player := world.call(&"local_player") as OnlinePlayer \
+			if world.has_method(&"local_player") else null
+		if player != null:
+			player.close_menu()
+		return
+	var home := world.get_node_or_null("HomeScreen") as HomeScreen if world != null else null
+	if home != null:
 		closed.emit()
-	)
-	actions.add_child(back)
-	return actions
+		home.start_saved_game()
+		return
+	_set_save_note("Could not load the save.", true)
+
+
+func _set_save_note(text: String, is_error: bool) -> void:
+	if _save_note == null:
+		return
+	_save_note.text = text
+	_save_note.visible = not text.is_empty()
+	_style_red_label(_save_note, RED_BRIGHT if is_error else GREEN_TEXT, 13)
 
 
 func _section_box() -> VBoxContainer:

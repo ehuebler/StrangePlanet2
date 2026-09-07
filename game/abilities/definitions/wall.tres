@@ -8,7 +8,7 @@
 script = ExtResource("1_definition")
 ability_id = "wall"
 title = "Wall"
-description = "Project an indestructible translucent blue barrier in front of you. It blocks bodies, beams, projectiles, and occluded blasts, then slowly fades out of the world."
+description = "Cast an indestructible translucent barrier. Upgrade it to slide forward, burn on contact, or close into a house around you."
 implementation = ExtResource("2_implementation")
 icon = ExtResource("3_icon")
 tint = Color(0.270588, 0.686275, 1.000000, 1.000000)

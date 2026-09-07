@@ -14,6 +14,7 @@ signal hover_started(slot: RedItemSlot)
 signal hover_ended(slot: RedItemSlot)
 signal item_dropped(target: RedItemSlot, source: RedItemSlot)
 signal crawler_move_dropped(target: RedItemSlot, data: Dictionary)
+signal drag_started(slot: RedItemSlot)
 signal drag_released(slot: RedItemSlot, dropped: bool)
 
 const EDGE := 70.0
@@ -26,10 +27,18 @@ var container: ItemContainer
 var index := 0
 var interactive := true
 var draggable := true
+var accepts_drops := true
 ## When true, a drop copies the id onto the target instead of swapping
 ## containers. Ability library tiles use this so a known power is not consumed.
 var copy_on_drag := false
 var selected := false
+## Hero-page fit hint: a held modifier cannot seat on this tile.
+var blocked := false:
+	set(value):
+		if blocked == value:
+			return
+		blocked = value
+		queue_redraw()
 var equipped := false:
 	set(value):
 		equipped = value
@@ -127,10 +136,16 @@ func _get_drag_data(_at: Vector2) -> Variant:
 		return null
 	_drag_live = true
 	set_drag_preview(_drag_preview())
+	drag_started.emit(self)
 	return {"red_item_slot": self}
 
 
 func _can_drop_data(_at: Vector2, data: Variant) -> bool:
+	if not accepts_drops:
+		if _drop_target:
+			_drop_target = false
+			queue_redraw()
+		return false
 	if _is_crawler_move(data):
 		var token := str((data as Dictionary).get("token", ""))
 		var legal := container != null and container.accepts(index, token)
@@ -154,6 +169,8 @@ func _can_drop_data(_at: Vector2, data: Variant) -> bool:
 
 
 func _drop_data(_at: Vector2, data: Variant) -> void:
+	if not accepts_drops:
+		return
 	if _is_crawler_move(data):
 		_drop_target = false
 		crawler_move_dropped.emit(self, data as Dictionary)
@@ -194,19 +211,6 @@ func _drag_preview() -> Control:
 	preview.size = size * 0.84
 	preview.modulate = _icon_modulate(item_id())
 	holder.add_child(preview)
-	if container != null \
-			and container.filter_of(index) == CrawlerCatalog.FILTER_KIT \
-			and CrawlerCatalog.scope_of(item_id()) == "ability_specific":
-		var hosts := CrawlerCatalog.host_abilities(item_id())
-		if not hosts.is_empty():
-			var mark := TextureRect.new()
-			mark.texture = CrawlerCatalog.texture_for(hosts[0])
-			mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			mark.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			mark.position = preview.position + preview.size * Vector2(0.58, 0.58)
-			mark.size = preview.size * 0.38
-			mark.modulate = _icon_modulate(hosts[0])
-			holder.add_child(mark)
 	return holder
 
 
@@ -248,8 +252,9 @@ func _draw() -> void:
 			draw_texture_rect(icon, inner, false, _icon_modulate(id))
 		else:
 			draw_rect(inner.grow(-2.0), Color(ItemDB.tint(id), 0.22))
-		_draw_host_mark(id)
 	_draw_badge()
+	if blocked:
+		_draw_block_x()
 
 
 func _icon_modulate(id: String) -> Color:
@@ -317,27 +322,15 @@ func _draw_placeholder() -> void:
 		HORIZONTAL_ALIGNMENT_CENTER, size.x, font_size, GREEN)
 
 
-func _draw_host_mark(id: String) -> void:
-	if container == null or container.filter_of(index) != CrawlerCatalog.FILTER_KIT:
-		return
-	if not CrawlerCatalog.is_modifier(id) \
-			or CrawlerCatalog.scope_of(id) != "ability_specific":
-		return
-	var hosts := CrawlerCatalog.host_abilities(id)
-	if hosts.is_empty():
-		return
-	var mark := CrawlerCatalog.texture_for(hosts[0])
-	if mark == null:
-		return
-	var edge := maxf(size.x * 0.36, 12.0)
-	var pad := maxf(size.x * 0.08, 3.0)
-	var plate := Rect2(
-		Vector2(size.x - edge - pad, size.y - edge - pad),
-		Vector2.ONE * edge
-	)
-	draw_rect(plate.grow(2.0), Color(0.0, 0.0, 0.0, 0.72))
-	draw_rect(plate.grow(2.0), Color(RED, 0.85), false, 1.0)
-	draw_texture_rect(mark, plate.grow(-1.0), false, _icon_modulate(hosts[0]))
+func _draw_block_x() -> void:
+	var pad := minf(size.x, size.y) * 0.16
+	var a := Vector2(pad, pad)
+	var b := Vector2(size.x - pad, size.y - pad)
+	var c := Vector2(size.x - pad, pad)
+	var d := Vector2(pad, size.y - pad)
+	var width := clampf(minf(size.x, size.y) * 0.14, 2.0, 4.5)
+	draw_line(a, b, Color(RED, 0.96), width, true)
+	draw_line(c, d, Color(RED, 0.96), width, true)
 
 
 func _draw_badge() -> void:

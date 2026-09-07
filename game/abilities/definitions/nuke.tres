@@ -8,7 +8,7 @@
 script = ExtResource("1_definition")
 ability_id = "nuke"
 title = "Nuke"
-description = "Launch a giant energy core from the right hand. Its host-authoritative detonation tears out a massive crater, ragdolls and hurls everything nearby, and can launch its caster without dealing self-damage."
+description = "Launch a giant energy core from the front of both hands. Its host-authoritative detonation tears out a massive crater, ragdolls and hurls everything nearby, and can launch its caster without dealing self-damage."
 implementation = ExtResource("2_implementation")
 icon = ExtResource("3_icon")
 tint = Color(1.000000, 0.478431, 0.184314, 1.000000)
@@ -21,9 +21,9 @@ reaction_type = 3
 affects_players = true
 self_launch = true
 blast_occlusion = true
-animation = &"NukeThrow"
+animation = &"Kame"
 alternate_animation = &""
-hover_animation = &"NukeFloatThrow"
+hover_animation = &""
 alternate_hover_animation = &""
 held_animation = &""
 held_hover_animation = &""
@@ -39,7 +39,7 @@ stats = {
 "radius": 110.0,
 "cooldown": 10.0,
 "projectile_radius": 1.6,
-"animation_duration": 0.55,
+"animation_duration": 0.28,
 "crater_radius": 72.0,
 "crater_depth": 20.0,
 "crater_warp": 0.3,

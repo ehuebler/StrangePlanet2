@@ -49,6 +49,13 @@ var selected := false
 ## zero is the instant the cooldown begins. Inventory tiles never set this.
 var cooldown_fill := 1.0
 var cooldown_active := false
+## Remaining shots for a limited-use ability. Empty hides the count.
+var count_text := "":
+	set(value):
+		if count_text == value:
+			return
+		count_text = value
+		queue_redraw()
 ## Gameplay hotbar only: square black tile, red rim, and a black-on-accent key
 ## badge. Inventory and editor tiles keep their existing tactile presentation.
 var hud_style := false:
@@ -224,6 +231,7 @@ func _draw() -> void:
 	if id.is_empty():
 		_draw_placeholder()
 		_draw_badge()
+		_draw_count()
 		return
 	var icon := ItemIcons.cached(id)
 	var inner := rect.grow(-ICON_INSET)
@@ -234,6 +242,7 @@ func _draw() -> void:
 		# rather than as an empty slot.
 		_draw_fallback(inner.grow(-4.0), id)
 	_draw_badge()
+	_draw_count()
 
 
 func _draw_icon(icon: Texture2D, inner: Rect2, id: String) -> void:
@@ -340,6 +349,48 @@ func _draw_badge() -> void:
 	# that has to be read at a glance, and it is the smallest type in the game.
 	var color: Color = PALETTE.accent if selected else PALETTE.text_primary
 	draw_string(font, Vector2(5.0, 15.0), badge, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, color)
+
+
+func _draw_count() -> void:
+	if count_text.is_empty():
+		return
+	var font := get_theme_default_font()
+	if font == null:
+		return
+	var font_size := 12 if hud_style else 11
+	var text_size := font.get_string_size(
+		count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size
+	)
+	var pad := 5.0 if hud_style else 4.0
+	var box := Rect2(
+		Vector2(size.x - text_size.x - pad - 4.0, size.y - 17.0),
+		Vector2(text_size.x + 6.0, 14.0)
+	)
+	var empty := count_text == "0"
+	if hud_style:
+		var fill := Color(RedHudTheme.BLACK, 0.82)
+		var ink := RedHudTheme.RED if empty else RedHudTheme.GREEN
+		draw_rect(box, fill, true)
+		draw_rect(box, Color(ink, 0.9), false, 1.0)
+		draw_string(
+			font,
+			Vector2(box.position.x + 3.0, box.position.y + 12.0),
+			count_text,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1,
+			font_size,
+			ink
+		)
+		return
+	draw_string(
+		font,
+		Vector2(box.position.x + 2.0, size.y - 5.0),
+		count_text,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		font_size,
+		PALETTE.text_primary
+	)
 
 
 func _draw_placeholder() -> void:

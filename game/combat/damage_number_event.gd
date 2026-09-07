@@ -8,6 +8,10 @@ enum Kind {
 	GOLD,
 	XP,
 	GEM,
+	POISON,
+	CHARM,
+	SHOCK,
+	FREEZE,
 }
 
 var amount := 0.0
@@ -35,6 +39,10 @@ func caption(total := -1.0) -> String:
 			return "+%d" % value
 		Kind.GEM:
 			return "+%d G" % value
+		Kind.CHARM:
+			return "♥"
+		Kind.SHOCK:
+			return "⚡"
 		_:
 			return str(value)
 
@@ -74,7 +82,7 @@ static func from_wire(wire: Dictionary) -> DamageNumberEvent:
 	event.ability_name = String(wire.get("ability_name", ""))
 	event.target_peer = maxi(int(wire.get("target_peer", 0)), 0)
 	event.merge_key = String(wire.get("merge_key", ""))
-	event.kind = clampi(int(wire.get("kind", Kind.DAMAGE)), Kind.DAMAGE, Kind.GEM) as Kind
+	event.kind = clampi(int(wire.get("kind", Kind.DAMAGE)), Kind.DAMAGE, Kind.FREEZE) as Kind
 	var shift: Variant = wire.get("screen_offset", Vector2.ZERO)
 	event.screen_offset = shift if shift is Vector2 else Vector2.ZERO
 	return event

@@ -33,6 +33,7 @@ func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_fill_defaults()
 	_build()
+	CrtType.watch(self)
 	_refresh()
 
 

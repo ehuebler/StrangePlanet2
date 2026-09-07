@@ -23,6 +23,8 @@ const CHANNELS: Array[Dictionary] = [
 	{"id": "objects", "label": "Objects", "color": Color("e6eaff")},
 	{"id": "terrain", "label": "Terrain ms", "color": Color("f2a65a")},
 	{"id": "flora", "label": "Flora ms", "color": Color("6fdc9a")},
+	{"id": "mobs", "label": "Crawler mobs", "color": Color("ff9a62")},
+	{"id": "mob_ai", "label": "Mob AI ms", "color": Color("ffd36a")},
 	{"id": "pipes", "label": "Shader compiles", "color": Color("c9a0ff")},
 ]
 
@@ -46,6 +48,7 @@ var _last_nodes := -1.0
 var _last_vram := -1.0
 var _last_mem := -1.0
 var _last_bodies := -1
+var _pipe_total := -1.0
 var _throttle: Dictionary = {}
 
 
@@ -258,6 +261,8 @@ func _sample() -> void:
 	_write("objects", now, float(Performance.get_monitor(Performance.OBJECT_COUNT)))
 	_write("terrain", now, float(_gauges.get("terrain", 0.0)))
 	_write("flora", now, float(_gauges.get("flora", 0.0)))
+	_write("mobs", now, float(_gauges.get("mobs", 0.0)))
+	_write("mob_ai", now, float(_gauges.get("mob_ai", 0.0)))
 	_write("pipes", now, _pipeline_compiles())
 	_count = mini(_count + 1, CAPACITY)
 	_head = (_head + 1) % CAPACITY
@@ -316,11 +321,17 @@ func _jump(channel: String, noun: String, value: float, last: float, threshold: 
 
 
 func _pipeline_compiles() -> float:
-	return float(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_CANVAS)) \
+	var total := float(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_CANVAS)) \
 		+ float(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_MESH)) \
 		+ float(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SURFACE)) \
 		+ float(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW)) \
 		+ float(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SPECIALIZATION))
+	if _pipe_total < 0.0:
+		_pipe_total = total
+		return 0.0
+	var delta := maxf(total - _pipe_total, 0.0)
+	_pipe_total = total
+	return delta
 
 
 func _watch_hitch(now: float, frame_ms: float) -> void:
@@ -334,6 +345,9 @@ func _watch_hitch(now: float, frame_ms: float) -> void:
 	note("hitch", "frame %.1f ms (typical %.1f)" % [frame_ms, typical], {
 		"frame_ms": frame_ms,
 		"typical_ms": typical,
+		"mobs": latest("mobs"),
+		"mob_ai": latest("mob_ai"),
+		"physics_ms": latest("physics"),
 	})
 	call_deferred("_capture_hitch", now, frame_ms, typical)
 

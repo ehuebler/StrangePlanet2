@@ -23,6 +23,7 @@ var _fire_left := 0.0
 var _drift_clock := 0.0
 var _aim_left := 0.0
 var _pending_shot := false
+var _hold_cached := -1.0
 
 
 func _ready() -> void:
@@ -98,8 +99,8 @@ func _wander_point() -> Vector3:
 
 
 func _tick_ai(delta: float) -> void:
-	var player := _nearest_player()
-	if player == null or not tick_agro(player, delta):
+	var player := _hunt_target(delta)
+	if player == null:
 		_abort_aim()
 		_patrol(delta, 0.58)
 		return
@@ -245,9 +246,12 @@ func _push_off_terrain(player: Node, desired: Vector3) -> void:
 
 
 func _hold_share() -> float:
+	if _hold_cached >= 0.0:
+		return _hold_cached
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(hash(mob_id) & 0x7fffffff) + 4
-	return rng.randf()
+	_hold_cached = rng.randf()
+	return _hold_cached
 
 
 func _aiming() -> bool:
@@ -322,10 +326,12 @@ func _try_fire(player: Node, distance: float, delta: float) -> void:
 	if distance < CrawlerRules.ranger_engage_min(_rank()) \
 			or distance > CrawlerRules.ranger_engage_max(_rank()):
 		return
-	_pending_shot = true
-	_aim_left = CrawlerMobs.number(
+	var aim := CrawlerMobs.number(
 		"ranger", _rank(), "aim_seconds", CrawlerRules.RANGER_AIM_SECONDS)
-	_begin_attack(_aim_left)
+	if not _begin_attack(aim):
+		return
+	_pending_shot = true
+	_aim_left = aim
 
 
 func _release_shot(player: Node) -> void:

@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="AbilityDefinition" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://game/abilities/ability_definition.gd" id="1_definition"]
+[ext_resource type="Script" path="res://game/abilities/lightning.gd" id="2_implementation"]
+[ext_resource type="Texture2D" path="res://assets/runtime/abilities/icons/lightning.svg" id="3_icon"]
+
+[resource]
+script = ExtResource("1_definition")
+ability_id = "lightning"
+title = "Lightning"
+description = "One bolt from the eyes. It snaps onto a body, then jumps to a nearby one if one stands close enough. Upgrade Arcs to chain farther, and Shock to lock victims in a freeze-and-twitch pulse. Will not fire under water."
+implementation = ExtResource("2_implementation")
+icon = ExtResource("3_icon")
+tint = Color(0.478431, 0.843137, 1.000000, 1.000000)
+activation_type = 1
+projectile_type = 1
+impact_type = 1
+grapple_type = 0
+construct_type = 0
+reaction_type = 0
+affects_players = false
+self_launch = false
+blast_occlusion = false
+animation = &""
+alternate_animation = &""
+hover_animation = &""
+alternate_hover_animation = &""
+held_animation = &""
+held_hover_animation = &""
+impact_animation = &""
+blocked_underwater = true
+allowed_stances = PackedInt32Array()
+stats = {
+"damage": 900.0,
+"damage_unit": "/s",
+"duration": 3.5,
+"range": 50.0,
+"cooldown": 0.8,
+"radius": 0.32,
+"beam_width": 0.7,
+"arcs": 1.0,
+"shock": 0.0,
+}

@@ -13,8 +13,8 @@ extends RefCounted
 ## co-op session shares a world, not a diary, and the host has no business being
 ## told which achievements a guest has. It saves to `settings.cfg` under
 ## `progress/done` and `progress/claimed` for the same reason the look does —
-## it is a fact about this player on this machine. Gems wait on the menu until
-## they are claimed.
+## it is a fact about this player on this machine. Claimable gems wait on the
+## menu. Instant XP, auto gems, and unlocks pay the moment the goal finishes.
 
 ## Seconds between condition checks.
 const INTERVAL := 0.5
@@ -35,6 +35,8 @@ var _done: Dictionary = {}
 var _claimed: Dictionary = {}
 var _kills := 0
 var _elapsed := 0.0
+var _session_unlocked: PackedStringArray = PackedStringArray()
+var _unlocking_levels := false
 
 
 static func begin_test() -> void:
@@ -76,16 +78,38 @@ func done_count(kind: StringName) -> int:
 	return count
 
 
-## Marks an entry done and saves. Gem rewards stay unclaimed until
-## [method claim] from the menu. Returns false if it was already done, so a
-## caller can tell a fresh completion from a repeat and only announce the former.
+## Marks an entry done and saves. Claimable gem rewards stay unclaimed until
+## [method claim] from the menu. Instant XP, auto gems, and unlocks pay now.
+## Returns false if it was already done, so a caller can tell a fresh
+## completion from a repeat and only announce the former.
 func complete(id: String) -> bool:
 	if not JournalDB.has_entry(id) or is_done(id):
 		return false
 	_done[id] = true
+	if not _session_unlocked.has(id):
+		_session_unlocked.append(id)
+	_grant_instant_rewards(id)
 	save_progress()
 	completed.emit(id)
+	if not _unlocking_levels:
+		note_global_level(CrawlerMeta.global_level())
 	return true
+
+
+func session_completed() -> PackedStringArray:
+	return _session_unlocked.duplicate()
+
+
+func _grant_instant_rewards(id: String) -> void:
+	var gems := JournalDB.auto_gems_of(id)
+	if gems > 0:
+		CrawlerMeta.add_gems(gems)
+	var xp := JournalDB.xp_of(id)
+	if xp > 0:
+		CrawlerMeta.add_xp(xp)
+	for unlock: String in JournalDB.unlocks_of(id):
+		if unlock == "sandbox":
+			CrawlerMeta.unlock_sandbox()
 
 
 ## Pays a finished achievement's gems once. Returns false if it is not waiting.
@@ -109,9 +133,18 @@ func reset(id := "") -> void:
 		_done.clear()
 		_claimed.clear()
 		_kills = 0
+		_session_unlocked.clear()
+		CrawlerMeta.lock_sandbox()
 	else:
 		_done.erase(id)
 		_claimed.erase(id)
+		var kept := PackedStringArray()
+		for held: String in _session_unlocked:
+			if held != id:
+				kept.append(held)
+		_session_unlocked = kept
+		if id == "first_city":
+			CrawlerMeta.lock_sandbox()
 	save_progress()
 
 
@@ -121,6 +154,8 @@ func reset_achievements() -> void:
 		_done.erase(id)
 		_claimed.erase(id)
 	_kills = 0
+	_session_unlocked.clear()
+	CrawlerMeta.lock_sandbox()
 	save_progress()
 
 
@@ -143,6 +178,33 @@ func note_kill(amount := 1) -> PackedStringArray:
 			unlocked.append(id)
 	if unlocked.is_empty():
 		save_progress()
+	return unlocked
+
+
+## First city ring. Returns any ids that just completed.
+func note_city() -> PackedStringArray:
+	var unlocked := PackedStringArray()
+	for id: String in JournalDB.ids_of_kind(JournalDB.ACHIEVEMENT):
+		if not JournalDB.wants_city(id):
+			continue
+		if complete(id):
+			unlocked.append(id)
+	return unlocked
+
+
+## Global-level milestones after XP is paid. Returns any ids that just completed.
+func note_global_level(level: int) -> PackedStringArray:
+	if _unlocking_levels:
+		return PackedStringArray()
+	_unlocking_levels = true
+	var unlocked := PackedStringArray()
+	for id: String in JournalDB.ids_of_kind(JournalDB.ACHIEVEMENT):
+		var needed := JournalDB.global_level_of(id)
+		if needed <= 0 or level < needed:
+			continue
+		if complete(id):
+			unlocked.append(id)
+	_unlocking_levels = false
 	return unlocked
 
 

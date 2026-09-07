@@ -3,8 +3,8 @@ extends VBoxContainer
 
 ## In-game hero overview for the red menu.
 ##
-## The compressed portrait sits on the left with its hat tile in the upper
-## corner. The right column is the ability loadout: a four-slot hotbar, a
+## The compressed portrait sits on the left with its hat and cape tiles in the
+## upper corners. The right column is the ability loadout: a four-slot hotbar, a
 ## scrolling library of known powers, and a description of the selected one.
 ## Shift-click or drag a library tile onto the hotbar to assign it. There are
 ## no equip or drop buttons.
@@ -57,6 +57,8 @@ var _preview: RedCharacterPreview
 var _stats_toggle: Button
 var _hat_slot: RedItemSlot
 var _hat_glyph: RedMenuGlyph
+var _cape_slot: RedItemSlot
+var _cape_glyph: RedMenuGlyph
 var _hotbar_frame: PanelContainer
 var _hotbar_row: HBoxContainer
 var _library_scroll: ScrollContainer
@@ -91,7 +93,7 @@ func configure(player: OnlinePlayer) -> void:
 	refresh()
 
 
-## Re-reads the name, stats, hat, hotbar and library. Menu code and visual
+## Re-reads the name, stats, hat, cape, hotbar and library. Menu code and visual
 ## harnesses may call this after changing player state directly.
 func refresh() -> void:
 	if not _built:
@@ -107,6 +109,7 @@ func refresh() -> void:
 	_fill_stats()
 	_fill_status_effects()
 	_refresh_hat()
+	_refresh_cape()
 	_refresh_hotbar()
 	_refresh_library()
 	_fill_description()
@@ -289,6 +292,31 @@ func _build_character_block() -> VBoxContainer:
 	_hat_glyph.offset_right = -12.0
 	_hat_glyph.offset_bottom = -12.0
 	_hat_slot.add_child(_hat_glyph)
+
+	_cape_slot = RedItemSlot.new()
+	_cape_slot.name = "CapeSlot"
+	_cape_slot.set_edge(WIDE_HAT_EDGE)
+	_cape_slot.badge = "CAPE"
+	_cape_slot.placeholder = ""
+	_cape_slot.draggable = false
+	_cape_slot.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_cape_slot.offset_left = 10.0
+	_cape_slot.offset_top = 10.0
+	_cape_slot.offset_right = WIDE_HAT_EDGE + 10.0
+	_cape_slot.offset_bottom = WIDE_HAT_EDGE + 10.0
+	_cape_slot.picked.connect(_on_cape_picked)
+	_cape_slot.quick_move_requested.connect(_on_cape_quick_move)
+	stage.add_child(_cape_slot)
+
+	_cape_glyph = RedMenuGlyph.new()
+	_cape_glyph.name = "EmptyGlyph_cape"
+	_cape_glyph.glyph = RedMenuGlyph.Glyph.CAPE
+	_cape_glyph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_cape_glyph.offset_left = 12.0
+	_cape_glyph.offset_top = 12.0
+	_cape_glyph.offset_right = -12.0
+	_cape_glyph.offset_bottom = -12.0
+	_cape_slot.add_child(_cape_glyph)
 
 	_stats_frame = _build_stats_frame()
 	_stats_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -507,6 +535,11 @@ func _toggle_stats() -> void:
 	if _stats_open:
 		_fill_stats()
 		_fill_status_effects()
+		_stats_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_stats_frame.offset_left = 10.0
+		_stats_frame.offset_top = 10.0
+		_stats_frame.offset_right = -10.0
+		_stats_frame.offset_bottom = -10.0
 
 
 func _style_stats_toggle(button: Button) -> void:
@@ -529,6 +562,8 @@ func _style_stats_toggle(button: Button) -> void:
 func _bind_slots() -> void:
 	if _hat_slot != null:
 		_hat_slot.bind(_equipment, 0)
+	if _cape_slot != null and _equipment != null and _equipment.size() > 1:
+		_cape_slot.bind(_equipment, 1)
 	_bind_hotbar_slots()
 
 
@@ -553,6 +588,23 @@ func _refresh_hat() -> void:
 	if _hat_glyph != null:
 		_hat_glyph.visible = id.is_empty()
 	_hat_slot.queue_redraw()
+
+
+func _refresh_cape() -> void:
+	if _cape_slot == null:
+		return
+	if _equipment != null and _equipment.size() > 1:
+		_cape_slot.bind(_equipment, 1)
+	var id := _cape_slot.item_id()
+	_cape_slot.equipped = not id.is_empty()
+	_cape_slot.tooltip_text = (
+		"%s\nSHIFT+CLICK TO STOW" % ItemDB.title(id)
+		if not id.is_empty()
+		else "CAPE // EMPTY"
+	)
+	if _cape_glyph != null:
+		_cape_glyph.visible = id.is_empty()
+	_cape_slot.queue_redraw()
 
 
 func _refresh_hotbar() -> void:
@@ -704,6 +756,14 @@ func _on_hat_quick_move(slot: RedItemSlot) -> void:
 	refresh()
 
 
+func _on_cape_picked(_slot: RedItemSlot) -> void:
+	_refresh_cape()
+
+
+func _on_cape_quick_move(slot: RedItemSlot) -> void:
+	_on_hat_quick_move(slot)
+
+
 func _mark_library_selection() -> void:
 	for slot: RedItemSlot in _library_slots:
 		var id := slot.item_id()
@@ -827,6 +887,8 @@ func _request_icons() -> void:
 func _on_icon_ready(_id: String, _texture: Texture2D) -> void:
 	if _hat_slot != null:
 		_hat_slot.queue_redraw()
+	if _cape_slot != null:
+		_cape_slot.queue_redraw()
 	for slot: RedItemSlot in _hotbar_slots:
 		slot.queue_redraw()
 	for slot: RedItemSlot in _library_slots:
@@ -864,6 +926,12 @@ func _update_responsive_layout() -> void:
 		_hat_slot.offset_top = 10.0
 		_hat_slot.offset_right = -10.0
 		_hat_slot.offset_bottom = hat_edge + 10.0
+	if _cape_slot != null:
+		_cape_slot.set_edge(hat_edge)
+		_cape_slot.offset_left = 10.0
+		_cape_slot.offset_top = 10.0
+		_cape_slot.offset_right = hat_edge + 10.0
+		_cape_slot.offset_bottom = hat_edge + 10.0
 	for slot: RedItemSlot in _hotbar_slots:
 		slot.set_edge(NARROW_HOTBAR_EDGE if narrow else WIDE_HOTBAR_EDGE)
 	_fit_library_columns()
@@ -911,6 +979,8 @@ func _fit_description_scroll() -> void:
 	_description_body.custom_minimum_size.x = maxf(
 		_description_scroll.size.x - gutter, 8.0)
 	_description_body.custom_minimum_size.y = 0.0
+	if CrtType.host_of(_description_body) != null:
+		return
 	_description_body.reset_size()
 	_description_body.custom_minimum_size.y = maxf(
 		_description_body.get_minimum_size().y, 8.0)

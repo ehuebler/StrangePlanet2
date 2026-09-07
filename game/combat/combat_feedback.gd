@@ -155,6 +155,12 @@ func dodge_feedback(at := Vector3.ZERO) -> void:
 	_show_number(event, "DODGE")
 
 
+func world_float(event: DamageNumberEvent) -> void:
+	if event == null:
+		return
+	_show_number(event)
+
+
 func outgoing_damage(amount: float, at: Vector3, target_peer := 0,
 		critical := false, structure := false, merge_key := "",
 		killed := false) -> void:

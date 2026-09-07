@@ -9,16 +9,13 @@ extends StaticBody3D
 ## interaction to [GameWorld].
 
 const DISPLAY_REACH := 0.72
-const BOB_HEIGHT := 0.045
-const BOB_SPEED := 1.8
-const TURN_SPEED := 0.45
 const TARGET_SIZE := Vector3(0.78, 0.82, 0.78)
 
 var pickup_id := 0
 var item_id := ""
 var _visual: Node3D
 var _visual_origin := Vector3.ZERO
-var _clock := 0.0
+var _motion: Dictionary = {}
 
 
 func configure(id: int, item: String) -> void:
@@ -33,15 +30,16 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_PAUSABLE
 	_build_visual()
 	_build_collision()
+	if _motion.is_empty():
+		_motion = DroppedWorldMotion.start(self, 0.10)
+
+
+func begin_settle_to(at: Vector3) -> void:
+	_motion = DroppedWorldMotion.start_to(self, at)
 
 
 func _process(delta: float) -> void:
-	if not is_instance_valid(_visual):
-		return
-	_clock += delta
-	_visual.position = _visual_origin + Vector3.UP \
-		* (sin(_clock * BOB_SPEED) * BOB_HEIGHT)
-	_visual.rotate_y(delta * TURN_SPEED)
+	DroppedWorldMotion.tick(self, _visual, _motion, delta, _visual_origin)
 
 
 func interact_prompt() -> String:

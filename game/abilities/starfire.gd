@@ -19,8 +19,9 @@ func _fire_next() -> bool:
 			!= AbilityDefinition.ProjectileType.ENERGY_DISK:
 		return false
 	_requested_left = _next_left
-	var from := player.hand_point(_requested_left)
-	var along := player.aim_direction(from)
+	var hand := player.hand_point(_requested_left)
+	var along := player.aim_direction(hand)
+	var from := CrawlerReach.shift(hand, along, stats)
 	var variant := 1 if _requested_left else 0
 	if player.uses_float_pose():
 		variant |= 2

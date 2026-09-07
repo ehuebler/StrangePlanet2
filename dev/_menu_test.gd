@@ -187,6 +187,7 @@ func _run() -> void:
 
 	await _check_hero(menu)
 	await _check_apparel(menu)
+	await _check_items(menu)
 	await _check_hero_abilities(menu)
 	await _check_data_settings_and_admin(menu)
 	await _check_graphics_toggle_rows(menu)
@@ -276,13 +277,13 @@ func _check_open_and_close_policy() -> void:
 			"bottom tab selector leaves a visible gap beneath the main page")
 		_expect(selector != null and hero_tab != null and data_tab != null
 			and absf(
-				hero_tab.get_global_rect().position.y
+				CrtType.screen_rect(hero_tab).position.y
 					- selector.get_global_rect().position.y
 				- (selector.get_global_rect().end.y
-					- data_tab.get_global_rect().end.y)
+					- CrtType.screen_rect(data_tab).end.y)
 			) <= 1.5,
 			"bottom tab selector balances the gaps above Hero and below Data")
-		_expect(hero_tab != null and hero_tab.size.y <= 24.0,
+		_expect(hero_tab != null and CrtType.screen_rect(hero_tab).size.y <= 24.0,
 			"bottom tab bars stay compact enough for both outer gaps")
 		var close_style := (
 			close_button.get_theme_stylebox(&"normal") as StyleBoxFlat
@@ -320,6 +321,8 @@ func _check_open_and_close_policy() -> void:
 			"Hold Respawn sits to the left of Hold Leave")
 		_expect(_children_have_even_horizontal_gaps(actions),
 			"session action keys use even horizontal spacing")
+		_expect(menu.find_child("SandboxCheats", true, false) == null,
+			"story Tab menu has no sandbox cheat keys")
 
 	await _tap_action(&"inventory")
 	await _wait_frames(4)
@@ -382,26 +385,33 @@ func _check_hero(menu: GameMenu) -> void:
 	var character_frame := page.find_child(
 		"CharacterFrame", true, false) as Control
 	var hat_slot := page.find_child("HatSlot", true, false) as RedItemSlot
+	var cape_slot := page.find_child("CapeSlot", true, false) as RedItemSlot
 	var hotbar_frame := page.find_child("HotbarFrame", true, false) as Control
 	var ability_library := page.find_child(
 		"AbilityLibraryFrame", true, false) as Control
-	_expect(character_frame != null and hat_slot != null
+	_expect(character_frame != null and hat_slot != null and cape_slot != null
 		and hotbar_frame != null and ability_library != null
 		and hat_slot.badge == "HAT"
+		and cape_slot.badge == "CAPE"
 		and hotbar_frame.get_global_rect().position.x
 			>= character_frame.get_global_rect().end.x - 8.0
 		and ability_library.get_global_rect().position.x
 			>= character_frame.get_global_rect().end.x - 8.0,
-		"Hero keeps the hat tile on the portrait and the ability column to the right")
+		"Hero keeps the hat and cape tiles on the portrait and the ability column to the right")
 
 	var stat_rows := page.find_child("StatRows", true, false)
+	var wanted_stats: Array = CrawlerMeta.hero_stat_rows()
 	_expect(stat_rows != null
-		and stat_rows.get_child_count() == PlayerStats.ids().size(),
+		and stat_rows.get_child_count() == wanted_stats.size(),
 		"Hero draws one row for every stat")
-	for id_text: String in PlayerStats.ids():
+	for row_variant: Variant in wanted_stats:
+		if typeof(row_variant) != TYPE_DICTIONARY:
+			continue
+		var row := row_variant as Dictionary
+		var id_text := str(row.get("id", ""))
 		var value := page.find_child("Stat_%s_Value" % id_text, true, false) as Label
-		_expect(value != null and value.text.is_valid_float(),
-			"Hero stat %s has a numeric value" % id_text)
+		_expect(value != null and not str(value.text).is_empty(),
+			"Hero stat %s has a value" % id_text)
 	var stats_frame := page.find_child("StatsFrame", true, false) as Control
 	var stats_toggle := page.find_child("StatsToggle", true, false) as Button
 	var stats_glyph := page.find_child("StatsGlyph", true, false) as Control
@@ -441,18 +451,27 @@ func _check_hero(menu: GameMenu) -> void:
 		hat_slot.find_child("EmptyGlyph_hat", true, false) as Control
 		if hat_slot != null else null
 	)
+	var cape_glyph := (
+		cape_slot.find_child("EmptyGlyph_cape", true, false) as Control
+		if cape_slot != null else null
+	)
 	_expect(hat_slot != null and empty_glyph != null
 		and _centres_match(hat_slot, empty_glyph),
 		"Hero empty hat glyph is centered in its slot")
-	_expect(menu.find_child("TabItems", true, false) == null
-		and menu.find_child("TabAbilities", true, false) == null,
-		"Items and Abilities tabs are gone")
+	_expect(cape_slot != null and cape_glyph != null
+		and _centres_match(cape_slot, cape_glyph),
+		"Hero empty cape glyph is centered in its slot")
+	_expect(menu.find_child("TabItems", true, false) != null,
+		"Items tab is back")
+	_expect(menu.find_child("TabAbilities", true, false) == null,
+		"Abilities tab stays gone")
 	var hats_tab := menu.find_child("TabApparel", true, false) as Button
-	_expect(hats_tab != null and hats_tab.text == "HATS",
-		"Apparel tab is now labeled Hats")
+	_expect(hats_tab != null and hats_tab.text == "HATS & CAPES",
+		"Apparel tab is labeled Hats & Capes")
 	for tab_name: String in [
 		"TabHero",
 		"TabApparel",
+		"TabItems",
 		"TabData",
 	]:
 		var tab_button := menu.find_child(tab_name, true, false) as Button
@@ -521,18 +540,18 @@ func _check_apparel(menu: GameMenu) -> void:
 	var equip_action := page.find_child("EquipAction", true, false) as Control
 	var drop_action := page.find_child("DropAction", true, false) as Control
 	_expect(detail_frame != null and equip_action != null and drop_action != null
-		and detail_frame.get_global_rect().encloses(equip_action.get_global_rect())
-		and detail_frame.get_global_rect().encloses(drop_action.get_global_rect()),
+		and detail_frame.get_global_rect().encloses(CrtType.screen_rect(equip_action))
+		and detail_frame.get_global_rect().encloses(CrtType.screen_rect(drop_action)),
 		"Hats keeps Equip and Drop visible inside the persistent detail panel")
 	_expect(equip_action != null and drop_action != null
 		and equip_action.size.y <= 36.0 and drop_action.size.y <= 36.0,
 		"catalogue Equip and Drop actions stay compact")
 	_expect(detail_scroll != null and detail_title != null and detail_state != null
 		and detail_description != null
-		and detail_scroll.get_global_rect().encloses(detail_title.get_global_rect())
-		and detail_scroll.get_global_rect().encloses(detail_state.get_global_rect())
+		and detail_scroll.get_global_rect().encloses(CrtType.screen_rect(detail_title))
+		and detail_scroll.get_global_rect().encloses(CrtType.screen_rect(detail_state))
 		and detail_scroll.get_global_rect().encloses(
-			detail_description.get_global_rect()),
+			CrtType.screen_rect(detail_description)),
 		"Hats shows selected item identity and detail without scrolling")
 	var total_before := _count_physical("c3_hair")
 	var backpack_slot := _red_slot(page, _player.backpack, 0)
@@ -568,6 +587,38 @@ func _check_apparel(menu: GameMenu) -> void:
 	await _capture("menu_apparel")
 
 
+func _check_items(menu: GameMenu) -> void:
+	_player.hotbar.clear()
+	_player.backpack.clear()
+	_player.hotbar.set_item(0, "sword")
+	_player.backpack.set_item(0, "laser_rifle")
+	menu.show_tab(GameMenu.Tab.ITEMS)
+	await _wait_frames(4)
+	_expect(menu.current_tab() == GameMenu.Tab.ITEMS,
+		"Items is a canonical tab again")
+	var page := _active_page(menu) as RedCataloguePage
+	if not _expect(page != null, "Items routes to RedCataloguePage"):
+		return
+	var heading := page.find_child("CatalogueHeading", true, false) as Label
+	_expect(heading != null and heading.text == "ITEMS",
+		"Items catalogue is titled Items")
+	_expect(page.find_child("Filter_weapon", true, false) == null
+		and page.find_child("CatalogueFilterFrame", true, false) == null,
+		"Items has no Weapons filter")
+	var listed: PackedStringArray = PackedStringArray()
+	for slot: RedItemSlot in _owned_slots(page):
+		var listed_id := slot.item_id()
+		if not listed_id.is_empty() and not listed.has(listed_id):
+			listed.append(listed_id)
+	_expect(not listed.has("sword") and not listed.has("laser_rifle"),
+		"Items does not list swords or weapons")
+	var empty_title := page.find_child("EmptyStateTitle", true, false) as Label
+	_expect(empty_title != null and empty_title.visible
+		and empty_title.text == "NO OWNED ITEMS",
+		"colony Items is empty without carried run items")
+	await _capture("menu_items")
+
+
 func _check_hero_abilities(menu: GameMenu) -> void:
 	_player.abilities.clear()
 	menu.show_tab(GameMenu.Tab.HERO)
@@ -584,8 +635,12 @@ func _check_hero_abilities(menu: GameMenu) -> void:
 			if child is RedItemSlot:
 				library_slots.append(child as RedItemSlot)
 	var expected := PackedStringArray([
-		"laser_eyes", "meteor_punch", "starfire", "grapple",
-		"nuke", "lasso", "wall", "nausicaa",
+		"laser_eyes", "kame", "meteor_punch", "hero_punch", "starfire", "grapple",
+		"nuke", "mini_nuke", "lasso", "wall", "nausicaa", "lightning",
+		"light_bolt", "icicle", "teleport", "fus",
+		"roar", "toxic_blast", "charming_aura", "freeze_blast",
+		"static_field", "toxic_field", "freeze_field", "healing_field",
+		"overdrive",
 	])
 	if ItemDB.ability_ids().is_empty():
 		_expect(library_slots.is_empty(), "empty ability catalogue stays empty")
@@ -765,11 +820,11 @@ func _display_toggle(panel: SettingsPanel, label_text: String) -> Button:
 		var label := node as Label
 		if label == null or label.text != label_text:
 			continue
-		var row := label.get_parent()
+		var row := CrtType.layout_parent(label)
 		if row == null:
 			continue
 		for sibling: Node in row.get_children():
-			var button := sibling as Button
+			var button := CrtType.inner(sibling) as Button
 			if button != null and button.toggle_mode:
 				return button
 	return null
@@ -1075,8 +1130,8 @@ func _centres_match(
 ) -> bool:
 	if outer == null or inner == null:
 		return false
-	return outer.get_global_rect().get_center().distance_to(
-		inner.get_global_rect().get_center()) <= tolerance
+	return CrtType.screen_rect(outer).get_center().distance_to(
+		CrtType.screen_rect(inner).get_center()) <= tolerance
 
 
 func _children_have_even_horizontal_gaps(parent: Control) -> bool:

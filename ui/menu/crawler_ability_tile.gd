@@ -10,6 +10,7 @@ signal drop_requested(tile: CrawlerAbilityTile)
 signal card_received(tile: CrawlerAbilityTile, data: Dictionary)
 signal mod_picked(slot: RedItemSlot)
 signal mod_moved(target: RedItemSlot, source: RedItemSlot)
+signal mod_drag_started(slot: RedItemSlot)
 signal mod_drop_requested(slot: RedItemSlot)
 signal clear_requested(index: int)
 
@@ -23,12 +24,26 @@ const COMPACT_MOD_EDGE := 26.0
 
 var index := 0
 var kit: CrawlerKit
+## Which kit bar this tile reads. City stash tiles use SOURCE_CITY_EQUIP.
+var source := CrawlerKit.SOURCE_EQUIP
 ## Store stalls lock this so a click only selects. The Hero page leaves it
 ## on so cards can be dragged, seated, or dropped.
 var editable := true:
 	set(value):
 		editable = value
 		if _clear != null:
+			refresh()
+## Store tiles stay editable for drag, but hide the world-drop X.
+var show_clear := true:
+	set(value):
+		show_clear = value
+		if _clear != null:
+			refresh()
+## Locker page shows seated mods without letting them leave the card.
+var mods_interactive := true:
+	set(value):
+		mods_interactive = value
+		if _mods != null:
 			refresh()
 ## Shorter store cards: smaller portrait, tighter mods, less padding.
 var compact := false:
@@ -39,12 +54,23 @@ var selected := false:
 	set(value):
 		selected = value
 		_apply_style()
+## Catalog id of a modifier the player is holding. Incompatible seated
+## abilities draw an X over the row and its nested slots.
+var blocked_mod := "":
+	set(value):
+		var clean := CrawlerCatalog.catalog_id(value)
+		if blocked_mod == clean:
+			return
+		blocked_mod = clean
+		_apply_block_mark()
 
 var _number: Label
 var _icon: TextureRect
 var _title: Label
+var _ammo: Label
 var _clear: Button
 var _mods: HBoxContainer
+var _reject: Label
 var _mod_slots: Array[RedItemSlot] = []
 var _drag_live := false
 var _hovered := false
@@ -57,9 +83,11 @@ func _ready() -> void:
 	_apply_style()
 
 
-func setup(at: int, owner_kit: CrawlerKit) -> void:
+func setup(at: int, owner_kit: CrawlerKit, from_source := "") -> void:
 	index = at
 	kit = owner_kit
+	if not from_source.is_empty():
+		source = from_source
 	if _icon == null:
 		_build()
 	if _number != null:
@@ -70,14 +98,15 @@ func setup(at: int, owner_kit: CrawlerKit) -> void:
 
 
 func token() -> String:
-	if kit == null or kit.player == null or not is_instance_valid(kit.player) \
-			or kit.player.abilities == null:
+	if kit == null:
 		return ""
-	return kit.player.abilities.get_item(index)
+	return kit.token_at(source, index)
 
 
 func card() -> CrawlerCard:
-	return kit.equipped_card(index) if kit != null else null
+	if kit == null:
+		return null
+	return kit.card_for_token(token())
 
 
 func mod_slots() -> Array[RedItemSlot]:
@@ -93,30 +122,49 @@ func refresh() -> void:
 		_icon.texture = null
 		_icon.modulate = Color(GREEN, 0.18)
 		_title.text = "EMPTY"
+		if _ammo != null:
+			_ammo.text = ""
+			_ammo.visible = false
 		if _clear != null:
 			_clear.visible = false
 		if _mods != null:
 			_mods.visible = false
 		_sync_mods(null)
 		_apply_style()
+		_apply_block_mark()
 		return
 	var id := hosted.id
 	_icon.texture = CrawlerCatalog.texture_for(id)
 	_icon.modulate = _icon_modulate(id)
 	_title.text = ItemDB.title(id).to_upper()
+	_refresh_ammo(hosted)
 	if _clear != null:
-		_clear.visible = editable
+		_clear.visible = editable and show_clear
 	if _mods != null:
 		_mods.visible = true
 	_sync_mods(hosted)
 	_apply_style()
+	_apply_block_mark()
+
+
+func rejects_held_mod() -> bool:
+	return _reject != null and _reject.visible
 
 
 func _build() -> void:
+	var wrap := MarginContainer.new()
+	wrap.name = "CrawlerAbilityBody"
+	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	add_child(wrap)
+
 	var body := HBoxContainer.new()
 	body.add_theme_constant_override(&"separation", 8)
 	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(body)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	wrap.add_child(body)
 
 	_number = Label.new()
 	_number.text = str(index + 1)
@@ -155,6 +203,16 @@ func _build() -> void:
 	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(_title)
 
+	_ammo = Label.new()
+	_ammo.name = "CrawlerAbilityAmmo"
+	_ammo.visible = false
+	_ammo.add_theme_font_size_override(&"font_size", 14)
+	_ammo.add_theme_color_override(&"font_color", GREEN)
+	_ammo.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_ammo.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_ammo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(_ammo)
+
 	_clear = Button.new()
 	_clear.name = "CrawlerClear"
 	_clear.text = "X"
@@ -181,7 +239,27 @@ func _build() -> void:
 	_mods.mouse_filter = Control.MOUSE_FILTER_STOP
 	_mods.custom_minimum_size.y = _mod_edge()
 	stack.add_child(_mods)
+
+	_reject = Label.new()
+	_reject.name = "CrawlerFitReject"
+	_reject.text = "X"
+	_reject.visible = false
+	_reject.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_reject.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_reject.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_reject.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_reject.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_reject.add_theme_color_override(&"font_color", RED)
+	_reject.add_theme_color_override(&"font_outline_color", Color(0.0, 0.0, 0.0, 0.86))
+	_reject.add_theme_constant_override(&"outline_size", 8)
+	wrap.add_child(_reject)
 	_apply_compact()
+
+
+func _mods_editable() -> bool:
+	if not editable or not mods_interactive:
+		return false
+	return kit == null or kit.can_edit_mods()
 
 
 func _visible_mod_count(hosted: CrawlerCard) -> int:
@@ -195,16 +273,22 @@ func _sync_mods(hosted: CrawlerCard) -> void:
 	if _mod_slots.size() != slots:
 		_rebuild_mods(hosted)
 		return
-	var rack := kit.mod_rack(index) if kit != null and hosted != null else null
+	var rack := kit.mod_rack_for(source, index) if kit != null and hosted != null \
+		else null
+	var allow_mods := _mods_editable()
+	if _mods != null:
+		_mods.modulate = Color.WHITE if allow_mods else Color(1.0, 1.0, 1.0, 0.45)
 	for mod_index in slots:
 		if rack != null and mod_index < rack.size():
 			_mod_slots[mod_index].bind(rack, mod_index)
 			_mod_slots[mod_index].interactive = true
-			_mod_slots[mod_index].draggable = editable
+			_mod_slots[mod_index].draggable = allow_mods
+			_mod_slots[mod_index].accepts_drops = allow_mods
 		else:
 			_mod_slots[mod_index].bind(null, mod_index)
 			_mod_slots[mod_index].interactive = hosted != null
-			_mod_slots[mod_index].draggable = editable and hosted != null
+			_mod_slots[mod_index].draggable = allow_mods and hosted != null
+			_mod_slots[mod_index].accepts_drops = allow_mods and hosted != null
 		_mod_slots[mod_index].queue_redraw()
 
 
@@ -215,7 +299,11 @@ func _rebuild_mods(hosted: CrawlerCard) -> void:
 	_mod_slots.clear()
 	if _mods == null:
 		return
-	var rack := kit.mod_rack(index) if kit != null and hosted != null else null
+	var rack := kit.mod_rack_for(source, index) if kit != null and hosted != null \
+		else null
+	var allow_mods := _mods_editable()
+	if _mods != null:
+		_mods.modulate = Color.WHITE if allow_mods else Color(1.0, 1.0, 1.0, 0.45)
 	for mod_index in _visible_mod_count(hosted):
 		var slot := RedItemSlot.new()
 		slot.name = "CrawlerMod_%d_%d" % [index, mod_index]
@@ -224,15 +312,20 @@ func _rebuild_mods(hosted: CrawlerCard) -> void:
 		if rack != null and mod_index < rack.size():
 			slot.bind(rack, mod_index)
 			slot.interactive = true
-			slot.draggable = editable
+			slot.draggable = allow_mods
+			slot.accepts_drops = allow_mods
 		else:
 			slot.interactive = hosted != null
-			slot.draggable = editable and hosted != null
+			slot.draggable = allow_mods and hosted != null
+			slot.accepts_drops = allow_mods and hosted != null
 		slot.picked.connect(func(picked_slot: RedItemSlot) -> void:
 			mod_picked.emit(picked_slot)
 		)
 		slot.item_dropped.connect(func(target: RedItemSlot, source: RedItemSlot) -> void:
 			mod_moved.emit(target, source)
+		)
+		slot.drag_started.connect(func(started: RedItemSlot) -> void:
+			mod_drag_started.emit(started)
 		)
 		slot.drag_released.connect(func(released: RedItemSlot, dropped: bool) -> void:
 			if not dropped:
@@ -260,9 +353,10 @@ func _get_drag_data(_at: Vector2) -> Variant:
 	set_drag_preview(_preview())
 	return {
 		"crawler_move": true,
-		"source": CrawlerKit.SOURCE_EQUIP,
+		"source": source,
 		"index": index,
 		"token": id,
+		"kit": kit,
 	}
 
 
@@ -355,6 +449,18 @@ func _preview() -> Control:
 	return holder
 
 
+func _refresh_ammo(hosted: CrawlerCard) -> void:
+	if _ammo == null:
+		return
+	var kit_ammo := kit.ammo_count_text(hosted) if kit != null else ""
+	_ammo.text = kit_ammo
+	_ammo.visible = not kit_ammo.is_empty()
+	if kit_ammo == "0":
+		_ammo.add_theme_color_override(&"font_color", RED_BRIGHT)
+	else:
+		_ammo.add_theme_color_override(&"font_color", GREEN)
+
+
 func _icon_modulate(id: String) -> Color:
 	if not CrawlerCatalog.icon_path(CrawlerCatalog.catalog_id(id)).is_empty():
 		return Color.WHITE
@@ -377,16 +483,43 @@ func _apply_compact() -> void:
 		_number.custom_minimum_size.x = 16.0 if compact else 22.0
 	if _title != null:
 		_title.add_theme_font_size_override(&"font_size", 11 if compact else 14)
+	if _ammo != null:
+		_ammo.add_theme_font_size_override(&"font_size", 11 if compact else 14)
 	if _mods != null:
 		_mods.custom_minimum_size.y = _mod_edge()
+	if _reject != null:
+		_reject.add_theme_font_size_override(&"font_size", 28 if compact else 44)
 	for slot: RedItemSlot in _mod_slots:
 		slot.set_edge(_mod_edge())
+	_apply_style()
+	_apply_block_mark()
+
+
+func _should_reject() -> bool:
+	if blocked_mod.is_empty() or not CrawlerCatalog.is_modifier(blocked_mod):
+		return false
+	var hosted := card()
+	if hosted == null:
+		return false
+	return not CrawlerCatalog.compatible(blocked_mod, hosted.id)
+
+
+func _apply_block_mark() -> void:
+	var reject := _should_reject()
+	if _reject != null:
+		_reject.visible = reject
+	for slot: RedItemSlot in _mod_slots:
+		slot.blocked = reject
 	_apply_style()
 
 
 func _apply_style() -> void:
+	var reject := _should_reject()
 	var fill := Color(0.0, 0.16, 0.045, 0.92) if selected or _hovered else BLACK
 	var rim := GREEN if selected or _hovered else RED
+	if reject:
+		fill = Color(0.16, 0.02, 0.03, 0.92)
+		rim = RED
 	var box := StyleBoxFlat.new()
 	box.bg_color = fill
 	box.border_color = Color(rim, 0.98)
@@ -405,6 +538,10 @@ func _apply_style() -> void:
 	if _title != null:
 		_title.add_theme_color_override(
 			&"font_color", GREEN if selected else RED_TEXT
+		)
+	if _ammo != null and _ammo.text != "0":
+		_ammo.add_theme_color_override(
+			&"font_color", GREEN if selected else GREEN
 		)
 
 

@@ -16,6 +16,10 @@ static func poll(player: OnlinePlayer) -> String:
 	unlock(site)
 	var site_id := _site_id(site)
 	var first := not progress.site_unlocked(site_id)
+	if site_id == CrawlerRules.CITY_SITE_ID and player.journal != null:
+		player.journal.note_city()
+	if site_id == CrawlerRules.CITY_SITE_ID and first:
+		schedule_later_city_unlock(player)
 	if not progress.enter_site(site_id):
 		return ""
 	var gems := 0
@@ -34,23 +38,79 @@ static func apply_progress(progress: CrawlerProgress, tree: SceneTree) -> void:
 	PatchMonument.apply_owned_quests(progress)
 	for site in _collect(tree):
 		if progress.site_unlocked(_site_id(site)):
-			unlock(site)
+			unlock(site, false)
+	if progress.site_unlocked(CrawlerRules.CITY_SITE_ID):
+		unlock_later_cities(tree, false)
 
 
-static func unlock(site: Node) -> void:
+static func unlock(site: Node, announce := true) -> void:
 	if site is CrawlerSite:
-		(site as CrawlerSite).unlock_waypoint()
+		(site as CrawlerSite).unlock_waypoint(announce)
 		return
 	if site is PatchMonument:
 		var monument := site as PatchMonument
 		if not monument.monument_id.is_empty():
-			PatchMonument.enable_waypoint(monument.monument_id)
+			PatchMonument.enable_waypoint(monument.monument_id, announce)
 			return
 	if site is Landmark:
 		var mark := site as Landmark
+		var first := not mark.waypoint
 		mark.waypoint = true
 		if not mark.is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP):
 			mark.add_to_group(CrawlerRules.CITY_WAYPOINT_GROUP)
+		if first and announce:
+			announce_unlock(mark)
+
+
+static func schedule_later_city_unlock(player: OnlinePlayer, delay := -1.0) -> void:
+	if player == null or not player.is_inside_tree():
+		return
+	var tree := player.get_tree()
+	if later_cities_shown(tree):
+		return
+	var wait := delay if delay >= 0.0 else CrawlerRules.CITY_MAP_DELAY
+	if wait <= 0.0:
+		unlock_later_cities(tree, true)
+		return
+	var timer := tree.create_timer(wait)
+	timer.timeout.connect(func() -> void:
+		unlock_later_cities(tree, true)
+	)
+
+
+static func unlock_later_cities(tree: SceneTree, announce := true) -> void:
+	if tree == null:
+		return
+	for site in _collect(tree):
+		if CrawlerRules.is_later_city(_site_id(site)):
+			unlock(site, announce)
+
+
+static func later_cities_shown(tree: SceneTree) -> bool:
+	if tree == null:
+		return false
+	for site in _collect(tree):
+		if CrawlerRules.is_later_city(_site_id(site)):
+			var mark := site as Landmark
+			if mark != null and mark.waypoint:
+				return true
+	return false
+
+
+## Local players turn to a newly unlocked mark. Restored progress stays silent.
+static func announce_unlock(site: Node) -> void:
+	if site == null or not site.is_inside_tree():
+		return
+	var landmark := site as Landmark
+	if landmark == null:
+		return
+	for node_variant: Variant in site.get_tree().get_nodes_in_group("network_players"):
+		var player := node_variant as OnlinePlayer
+		if player == null or not is_instance_valid(player) or player.training_enemy:
+			continue
+		if player.peer_id != player.multiplayer.get_unique_id():
+			continue
+		player.notice_waypoint_unlocked(landmark)
 
 
 static func _nearest(player: OnlinePlayer) -> Node3D:

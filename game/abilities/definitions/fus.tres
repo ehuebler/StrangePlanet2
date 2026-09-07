@@ -1,0 +1,42 @@
+[gd_resource type="Resource" script_class="AbilityDefinition" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://game/abilities/ability_definition.gd" id="1_definition"]
+[ext_resource type="Script" path="res://game/abilities/fus.gd" id="2_implementation"]
+[ext_resource type="Texture2D" path="res://assets/runtime/abilities/icons/fus.svg" id="3_icon"]
+
+[resource]
+script = ExtResource("1_definition")
+ability_id = "fus"
+title = "Fus"
+description = "Scrunch in and bellow. Instead of a spherical shockwave, a bright green force cone bursts forward. It chips what it hits and throws them a long way. Will not fire under water."
+implementation = ExtResource("2_implementation")
+icon = ExtResource("3_icon")
+tint = Color(0.223529, 1.000000, 0.078431, 1.000000)
+activation_type = 2
+projectile_type = 9
+impact_type = 9
+grapple_type = 0
+construct_type = 0
+reaction_type = 2
+affects_players = false
+self_launch = false
+blast_occlusion = false
+animation = &"Roar"
+alternate_animation = &""
+hover_animation = &""
+alternate_hover_animation = &""
+held_animation = &""
+held_hover_animation = &""
+impact_animation = &""
+blocked_underwater = true
+allowed_stances = PackedInt32Array(0, 1, 2, 3)
+stats = {
+"damage": 8.0,
+"speed": 42.0,
+"range": 20.0,
+"radius": 3.8,
+"cooldown": 3.2,
+"projectile_radius": 3.8,
+"knockback": 72.0,
+"animation_duration": 1.15,
+}

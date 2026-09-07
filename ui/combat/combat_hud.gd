@@ -5,6 +5,9 @@ extends Control
 ## incoming hit log, and mob damage flash hooks. Drawing lives in child
 ## components.
 
+const OVERDRIVE_VIGNETTE := preload("res://ui/combat/overdrive_vignette.gd")
+const FIELD_VIGNETTE := preload("res://ui/combat/field_vignette.gd")
+
 var _player: Node3D
 var _coordinates: CoordinatePlate
 var _boss_bar: BossBar
@@ -13,6 +16,8 @@ var _parry: ParryIndicator
 var _crawler_vitals: CrawlerVitalsPlate
 var _entering: CrawlerEnteringNote
 var _hit_log: HitLog
+var _overdrive: Control
+var _field: Control
 
 var _menu_open := false
 var _session_engaged := false
@@ -51,6 +56,10 @@ func configure(player: Node3D, _hud: CanvasLayer,
 	_hit_log = HitLog.new()
 	_hit_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_hit_log)
+	_overdrive = OVERDRIVE_VIGNETTE.new()
+	add_child(_overdrive)
+	_field = FIELD_VIGNETTE.new()
+	add_child(_field)
 	if _player != null:
 		if _player.has_signal(&"status_changed") \
 				and not _player.status_changed.is_connected(_on_status_changed):
@@ -87,6 +96,10 @@ func _exit_tree() -> void:
 func refresh(delta: float) -> void:
 	if _player == null:
 		return
+	if _overdrive != null and _overdrive.has_method(&"refresh"):
+		_overdrive.call(&"refresh", _player, _menu_open, delta)
+	if _field != null and _field.has_method(&"refresh"):
+		_field.call(&"refresh", _player, _menu_open, delta)
 	if _menu_open:
 		if _boss_bar != null:
 			_boss_bar.visible = false
@@ -139,6 +152,14 @@ func show_entering(place: String, gems := 0) -> void:
 		_entering.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(_entering)
 	_entering.present(place, gems)
+
+
+func show_note(title: String, detail := "") -> void:
+	if _entering == null:
+		_entering = CrawlerEnteringNote.new()
+		_entering.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_entering)
+	_entering.present_lines(title, detail)
 
 
 func entering_text() -> String:

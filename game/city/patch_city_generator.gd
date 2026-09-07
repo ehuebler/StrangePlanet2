@@ -102,6 +102,7 @@ class Plan:
 var _shape: PlanetShape
 var _partition: LandPartition
 var _patch_id := -1
+var _territory_id := -1
 var _up := Vector3.UP
 var _east := Vector3.RIGHT
 var _north := Vector3.FORWARD
@@ -148,16 +149,23 @@ func generate(
 	_shape = shape
 	_partition = partition
 	_patch_id = patch_id
-	var patch := partition.patches[patch_id]
-	plan.patch_id = patch_id
-	plan.patch_name = patch.name
+	_territory_id = partition.territory_id_of(patch_id)
+	if _territory_id < 0:
+		_territory_id = patch_id
+	var cell := partition.patches[patch_id]
+	var territory := partition.territory_of(patch_id)
+	var patch := territory if territory != null else cell
+	plan.patch_id = _territory_id
+	plan.patch_name = partition.recipe_name_of(patch_id)
+	if plan.patch_name.is_empty():
+		plan.patch_name = cell.name
 	_radius = shape.radius
 	_up = patch.direction.normalized()
 	_east = _up.cross(Vector3.UP if absf(_up.y) < 0.9 else Vector3.RIGHT).normalized()
 	_north = _up.cross(_east)
 	if not _rasterize(patch):
 		return plan
-	_rng.seed = hash([patch.seed.x, patch.seed.y, patch.seed.z, patch_id])
+	_rng.seed = hash([patch.seed.x, patch.seed.y, patch.seed.z, _territory_id])
 	_analyze()
 	_route_loop(plan)
 	_mark_forced()
@@ -286,7 +294,7 @@ func _inside(direction: Vector3) -> bool:
 		if toward > best_dot:
 			best_dot = toward
 			best = index
-	return best >= 0 and _local_owners[best] == _patch_id
+	return best >= 0 and _partition.same_territory(_local_owners[best], _patch_id)
 
 
 func _analyze() -> void:
@@ -1218,7 +1226,7 @@ func _keep_inside_patch(origin: Vector2, aim: Vector2, radius: float) -> Vector2
 
 
 func _in_patch(direction: Vector3) -> bool:
-	return _partition != null and _partition.owner_at(direction) == _patch_id
+	return _partition != null and _partition.belongs_to(direction, _patch_id)
 
 
 func _wet(direction: Vector3) -> bool:

@@ -32,6 +32,7 @@ func _init() -> void:
 func _ready() -> void:
 	_build()
 	_built = true
+	CrtType.watch(self)
 	refresh()
 
 
@@ -141,6 +142,8 @@ func _make_row(id: String) -> PanelContainer:
 			status = "COMPLETE"
 		elif gems > 0:
 			status = "%d GEMS" % gems
+		elif not JournalDB.instant_reward_lines(id).is_empty():
+			status = "  ·  ".join(JournalDB.instant_reward_lines(id))
 		title_row.add_child(_label(status, 12, GREEN_TEXT if done else RED_MUTED))
 	copy.add_child(_label(JournalDB.summary_of(id), 11, RED_MUTED, true))
 	if needed > 0:

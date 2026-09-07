@@ -22,6 +22,10 @@ enum ProjectileType {
 	ENERGY_DISK,
 	ENERGY_ORB,
 	TETHER,
+	ENERGY_BOLT,
+	ENERGY_ICICLE,
+	TELEPORT_ORB,
+	ENERGY_CONE,
 }
 
 enum ImpactType {
@@ -32,6 +36,9 @@ enum ImpactType {
 	GRAPPLE_SLAM,
 	MASSIVE_BLAST,
 	DELAYED_BLAST,
+	FROST_BURST,
+	TELEPORT,
+	KNOCKBACK_BURST,
 }
 
 enum GrappleType {

@@ -94,7 +94,9 @@ func _build_lag() -> void:
 	box.add_child(charts)
 	for channel in LagTracker.channels():
 		var id := String(channel["id"])
-		_lag_visible[id] = id in ["frame", "process", "terrain", "flora", "draw", "pipes"]
+		_lag_visible[id] = id in [
+			"frame", "process", "terrain", "flora", "mobs", "mob_ai", "draw", "pipes"
+		]
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override(&"separation", 8)
 		var toggle := Button.new()

@@ -112,6 +112,7 @@ func _init() -> void:
 func _ready() -> void:
 	_build()
 	_built = true
+	CrtType.watch(self)
 	_connect_sources()
 	refresh()
 	resized.connect(_layout_background)

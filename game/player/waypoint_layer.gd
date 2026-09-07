@@ -51,6 +51,9 @@ const DIAMOND_OUTLINE := 1.6
 ## Gap between the diamond and the first line of type.
 const GAP := 7.0
 const PALETTE: UIPalette = preload("res://ui/themes/ui_palette.tres")
+## Ion cyan over a teammate's head. Palette blue, not the gold used for places.
+const MATE_TINT := Color("6fdcf2")
+const MATE_LIFT := 0.45
 
 ## Whether any marker is drawn. Navigation is opt-in and starts closed.
 var enabled := false
@@ -59,6 +62,14 @@ var _camera: Camera3D
 ## Landmark to the marker drawn for it, so markers are built once rather than per
 ## frame and a landmark that goes out of range keeps its own.
 var _markers: Dictionary = {}
+## Remote coop players to the marker over their head.
+var _mates: Dictionary = {}
+## One-shot unlock presentation. Tilde stays closed; only this landmark is drawn,
+## then it fades. The layer remembers the landmark so the diamond can pulse even
+## while [member enabled] is false.
+var _reveal: Landmark
+var _reveal_alpha := 0.0
+var _reveal_pulse := 0.0
 
 
 func _init() -> void:
@@ -71,6 +82,36 @@ func _init() -> void:
 ## project against and the layer draws nothing.
 func bind(camera: Camera3D) -> void:
 	_camera = camera
+
+
+## Presents [param landmark] outside the tilde overlay. [param alpha] is the
+## blink/fade, [param pulse] drives the radar rings (0..1 and beyond).
+func set_reveal(landmark: Landmark, alpha: float, pulse: float) -> void:
+	_reveal = landmark
+	_reveal_alpha = clampf(alpha, 0.0, 1.0)
+	_reveal_pulse = maxf(pulse, 0.0)
+	if landmark != null and _markers.has(landmark):
+		(_markers[landmark] as Control).queue_redraw()
+
+
+func clear_reveal() -> void:
+	if _reveal != null and _markers.has(_reveal):
+		(_markers[_reveal] as Control).visible = false
+	_reveal = null
+	_reveal_alpha = 0.0
+	_reveal_pulse = 0.0
+
+
+func is_revealing() -> bool:
+	return _reveal != null and is_instance_valid(_reveal)
+
+
+func reveal_alpha() -> float:
+	return _reveal_alpha
+
+
+func pulse_amount() -> float:
+	return _reveal_pulse
 
 
 ## Which places are being named right now, in the order they were first drawn.
@@ -93,19 +134,23 @@ func drawn(least := 0.5) -> PackedStringArray:
 		var marker: Control = _markers[landmark]
 		if marker.visible and marker.modulate.a > least:
 			titles.append(landmark.title)
+	for key in _mates:
+		if not is_instance_valid(key):
+			continue
+		var player := key as OnlinePlayer
+		if player == null:
+			continue
+		var marker: Control = _mates[player]
+		if marker.visible and marker.modulate.a > least:
+			titles.append(player.display_name)
 	return titles
 
 
 func _process(_delta: float) -> void:
-	if not enabled:
+	if not enabled and not is_revealing():
 		# Markers already built are hidden rather than freed, so switching back on
 		# is the same one line and does not have to rebuild anything.
-		for key in _markers:
-			if not is_instance_valid(key):
-				continue
-			var marker: Control = _markers[key]
-			if marker != null:
-				marker.visible = false
+		_hide_markers()
 		return
 	if _camera == null or not _camera.is_inside_tree():
 		return
@@ -117,19 +162,25 @@ func _process(_delta: float) -> void:
 		var landmark := node as Landmark
 		if landmark == null:
 			continue
-		if not _shows_landmark(landmark):
+		var revealing := is_revealing() and landmark == _reveal
+		if not enabled and not revealing:
+			if _markers.has(landmark):
+				(_markers[landmark] as Control).visible = false
+			continue
+		if not _shows_landmark(landmark) and not revealing:
 			# Only hidden if it has ever been drawn, so a landmark that is
 			# silent from the start never has a marker built for it at all.
 			if _markers.has(landmark):
 				(_markers[landmark] as Control).visible = false
 			continue
 		_place(landmark, _marker_for(landmark), eye, half)
+	_place_mates(eye, half)
 
 
 func _shows_landmark(landmark: Landmark) -> bool:
 	if landmark == null or not landmark.waypoint:
 		return false
-	if CrawlerRules.active():
+	if CrawlerRules.crawler():
 		return landmark.is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP) \
 				or (landmark.is_in_group(PatchMonument.KEEP_GROUP) and landmark.waypoint)
 	return true
@@ -140,10 +191,79 @@ func _place(landmark: Landmark, marker: Control, eye: Vector3,
 	var at := landmark.global_position
 	var away := eye.distance_to(at)
 
+	var revealing := is_revealing() and landmark == _reveal
 	marker.visible = true
-	marker.modulate.a = 1.0
+	if revealing and not enabled:
+		marker.modulate.a = _reveal_alpha
+	else:
+		marker.modulate.a = 1.0
+	if revealing:
+		marker.queue_redraw()
 	(marker.get_meta(&"distance") as Label).text = Landmark.distance_text(away)
+	var icons := marker.get_meta(&"shop_icons") as HBoxContainer
+	if icons != null and icons.get_child_count() == 0:
+		_fill_shop_icons(landmark, icons)
+	_pin_marker(marker, at, half)
 
+
+func _place_mates(eye: Vector3, half: Vector2) -> void:
+	if not enabled or not CrawlerRules.coop():
+		_hide_mates()
+		return
+	var seen: Dictionary = {}
+	var tree := get_tree()
+	if tree == null:
+		_hide_mates()
+		return
+	for node_variant: Variant in tree.get_nodes_in_group(&"network_players"):
+		var player := node_variant as OnlinePlayer
+		if not _is_teammate(player):
+			continue
+		seen[player] = true
+		var marker := _mate_marker(player)
+		var at := _mate_point(player)
+		marker.visible = true
+		marker.modulate.a = 1.0
+		var title := marker.get_meta(&"title") as Label
+		if title != null:
+			title.text = player.display_name
+		(marker.get_meta(&"distance") as Label).text = Landmark.distance_text(
+			eye.distance_to(at))
+		_pin_marker(marker, at, half)
+	var stale: Array = []
+	for key in _mates:
+		if not seen.has(key):
+			stale.append(key)
+	for key: Variant in stale:
+		var marker: Control = _mates[key]
+		if marker != null:
+			marker.visible = false
+		if not is_instance_valid(key):
+			if marker != null:
+				marker.queue_free()
+			_mates.erase(key)
+
+
+func _is_teammate(player: OnlinePlayer) -> bool:
+	if player == null or not is_instance_valid(player):
+		return false
+	if player.training_enemy:
+		return false
+	var host := _local_player()
+	return host != null and player != host
+
+
+func _mate_point(player: OnlinePlayer) -> Vector3:
+	var at := player.global_position
+	if player.head != null:
+		at = player.head.global_position
+	var up := player.global_basis.y
+	if up.length_squared() < 0.25:
+		up = Vector3.UP
+	return at + up.normalized() * MATE_LIFT
+
+
+func _pin_marker(marker: Control, at: Vector3, half: Vector2) -> void:
 	var pinned := false
 	var toward := Vector2.ZERO
 	var screen := half
@@ -160,7 +280,6 @@ func _place(landmark: Landmark, marker: Control, eye: Vector3,
 	if pinned:
 		screen = half + _to_edge(toward, half - Vector2(MARGIN, MARGIN))
 	marker.position = screen
-
 	var aimed := toward.normalized() if pinned else Vector2.ZERO
 	if marker.get_meta(&"toward") != aimed:
 		marker.set_meta(&"toward", aimed)
@@ -220,15 +339,130 @@ func _marker_for(landmark: Landmark) -> Control:
 	column.add_theme_constant_override(&"separation", 2)
 	marker.add_child(column)
 
-	column.add_child(_line(landmark.title, TITLE_SIZE, TITLE_OUTLINE, landmark.tint))
+	var title := _line(landmark.title, TITLE_SIZE, TITLE_OUTLINE, landmark.tint)
+	column.add_child(title)
+	var icons := HBoxContainer.new()
+	icons.name = "ShopIcons"
+	icons.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icons.alignment = BoxContainer.ALIGNMENT_CENTER
+	icons.add_theme_constant_override(&"separation", 3)
+	column.add_child(icons)
 	var distance := _line("", DISTANCE_SIZE, DISTANCE_OUTLINE,
 		landmark.tint.lerp(PALETTE.text_muted, 0.55))
 	column.add_child(distance)
 
 	marker.set_meta(&"column", column)
+	marker.set_meta(&"title", title)
 	marker.set_meta(&"distance", distance)
+	marker.set_meta(&"shop_icons", icons)
+	_fill_shop_icons(landmark, icons)
 	_markers[landmark] = marker
 	return marker
+
+
+func _mate_marker(player: OnlinePlayer) -> Control:
+	if _mates.has(player):
+		return _mates[player]
+	var marker := Control.new()
+	marker.name = "MateMark_%d" % player.peer_id
+	marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	marker.set_meta(&"toward", Vector2.ZERO)
+	marker.set_meta(&"tint", MATE_TINT)
+	marker.draw.connect(_draw_marker.bind(marker))
+	add_child(marker)
+	var column := VBoxContainer.new()
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_theme_constant_override(&"separation", 2)
+	marker.add_child(column)
+	var title := _line(player.display_name, TITLE_SIZE, TITLE_OUTLINE, MATE_TINT)
+	column.add_child(title)
+	var distance := _line("", DISTANCE_SIZE, DISTANCE_OUTLINE,
+		MATE_TINT.lerp(PALETTE.text_muted, 0.55))
+	column.add_child(distance)
+	marker.set_meta(&"column", column)
+	marker.set_meta(&"title", title)
+	marker.set_meta(&"distance", distance)
+	_mates[player] = marker
+	return marker
+
+
+func tint_of(title: String) -> Color:
+	var wanted := title.strip_edges()
+	for key in _markers:
+		if not is_instance_valid(key):
+			continue
+		var landmark := key as Landmark
+		if landmark != null and landmark.title == wanted:
+			var held: Variant = (_markers[landmark] as Control).get_meta(&"tint")
+			return held if held is Color else Color.BLACK
+	for key in _mates:
+		if not is_instance_valid(key):
+			continue
+		var player := key as OnlinePlayer
+		if player != null and player.display_name == wanted:
+			var held: Variant = (_mates[player] as Control).get_meta(&"tint")
+			return held if held is Color else Color.BLACK
+	return Color.BLACK
+
+
+func shop_icon_ids(landmark: Landmark) -> PackedStringArray:
+	var ids: PackedStringArray = []
+	if landmark == null or not _markers.has(landmark):
+		return ids
+	var row := (_markers[landmark] as Control).get_meta(&"shop_icons") as HBoxContainer
+	if row == null:
+		return ids
+	for child: Node in row.get_children():
+		ids.append(str(child.name).trim_prefix("ShopIcon_"))
+	return ids
+
+
+func _fill_shop_icons(landmark: Landmark, row: HBoxContainer) -> void:
+	if row == null:
+		return
+	for child: Node in row.get_children():
+		row.remove_child(child)
+		child.queue_free()
+	var city := ""
+	if landmark is CrawlerSite:
+		city = (landmark as CrawlerSite).city_key
+	if city.is_empty():
+		return
+	var progress := _player_progress()
+	if progress == null:
+		return
+	for shop_id: String in progress.signed_shops_for(city):
+		var tex := CrawlerShopIcons.texture_for(shop_id)
+		if tex == null:
+			continue
+		var icon := TextureRect.new()
+		icon.name = "ShopIcon_%s" % shop_id
+		icon.texture = tex
+		icon.custom_minimum_size = Vector2(14, 14)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(icon)
+
+
+func _local_player() -> OnlinePlayer:
+	var walk: Node = get_parent()
+	while walk != null:
+		if walk is OnlinePlayer:
+			return walk as OnlinePlayer
+		walk = walk.get_parent()
+	return null
+
+
+func _player_progress() -> CrawlerProgress:
+	var host := _local_player()
+	if host != null:
+		return host.crawler_progress
+	if not CrawlerProgress.session_payload.is_empty():
+		var ledger := CrawlerProgress.new()
+		ledger.from_dict(CrawlerProgress.session_payload)
+		return ledger
+	return null
 
 
 func _line(text: String, font_size: int, outline: int, colour: Color) -> Label:
@@ -245,11 +479,45 @@ func _line(text: String, font_size: int, outline: int, colour: Color) -> Label:
 
 ## Drawn rather than typed: the pixel font has no diamond or arrow glyph, and a
 ## letter standing in for one reads as a letter.
+func _hide_markers() -> void:
+	for key in _markers:
+		if not is_instance_valid(key):
+			continue
+		var marker: Control = _markers[key]
+		if marker != null:
+			marker.visible = false
+	_hide_mates()
+
+
+func _hide_mates() -> void:
+	for key in _mates:
+		if not is_instance_valid(key):
+			continue
+		var marker: Control = _mates[key]
+		if marker != null:
+			marker.visible = false
+
+
 func _draw_marker(marker: Control) -> void:
 	var toward: Vector2 = marker.get_meta(&"toward")
 	var tint: Color = marker.get_meta(&"tint")
+	if is_revealing() and _markers.get(_reveal) == marker:
+		_draw_radar(marker, tint)
 	marker.draw_colored_polygon(_diamond(toward, DIAMOND_OUTLINE), PALETTE.ink)
 	marker.draw_colored_polygon(_diamond(toward, 0.0), tint)
+
+
+func _draw_radar(marker: Control, tint: Color) -> void:
+	if _reveal_alpha <= 0.01 or _reveal_pulse <= 0.001:
+		return
+	var ink := Color(PALETTE.ink, _reveal_alpha * 0.55)
+	for ring in 3:
+		var phase := fmod(_reveal_pulse * 0.95 + float(ring) * 0.33, 1.0)
+		var radius := lerpf(8.0, 44.0, phase)
+		var fade := (1.0 - phase) * _reveal_alpha
+		var ring_tint := Color(tint.r, tint.g, tint.b, fade * 0.7)
+		marker.draw_arc(Vector2.ZERO, radius + 1.4, 0.0, TAU, 36, ink, 2.4, true)
+		marker.draw_arc(Vector2.ZERO, radius, 0.0, TAU, 36, ring_tint, 1.8, true)
 
 
 func _diamond(toward: Vector2, grow: float) -> PackedVector2Array:

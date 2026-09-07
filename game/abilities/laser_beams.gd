@@ -31,6 +31,8 @@ const CORE_SHARE := 0.3
 ## Seconds a beam stays up after the last aim. A shade over one damage tick at
 ## ten hertz, so a dropped packet thins the beam rather than blinking it.
 const HOLD := 0.16
+const FOLLOW_EYES := 0
+const FOLLOW_HANDS_MERGED := 1
 
 ## How many short cylinders make a wobbling beam. Straight beams use the first
 ## one only. The wave is drawn along the shot, not by swinging the whole line.
@@ -45,9 +47,15 @@ var _glow_material: StandardMaterial3D
 var _colour := COLOR
 var _width_scale := 1.0
 var _wobble := 0.0
+var _follow := FOLLOW_EYES
 var _from_left := Vector3.ZERO
 var _from_right := Vector3.ZERO
 var _target := Vector3.ZERO
+var _targets: PackedVector3Array = PackedVector3Array()
+var _paths: Array[PackedVector3Array] = []
+var _core_mesh: CylinderMesh
+var _glow_mesh: CylinderMesh
+var _pairs := 1
 ## Last soot mark this beam laid. Swept fire would otherwise stamp a decal
 ## every damage tick; one every three-quarters of a metre is enough to read.
 var _scorch_at := Vector3.INF
@@ -56,6 +64,7 @@ var _heading := PackedFloat32Array([0.0, 0.0])
 var _twist := PackedFloat32Array([0.0, 0.0])
 var _cycles := PackedFloat32Array([3.6, 4.1])
 var _spin := PackedFloat32Array([12.0, -10.5])
+var _far_cast := 0.0
 
 
 func _ready() -> void:
@@ -64,11 +73,12 @@ func _ready() -> void:
 	# against bright ground, which is most of the ground there is.
 	_core_material = _material(CORE_COLOR, 4.0, false)
 	_glow_material = _material(COLOR, 2.4, true)
-	var core := _beam_mesh(RADIUS * CORE_SHARE, _core_material)
-	var glow := _beam_mesh(RADIUS, _glow_material)
+	_core_mesh = _beam_mesh(RADIUS * CORE_SHARE, _core_material)
+	_glow_mesh = _beam_mesh(RADIUS, _glow_material)
 	for _eye in 2:
-		_beams.append(_beam_chain(core))
-		_beams.append(_beam_chain(glow))
+		_beams.append(_beam_chain(_core_mesh))
+		_beams.append(_beam_chain(_glow_mesh))
+	_pairs = 1
 
 	_lamp = OmniLight3D.new()
 	_lamp.light_color = COLOR
@@ -90,12 +100,36 @@ func _ready() -> void:
 ## another eye-beam ability share the exact presentation without inheriting
 ## Laser Eyes' red damage effect.
 func aim(left_eye: Vector3, right_eye: Vector3, at: Vector3,
-		colour: Color = COLOR, width_scale := 1.0, wobble := 0.0) -> void:
+		colour: Color = COLOR, width_scale := 1.0, wobble := 0.0,
+		follow := FOLLOW_EYES, far_cast := 0.0) -> void:
+	aim_many(left_eye, right_eye, PackedVector3Array([at]), colour, width_scale,
+		wobble, follow, far_cast)
+
+
+func aim_many(left_eye: Vector3, right_eye: Vector3, targets: PackedVector3Array,
+		colour: Color = COLOR, width_scale := 1.0, wobble := 0.0,
+		follow := FOLLOW_EYES, far_cast := 0.0, paths: Array = []) -> void:
 	if _beams.is_empty():
 		return
 	_from_left = left_eye
 	_from_right = right_eye
-	_target = at
+	_targets = PackedVector3Array()
+	for at: Vector3 in targets:
+		if at.is_finite():
+			_targets.append(at)
+	if _targets.is_empty():
+		return
+	_paths.clear()
+	for path_variant: Variant in paths:
+		if path_variant is PackedVector3Array \
+				and (path_variant as PackedVector3Array).size() >= 2:
+			_paths.append(path_variant)
+	if _paths.size() != _targets.size():
+		_paths.clear()
+	_target = _targets[int(_targets.size() / 2)]
+	_ensure_pairs(_targets.size())
+	_follow = follow
+	_far_cast = maxf(far_cast, 0.0)
 	_wobble = maxf(wobble, 0.0)
 	if _wobble > 0.0:
 		if not _wobble_rolled:
@@ -105,7 +139,7 @@ func aim(left_eye: Vector3, right_eye: Vector3, at: Vector3,
 	_set_colour(colour)
 	_width_scale = clampf(width_scale, 0.35, 4.5)
 	_draw_now()
-	_lamp.global_position = at
+	_lamp.global_position = _target
 	_lamp.visible = true
 	_lamp.omni_range = 5.5 * _width_scale
 	_lamp.light_energy = (3.4 if colour == COLOR else 2.0) * _width_scale
@@ -136,8 +170,41 @@ func stop() -> void:
 	_alive = 0.0
 	_wobble_rolled = false
 	_scorch_at = Vector3.INF
+	_paths.clear()
 	_hide()
 	set_process(false)
+
+
+func path_points(eye := 0, toward := Vector3.INF) -> PackedVector3Array:
+	var from := _from_left if (eye & 1) == 0 else _from_right
+	var to := _target
+	var path := PackedVector3Array()
+	if toward.is_finite() and not _targets.is_empty():
+		var best := 0
+		var score := INF
+		for index in _targets.size():
+			var away := _targets[index].distance_squared_to(toward)
+			if away < score:
+				score = away
+				best = index
+		to = _targets[best]
+		if best < _paths.size():
+			path = _paths[best]
+	elif not _targets.is_empty():
+		to = _targets[0]
+		if not _paths.is_empty():
+			path = _paths[0]
+	elif not _paths.is_empty():
+		path = _paths[0]
+	if path.size() >= 2:
+		var bounced := PackedVector3Array()
+		bounced.append(from)
+		for index in range(1, path.size()):
+			bounced.append(path[index])
+		return bounced
+	if _wobble <= 0.001:
+		return PackedVector3Array([from, to])
+	return _wave_points(from, to, eye & 1)
 
 
 ## True when a new soot mark should be laid at [param at]. Held still, the
@@ -168,21 +235,101 @@ func _follow_eyes() -> void:
 	var shooter := get_parent() as OnlinePlayer
 	if shooter == null:
 		return
-	var eyes := shooter.eye_points()
-	if eyes.size() < 2:
+	if _follow == FOLLOW_HANDS_MERGED:
+		var hands := shooter.hand_points()
+		if hands.size() < 2:
+			return
+		var mid: Vector3 = (hands[0] + hands[1]) * 0.5
+		_from_left = mid
+		_from_right = mid
+	else:
+		var eyes := shooter.eye_points()
+		if eyes.size() < 2:
+			return
+		_from_left = eyes[0]
+		_from_right = eyes[1]
+	if _far_cast <= 0.001:
 		return
-	_from_left = eyes[0]
-	_from_right = eyes[1]
+	var origin := (_from_left + _from_right) * 0.5
+	var along := shooter.aim_direction(origin)
+	if along.length_squared() < 0.000001 and _target.is_finite():
+		along = _target - origin
+	if along.length_squared() < 0.000001:
+		return
+	along = along.normalized() * _far_cast
+	_from_left += along
+	_from_right += along
+
+
+func _ensure_pairs(count: int) -> void:
+	var wanted := maxi(count, 1)
+	while _pairs < wanted:
+		_beams.append(_beam_chain(_core_mesh))
+		_beams.append(_beam_chain(_glow_mesh))
+		_beams.append(_beam_chain(_core_mesh))
+		_beams.append(_beam_chain(_glow_mesh))
+		_pairs += 1
 
 
 func _draw_now() -> void:
-	_draw_eye(0, _from_left, _target)
-	_draw_eye(1, _from_right, _target)
+	var used := _targets.size()
+	for pair in _pairs:
+		if pair < used:
+			var path := PackedVector3Array()
+			if pair < _paths.size():
+				path = _paths[pair]
+			if path.size() >= 2:
+				_draw_path(0, _from_left, path, pair * 2)
+				_draw_path(1, _from_right, path, pair * 2 + 1)
+			else:
+				_draw_eye(0, _from_left, _targets[pair], pair * 2)
+				_draw_eye(1, _from_right, _targets[pair], pair * 2 + 1)
+		else:
+			_hide_eye(pair * 2)
+			_hide_eye(pair * 2 + 1)
 
 
-func _draw_eye(eye: int, from: Vector3, to: Vector3) -> void:
-	var core: Array = _beams[eye * 2]
-	var glow: Array = _beams[eye * 2 + 1]
+func _draw_path(eye: int, from: Vector3, path: PackedVector3Array,
+		slot := -1) -> void:
+	var chain := eye if slot < 0 else slot
+	if chain < 0 or chain * 2 + 1 >= _beams.size():
+		return
+	var core: Array = _beams[chain * 2]
+	var glow: Array = _beams[chain * 2 + 1]
+	var points := PackedVector3Array()
+	points.append(from)
+	for index in range(1, path.size()):
+		points.append(path[index])
+	var segs := points.size() - 1
+	if segs <= 1:
+		_draw_eye(eye, from, points[points.size() - 1] if points.size() > 1 \
+			else from, slot)
+		return
+	for index in WAVE_SEGS:
+		if index < segs:
+			_place(core[index], points[index], points[index + 1])
+			_place(glow[index], points[index], points[index + 1])
+		else:
+			(core[index] as MeshInstance3D).visible = false
+			(glow[index] as MeshInstance3D).visible = false
+
+
+func _hide_eye(slot: int) -> void:
+	if slot < 0 or slot * 2 + 1 >= _beams.size():
+		return
+	var core: Array = _beams[slot * 2]
+	var glow: Array = _beams[slot * 2 + 1]
+	for index in WAVE_SEGS:
+		(core[index] as MeshInstance3D).visible = false
+		(glow[index] as MeshInstance3D).visible = false
+
+
+func _draw_eye(eye: int, from: Vector3, to: Vector3, slot := -1) -> void:
+	var chain := eye if slot < 0 else slot
+	if chain < 0 or chain * 2 + 1 >= _beams.size():
+		return
+	var core: Array = _beams[chain * 2]
+	var glow: Array = _beams[chain * 2 + 1]
 	if _wobble <= 0.001:
 		_place(core[0], from, to)
 		_place(glow[0], from, to)

@@ -501,6 +501,7 @@ func _try_contact_damage() -> void:
 		hit.world_impulse = away * species.attack_knockback \
 			+ _up() * species.attack_knockback * 0.12
 		hit.ability_id = "fauna_quills"
+		hit.projectile = true
 		hit.set_source(self)
 		DamageHit.apply_to_combatants(self, hit)
 		_attack_cooldown_left = maxf(species.attack_cooldown, 0.05)

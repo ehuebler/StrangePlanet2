@@ -123,8 +123,8 @@ func _keep_clear_of_terrain(snap: bool) -> void:
 
 
 func _tick_ai(delta: float) -> void:
-	var player := _nearest_player()
-	if player == null or not tick_agro(player, delta):
+	var player := _hunt_target(delta)
+	if player == null:
 		_phase = Phase.SOAR
 		_ram_heading = Vector3.ZERO
 		_glide_loft = -1.0
@@ -413,7 +413,7 @@ func _detonate(player: Node) -> void:
 		return
 	var hit := DamageHit.area(global_position, combat_radius() + 1.6, damage(), 0.35)
 	hit.kind = DamageHit.Kind.AREA
-	hit.faction = DamageHit.Faction.ENEMY
+	hit.faction = outgoing_faction()
 	hit.ability_id = "crawler_ram"
 	hit.affects_flora = false
 	hit.affects_combatants = true
@@ -422,7 +422,8 @@ func _detonate(player: Node) -> void:
 	hit.radial_lift = 3.0
 	if is_instance_valid(self):
 		hit.set_source(self)
-	if player != null and player.has_method(&"combat_peer_id"):
+	if not is_charmed() and player != null \
+			and player.has_method(&"combat_peer_id"):
 		hit.target_peer = int(player.call(&"combat_peer_id"))
 	if DamageHit.game_world_of(self) != null:
 		DamageHit.apply_to_combatants(self, hit)

@@ -15,6 +15,7 @@ const INV_EDGE := 44.0
 
 var _kit: CrawlerKit
 var _selected_token := ""
+var _drag_mod := ""
 var _ability_tiles: Array[CrawlerAbilityTile] = []
 var _inventory_slots: Array[RedItemSlot] = []
 var _inventory_scroll: ScrollContainer
@@ -22,6 +23,7 @@ var _inventory_grid: GridContainer
 var _inventory_frame: PanelContainer
 var _ability_list: VBoxContainer
 var _desc_title: Label
+var _desc_types: HBoxContainer
 var _desc_body: Label
 
 
@@ -105,6 +107,15 @@ func _build_ability_column() -> VBoxContainer:
 	top.add_theme_constant_override(&"separation", 10)
 	column.add_child(top)
 
+	var scroll := ScrollContainer.new()
+	scroll.name = "CrawlerAbilityScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_stretch_ratio = 1.35
+	scroll.clip_contents = true
+	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 	var bay := CrawlerAbilityBay.new()
 	bay.host = self
 	_ability_list = bay
@@ -112,11 +123,11 @@ func _build_ability_column() -> VBoxContainer:
 	_ability_list.mouse_filter = Control.MOUSE_FILTER_STOP
 	_ability_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_ability_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_ability_list.size_flags_stretch_ratio = 1.35
 	_ability_list.add_theme_constant_override(&"separation", 8)
-	for index in CrawlerRules.ABILITY_SLOTS:
+	for index in _ability_slot_count():
 		_ability_list.add_child(_build_ability_row(index))
-	top.add_child(_menu_frame(_ability_list, "CrawlerAbilityFrame"))
+	scroll.add_child(_ability_list)
+	top.add_child(_menu_frame(scroll, "CrawlerAbilityFrame"))
 
 	var desc_column := VBoxContainer.new()
 	desc_column.name = "CrawlerDescriptionContent"
@@ -128,6 +139,8 @@ func _build_ability_column() -> VBoxContainer:
 	_desc_title = _label("DESCRIPTION", 14, RED_BRIGHT, true)
 	_desc_title.name = "CrawlerDescriptionTitle"
 	desc_column.add_child(_desc_title)
+	_desc_types = CrawlerTypeMarks.make_row("CrawlerDescriptionTypes", PackedStringArray(), 26.0)
+	desc_column.add_child(_desc_types)
 	_desc_body = _label(
 		"CLICK AN ABILITY OR MODIFIER TO READ IT.",
 		11,
@@ -183,6 +196,7 @@ func _build_ability_row(index: int) -> CrawlerAbilityTile:
 	tile.card_received.connect(_on_ability_received)
 	tile.mod_picked.connect(_on_mod_picked)
 	tile.mod_moved.connect(_on_mod_moved)
+	tile.mod_drag_started.connect(_on_held_mod_drag_started)
 	tile.mod_drop_requested.connect(_on_mod_world_drop)
 	tile.clear_requested.connect(_on_clear_pressed)
 	_ability_tiles.append(tile)
@@ -203,6 +217,7 @@ func _build_inventory_slots() -> void:
 		slot.picked.connect(_on_inventory_picked)
 		slot.item_dropped.connect(_on_inventory_moved)
 		slot.crawler_move_dropped.connect(_on_inventory_received_ability)
+		slot.drag_started.connect(_on_held_mod_drag_started)
 		slot.drag_released.connect(_on_inventory_drag_released.bind(
 			CrawlerKit.SOURCE_BAG, index))
 		_inventory_grid.add_child(slot)
@@ -212,6 +227,8 @@ func _build_inventory_slots() -> void:
 func _bind_slots() -> void:
 	if _hat_slot != null:
 		_hat_slot.bind(_equipment, 0)
+	if _cape_slot != null and _equipment != null and _equipment.size() > 1:
+		_cape_slot.bind(_equipment, 1)
 	_bind_crawler_slots()
 
 
@@ -243,12 +260,32 @@ func _rebuild_library() -> void:
 	_refresh_inventory()
 
 
+func _ability_slot_count() -> int:
+	if _player != null and _player.abilities != null:
+		return _player.abilities.size()
+	return CrawlerRules.ABILITY_SLOTS
+
+
+func _sync_ability_tiles() -> void:
+	if _ability_list == null:
+		return
+	var wanted := _ability_slot_count()
+	while _ability_tiles.size() < wanted:
+		_ability_list.add_child(_build_ability_row(_ability_tiles.size()))
+	while _ability_tiles.size() > wanted:
+		var tile: CrawlerAbilityTile = _ability_tiles.pop_back()
+		if tile != null:
+			tile.queue_free()
+
+
 func _refresh_ability_rows() -> void:
+	_sync_ability_tiles()
 	for tile: CrawlerAbilityTile in _ability_tiles:
 		tile.selected = not _selected_token.is_empty() \
 			and tile.token() == _selected_token
 		tile.refresh()
 	_paint_mod_selection()
+	_paint_mod_fit()
 
 
 func _refresh_inventory() -> void:
@@ -266,6 +303,7 @@ func _paint_selection() -> void:
 		tile.selected = not _selected_token.is_empty() \
 			and tile.token() == _selected_token
 	_paint_mod_selection()
+	_paint_mod_fit()
 	_refresh_inventory()
 	_fill_crawler_description()
 
@@ -278,6 +316,38 @@ func _paint_mod_selection() -> void:
 			slot.queue_redraw()
 
 
+func held_modifier_id() -> String:
+	if not _drag_mod.is_empty():
+		var dragged := CrawlerCatalog.catalog_id(_drag_mod)
+		if CrawlerCatalog.is_modifier(dragged):
+			return dragged
+	if _selected_token.is_empty() or _kit == null:
+		return ""
+	var card := _kit.card_for_token(_selected_token)
+	var id := card.id if card != null else CrawlerCatalog.catalog_id(_selected_token)
+	return id if CrawlerCatalog.is_modifier(id) else ""
+
+
+func _paint_mod_fit() -> void:
+	var held := held_modifier_id()
+	for tile: CrawlerAbilityTile in _ability_tiles:
+		tile.blocked_mod = held
+
+
+func _on_held_mod_drag_started(slot: RedItemSlot) -> void:
+	var id := slot.item_id() if slot != null else ""
+	var catalog := CrawlerCatalog.catalog_id(id)
+	_drag_mod = id if CrawlerCatalog.is_modifier(catalog) else ""
+	_paint_mod_fit()
+
+
+func _clear_held_mod_drag() -> void:
+	if _drag_mod.is_empty():
+		return
+	_drag_mod = ""
+	_paint_mod_fit()
+
+
 func _fill_description() -> void:
 	_fill_crawler_description()
 
@@ -288,11 +358,13 @@ func _fill_crawler_description() -> void:
 	if _selected_token.is_empty() or _kit == null:
 		_desc_title.text = "DESCRIPTION"
 		_desc_body.text = "CLICK AN ABILITY OR MODIFIER TO READ IT."
+		CrawlerTypeMarks.fill(_desc_types, PackedStringArray())
 		_fit_description_scroll()
 		return
 	var card := _kit.card_for_token(_selected_token)
 	var id := card.id if card != null else CrawlerCatalog.catalog_id(_selected_token)
 	_desc_title.text = ItemDB.title(id).to_upper()
+	CrawlerTypeMarks.fill(_desc_types, CrawlerCatalog.display_types(id), 26.0)
 	var lines: PackedStringArray = []
 	var host := _kit.host_ability_for(_selected_token)
 	var host_id := host.id if host != null else ""
@@ -302,6 +374,11 @@ func _fill_crawler_description() -> void:
 		description = CrawlerCatalog.description_of(id, host_id, size_rank)
 	lines.append(description if not description.is_empty() else "NO DESCRIPTION FILED.")
 	if card != null and card.is_ability():
+		var typed := CrawlerCatalog.type_line(id)
+		if not typed.is_empty():
+			lines.append(typed)
+		if CrawlerRules.uses_ammo(card.id):
+			lines.append("AMMO  //  %s" % _kit.ammo_line(card))
 		lines.append("SLOTS  //  %d" % card.slot_count)
 		var seated := card.filled_modifier_ids()
 		if not seated.is_empty():
@@ -323,6 +400,9 @@ func _fill_crawler_description() -> void:
 					card.id, _kit.shop_rank_for(card), ranks):
 				lines.append(line)
 		lines.append("SCOPE  //  %s" % CrawlerCatalog.scope_of(id).replace("_", " "))
+		var typed := CrawlerCatalog.type_line(id)
+		if not typed.is_empty():
+			lines.append(typed)
 		if id != "big":
 			var effects := CrawlerCatalog.effects_for(id, "laser_eyes")
 			var extra: PackedStringArray = []
@@ -355,6 +435,16 @@ func _fill_crawler_description() -> void:
 					])
 				if not nuke_lines.is_empty():
 					lines.append("NUKE  //  %s" % "   |   ".join(nuke_lines))
+				var mini_effects := CrawlerCatalog.effects_for(id, "mini_nuke")
+				var mini_lines: PackedStringArray = []
+				for row: Dictionary in mini_effects:
+					mini_lines.append("%s %s %s" % [
+						str(row.get("stat", "")),
+						str(row.get("op", "")),
+						str(row.get("value", "")),
+					])
+				if not mini_lines.is_empty():
+					lines.append("MINI NUKE  //  %s" % "   |   ".join(mini_lines))
 	_desc_body.text = "\n\n".join(lines)
 	_fit_description_scroll()
 
@@ -399,12 +489,14 @@ func _on_inventory_picked(slot: RedItemSlot) -> void:
 
 
 func _on_mod_moved(_target: RedItemSlot, source: RedItemSlot) -> void:
+	_clear_held_mod_drag()
 	if source != null:
 		_selected_token = source.item_id()
 	refresh()
 
 
 func _on_inventory_moved(_target: RedItemSlot, source: RedItemSlot) -> void:
+	_clear_held_mod_drag()
 	if source != null:
 		_selected_token = source.item_id()
 	refresh()
@@ -462,7 +554,10 @@ func _on_ability_world_drop(tile: CrawlerAbilityTile) -> void:
 
 
 func _on_mod_world_drop(slot: RedItemSlot) -> void:
+	_clear_held_mod_drag()
 	if slot == null or not _should_world_drop():
+		return
+	if _kit != null and not _kit.can_edit_mods():
 		return
 	var located := _source_of_slot(slot)
 	var token := slot.item_id()
@@ -481,6 +576,7 @@ func _on_inventory_drag_released(
 		slot: RedItemSlot,
 		dropped: bool
 	) -> void:
+	_clear_held_mod_drag()
 	if dropped or slot == null or not _should_world_drop():
 		return
 	var token := _kit.token_at(source, index) if _kit != null else slot.item_id()
@@ -554,7 +650,7 @@ func _request_icons() -> void:
 	var ids: Array = []
 	for id: String in ItemDB.ability_ids():
 		ids.append(id)
-	for id: String in ["wobble", "big"]:
+	for id: String in ["wobble", "big", "bubble", "linger", "clip", "endless"]:
 		ids.append(id)
 	if _kit != null:
 		for card: CrawlerCard in _kit.cards.values():

@@ -33,6 +33,7 @@ const SOURCE_HOTBAR := "hotbar"
 const SOURCE_ABILITIES := "abilities"
 const SOURCE_KNOWN := "known"
 const SOURCE_WARDROBE := "wardrobe"
+const SOURCE_RUN := "run"
 
 const NARROW_WIDTH := 780.0
 const TILE_EDGE := 82.0
@@ -45,10 +46,7 @@ const DETAIL_NARROW_HEIGHT := 390.0
 const APPAREL_FILTERS := [
 	{"id": "hat", "label": "Hats", "glyph": RedMenuGlyph.Glyph.HAT},
 ]
-const ITEM_FILTERS := [
-	{"id": ItemDB.KIND_WEAPON, "label": "Weapons", "glyph": RedMenuGlyph.Glyph.WEAPONS},
-	{"id": ItemDB.KIND_ITEM, "label": "Items", "glyph": RedMenuGlyph.Glyph.ITEMS},
-]
+const ITEM_FILTERS := []
 
 var _player: OnlinePlayer
 var _mode: Mode = Mode.APPAREL
@@ -67,6 +65,8 @@ var _feedback := ""
 var _visible_entries: Array[Dictionary] = []
 var _ability_library: ItemContainer
 var _wardrobe: ItemContainer
+var _run_items: ItemContainer
+var _progress: CrawlerProgress
 
 var _header_title: Label
 var _header_count: Label
@@ -181,6 +181,7 @@ func _capture_sources() -> void:
 		_hotbar = null
 		_abilities = null
 		_backpack = null
+		_progress = null
 		return
 	_equipment = _player.equipment
 	_hotbar = _player.get("hotbar") as ItemContainer
@@ -188,6 +189,7 @@ func _capture_sources() -> void:
 		_hotbar = _player.weapons
 	_abilities = _player.get("abilities") as ItemContainer
 	_backpack = _player.backpack
+	_progress = _player.get("crawler_progress") as CrawlerProgress
 
 
 func _sources() -> Array[ItemContainer]:
@@ -202,17 +204,21 @@ func _connect_sources() -> void:
 	for source: ItemContainer in _sources():
 		if not source.changed.is_connected(refresh):
 			source.changed.connect(refresh)
+	if _progress != null and not _progress.changed.is_connected(refresh):
+		_progress.changed.connect(refresh)
 
 
 func _disconnect_sources() -> void:
 	for source: ItemContainer in _sources():
 		if source.changed.is_connected(refresh):
 			source.changed.disconnect(refresh)
+	if _progress != null and _progress.changed.is_connected(refresh):
+		_progress.changed.disconnect(refresh)
 
 
 func _build() -> void:
 	add_child(_build_header())
-	if _mode != Mode.APPAREL:
+	if _mode == Mode.ABILITIES:
 		add_child(_build_filter_bar())
 	add_child(_build_content())
 
@@ -227,7 +233,7 @@ func _build_header() -> PanelContainer:
 	row.name = "CatalogueHeaderContent"
 	row.add_theme_constant_override(&"separation", 12)
 
-	_header_title = _label("HATS", 22, RED_BRIGHT)
+	_header_title = _label("HATS & CAPES", 22, RED_BRIGHT)
 	_header_title.name = "CatalogueHeading"
 	_header_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_header_title)
@@ -330,7 +336,7 @@ func _build_catalogue_frame() -> PanelContainer:
 	glyph_center.add_child(_empty_glyph)
 	empty_column.add_child(glyph_center)
 
-	_empty_title = _label("NO HATS", 18, GREEN)
+	_empty_title = _label("NO HATS OR CAPES", 18, GREEN)
 	_empty_title.name = "EmptyStateTitle"
 	_empty_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	empty_column.add_child(_empty_title)
@@ -448,12 +454,17 @@ func _collect_entries() -> Array[Dictionary]:
 			var allowed := CharacterDB.apparel_ids(_player.body_id())
 			if CrawlerRules.active() and _player.has_method(&"crawler_owned_hats"):
 				allowed = PackedStringArray(_player.call(&"crawler_owned_hats"))
+				if _player.has_method(&"crawler_owned_capes"):
+					for cape_id: String in PackedStringArray(_player.call(&"crawler_owned_capes")):
+						if not cape_id.is_empty() and not allowed.has(cape_id):
+							allowed.append(cape_id)
 			_append_apparel(entries, _equipment, SOURCE_EQUIPMENT, allowed)
 			_append_apparel(entries, _backpack, SOURCE_BACKPACK, allowed)
 			_append_wardrobe(entries, allowed)
 		Mode.ITEMS:
 			_append_numbered_items(entries, _hotbar, SOURCE_HOTBAR)
 			_append_numbered_items(entries, _backpack, SOURCE_BACKPACK)
+			_append_run_items(entries)
 		Mode.ABILITIES:
 			_append_abilities(entries)
 	return entries
@@ -503,9 +514,22 @@ func _append_numbered_items(
 		return
 	for index in container.size():
 		var id := container.get_item(index)
-		if id.is_empty() or not ItemDB.accepts_hotbar(id):
+		if id.is_empty() or not ItemDB.is_item(id) or ItemDB.is_weapon(id) \
+				or ItemDB.is_ledger(id):
 			continue
 		entries.append(_entry(id, source, container, index))
+
+
+func _append_run_items(entries: Array[Dictionary]) -> void:
+	if not CrawlerRules.active():
+		return
+	_run_items = ItemContainer.new(1, [CrawlerProgress.TICKET_ID])
+	entries.append(_entry(
+		CrawlerProgress.TICKET_ID,
+		SOURCE_RUN,
+		_run_items,
+		0
+	))
 
 
 func _append_abilities(entries: Array[Dictionary]) -> void:
@@ -639,10 +663,16 @@ func _fill_catalogue() -> void:
 			and String(entry["source"]) == _selected_source
 			and int(entry["index"]) == _selected_index
 		)
-		slot.tooltip_text = "%s\n%s\nCLICK TO INSPECT // SHIFT+CLICK TO QUICK EQUIP" % [
-			ItemDB.title(String(entry["id"])).to_upper(),
-			_entry_state(entry),
-		]
+		if _is_run_item(entry):
+			slot.tooltip_text = "%s\n%s\nCLICK TO INSPECT" % [
+				ItemDB.title(String(entry["id"])).to_upper(),
+				_entry_state(entry),
+			]
+		else:
+			slot.tooltip_text = "%s\n%s\nCLICK TO INSPECT // SHIFT+CLICK TO QUICK EQUIP" % [
+				ItemDB.title(String(entry["id"])).to_upper(),
+				_entry_state(entry),
+			]
 		slot.picked.connect(_on_slot_picked)
 		slot.quick_move_requested.connect(_on_slot_quick_move)
 		_item_grid.add_child(slot)
@@ -652,24 +682,19 @@ func _fill_empty_state() -> void:
 	match _mode:
 		Mode.APPAREL:
 			_empty_glyph.glyph = RedMenuGlyph.Glyph.HAT
-			_empty_title.text = "NO HATS"
+			_empty_title.text = "NO HATS OR CAPES"
 			_empty_body.text = (
-				"EVERY HAT THAT FITS THIS BODY APPEARS HERE.\n"
+				"EVERY HAT AND CAPE THAT FITS THIS BODY APPEARS HERE.\n"
 				+ "HOLD EQUIP ON A TILE, OR SHIFT-CLICK IT, TO PUT IT ON."
 			)
 		Mode.ITEMS:
-			_empty_glyph.glyph = (
-				RedMenuGlyph.Glyph.WEAPONS
-				if _filter == ItemDB.KIND_WEAPON
-				else RedMenuGlyph.Glyph.ITEMS
-			)
-			_empty_title.text = (
-				"NO OWNED ITEMS"
-				if _filter.is_empty()
-				else "NO OWNED %s" % _filter_label(_filter)
-			)
+			_empty_glyph.glyph = RedMenuGlyph.Glyph.ITEMS
+			_empty_title.text = "NO OWNED ITEMS"
 			_empty_body.text = (
-				"NUMBERED-SLOT ITEMS APPEAR ONLY FROM YOUR HOTBAR OR BACKPACK."
+				"RESPAWN TICKETS AND OTHER RUN ITEMS APPEAR HERE.\n"
+				+ "BUY A TICKET AT THE CITY BLACK MARKET."
+				if CrawlerRules.active()
+				else "CARRIED ITEMS APPEAR HERE. WEAPONS STAY OFF THIS LIST."
 			)
 		Mode.ABILITIES:
 			_empty_glyph.glyph = RedMenuGlyph.Glyph.ABILITIES
@@ -699,6 +724,9 @@ func _on_slot_quick_move(slot: RedItemSlot) -> void:
 		Mode.APPAREL:
 			_equip_apparel(entry)
 		Mode.ITEMS:
+			if _is_run_item(entry):
+				refresh()
+				return
 			_target_index = _quick_target(_hotbar, String(entry["id"]))
 			_move_numbered(entry, _hotbar, SOURCE_HOTBAR)
 		Mode.ABILITIES:
@@ -734,7 +762,7 @@ func _fill_detail() -> void:
 	if description.is_empty():
 		description = "NO DESCRIPTION FILED."
 	_detail.add_child(_detail_record(entry, id, description))
-	if _mode != Mode.APPAREL:
+	if _mode != Mode.APPAREL and not _is_run_item(entry):
 		_detail_footer.add_child(_build_targets(id))
 	_detail_footer.add_child(_build_actions(entry))
 
@@ -809,7 +837,7 @@ func _fill_empty_detail() -> void:
 	_detail.add_child(title)
 	_detail.add_child(_label(body_text, 12, RED_MUTED, true))
 	_detail.add_child(_rule())
-	if _mode != Mode.APPAREL:
+	if _mode != Mode.APPAREL and _mode != Mode.ITEMS:
 		_detail_footer.add_child(_build_targets(""))
 	_detail_footer.add_child(_build_actions({}))
 
@@ -941,7 +969,7 @@ func _build_actions(entry: Dictionary) -> Control:
 	_drop_action.size_flags_stretch_ratio = 0.28
 	_drop_action.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	_drop_action.disabled = id.is_empty() or not _is_physical(entry) \
-		or _mode == Mode.ABILITIES
+		or _mode == Mode.ABILITIES or _is_run_item(entry)
 	_style_button(_drop_action, false, true)
 	_drop_action.pressed.connect(_on_drop_pressed)
 	row.add_child(_drop_action)
@@ -951,6 +979,8 @@ func _build_actions(entry: Dictionary) -> Control:
 func _equip_label(entry: Dictionary) -> String:
 	if entry.is_empty():
 		return "HOLD TO EQUIP"
+	if _is_run_item(entry):
+		return "HELD ON THIS RUN"
 	if _mode == Mode.APPAREL and String(entry["source"]) == SOURCE_EQUIPMENT:
 		return "HOLD TO UNEQUIP"
 	if _selected_at_target(entry):
@@ -965,7 +995,8 @@ func _can_equip(entry: Dictionary) -> bool:
 		Mode.APPAREL:
 			return _equipment != null and _target_index >= 0
 		Mode.ITEMS:
-			return _hotbar != null and _target_index >= 0 \
+			return not _is_run_item(entry) \
+				and _hotbar != null and _target_index >= 0 \
 				and _target_index < _hotbar.size()
 		Mode.ABILITIES:
 			return _abilities != null and _target_index >= 0 \
@@ -989,6 +1020,8 @@ func _on_equip_completed() -> void:
 		Mode.APPAREL:
 			_equip_apparel(entry)
 		Mode.ITEMS:
+			if _is_run_item(entry):
+				return
 			_move_numbered(entry, _hotbar, SOURCE_HOTBAR)
 		Mode.ABILITIES:
 			_move_ability(entry)
@@ -1128,6 +1161,19 @@ func _is_physical(entry: Dictionary) -> bool:
 		or source == SOURCE_HOTBAR
 
 
+func _is_run_item(entry: Dictionary) -> bool:
+	if entry.is_empty():
+		return false
+	return String(entry.get("source", "")) == SOURCE_RUN \
+		or ItemDB.is_ledger(String(entry.get("id", "")))
+
+
+func _run_held_count(id: String) -> int:
+	if id != CrawlerProgress.TICKET_ID:
+		return 0
+	return _progress.respawn_tickets if _progress != null else 0
+
+
 func _equipment_index_for_slot(body_slot: String) -> int:
 	if _equipment == null:
 		return -1
@@ -1186,6 +1232,8 @@ func _entry_badge(entry: Dictionary) -> String:
 			return "KNOWN"
 		SOURCE_WARDROBE:
 			return "WARDROBE"
+		SOURCE_RUN:
+			return str(_run_held_count(String(entry.get("id", ""))))
 	return ""
 
 
@@ -1207,6 +1255,11 @@ func _entry_state(entry: Dictionary) -> String:
 			return "KNOWN // UNASSIGNED"
 		SOURCE_WARDROBE:
 			return "WARDROBE // READY TO WEAR"
+		SOURCE_RUN:
+			var held := _run_held_count(String(entry.get("id", "")))
+			if held <= 0:
+				return "NONE // BUY AT THE CITY BLACK MARKET"
+			return "HELD // %d  //  NEXT DEATH SPENDS ONE" % held
 	return "UNASSIGNED"
 
 
@@ -1214,9 +1267,9 @@ func _update_header(total_count: int) -> void:
 	var heading := ""
 	match _mode:
 		Mode.APPAREL:
-			heading = "HATS"
+			heading = "HATS & CAPES"
 		Mode.ITEMS:
-			heading = "ALL ITEMS" if _filter.is_empty() else _filter_label(_filter)
+			heading = "ITEMS"
 		Mode.ABILITIES:
 			heading = "ABILITIES"
 	_header_title.text = heading.to_upper()
@@ -1224,7 +1277,7 @@ func _update_header(total_count: int) -> void:
 	if _mode == Mode.ITEMS:
 		noun = "OWNED"
 	elif _mode == Mode.APPAREL:
-		noun = "HATS"
+		noun = "OWNED"
 	_header_count.text = "%02d / %02d %s" % [
 		_visible_entries.size(),
 		total_count,

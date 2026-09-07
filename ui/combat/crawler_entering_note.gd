@@ -57,21 +57,29 @@ func _ensure_labels() -> void:
 	_bonus.add_theme_color_override(&"font_outline_color", PALETTE.ink)
 	_bonus.add_theme_constant_override(&"outline_size", 6)
 	column.add_child(_bonus)
+	CrtType.watch(self, true)
 
 
 func present(place: String, gems := 0) -> void:
 	var clean := place.strip_edges()
 	if clean.is_empty():
 		return
+	present_lines(
+		"Entering %s" % clean,
+		"+%d gems" % gems if gems > 0 else ""
+	)
+
+
+func present_lines(title: String, detail := "") -> void:
+	var heading := title.strip_edges()
+	if heading.is_empty():
+		return
 	if _title == null:
 		_ensure_labels()
-	_title.text = "Entering %s" % clean
-	if gems > 0:
-		_bonus.text = "+%d gems" % gems
-		_bonus.visible = true
-	else:
-		_bonus.text = ""
-		_bonus.visible = false
+	_title.text = heading
+	var extra := detail.strip_edges()
+	_bonus.text = extra
+	_bonus.visible = not extra.is_empty()
 	_age = 0.0
 	_playing = true
 	visible = true

@@ -46,6 +46,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 
 	_check_starfire_alternation()
+	_check_hero_punch_alternation()
 	_check_starfire_motion()
 	_check_starfire_rejection()
 	_check_grapple_pending_release()
@@ -69,9 +70,13 @@ func _ready() -> void:
 func _check_catalogue() -> void:
 	var ids := ItemDB.ability_ids()
 	var expected := PackedStringArray(
-		["laser_eyes", "meteor_punch", "starfire", "grapple",
-			"nuke", "lasso", "wall", "nausicaa"])
-	_expect(ids == expected, "all eight abilities are in manifest order")
+		["laser_eyes", "kame", "meteor_punch", "hero_punch", "starfire", "grapple",
+			"nuke", "mini_nuke", "lasso", "wall", "nausicaa", "lightning",
+			"light_bolt", "icicle", "teleport", "fus",
+			"roar", "toxic_blast", "charming_aura", "freeze_blast",
+			"static_field", "toxic_field", "freeze_field", "healing_field",
+			"overdrive"])
+	_expect(ids == expected, "all twenty-five abilities are in manifest order")
 	for id: String in expected:
 		_expect(ItemDB.kind_of(id) == ItemDB.KIND_ABILITY,
 			"%s is an ability" % id)
@@ -93,12 +98,29 @@ func _check_catalogue() -> void:
 
 func _check_authored_ability_shapes() -> void:
 	var meteor := ItemDB.ability_definition("meteor_punch")
+	var hero_punch := ItemDB.ability_definition("hero_punch")
 	var starfire := ItemDB.ability_definition("starfire")
 	var grapple := ItemDB.ability_definition("grapple")
 	var nuke := ItemDB.ability_definition("nuke")
+	var mini_nuke := ItemDB.ability_definition("mini_nuke")
 	var lasso := ItemDB.ability_definition("lasso")
 	var wall := ItemDB.ability_definition("wall")
+	var kame := ItemDB.ability_definition("kame")
 	var nausicaa := ItemDB.ability_definition("nausicaa")
+	var lightning := ItemDB.ability_definition("lightning")
+	var light_bolt := ItemDB.ability_definition("light_bolt")
+	var icicle := ItemDB.ability_definition("icicle")
+	var teleport := ItemDB.ability_definition("teleport")
+	var fus := ItemDB.ability_definition("fus")
+	var roar := ItemDB.ability_definition("roar")
+	var toxic := ItemDB.ability_definition("toxic_blast")
+	var charm := ItemDB.ability_definition("charming_aura")
+	var frost := ItemDB.ability_definition("freeze_blast")
+	var static_field := ItemDB.ability_definition("static_field")
+	var toxic_field := ItemDB.ability_definition("toxic_field")
+	var freeze_field := ItemDB.ability_definition("freeze_field")
+	var healing_field := ItemDB.ability_definition("healing_field")
+	var overdrive := ItemDB.ability_definition("overdrive")
 	_expect(starfire != null
 		and starfire.activation_type
 			== AbilityDefinition.ActivationType.SUSTAINED
@@ -113,6 +135,27 @@ func _check_authored_ability_shapes() -> void:
 		and not starfire.alternate_hover_animation.is_empty()
 		and starfire.animation != starfire.alternate_animation,
 		"Starfire has left and right jab clips")
+	_expect(hero_punch != null
+		and hero_punch.activation_type
+			== AbilityDefinition.ActivationType.SUSTAINED
+		and hero_punch.projectile_type
+			== AbilityDefinition.ProjectileType.NONE
+		and hero_punch.reaction_type
+			== AbilityDefinition.ReactionType.KNOCKBACK
+		and hero_punch.animation == &"Fighting_Right_Jab"
+		and hero_punch.alternate_animation == &"Fighting_Left_Jab"
+		and hero_punch.hover_animation == &"Fighting_Right_Jab"
+		and hero_punch.alternate_hover_animation == &"Fighting_Left_Jab"
+		and float(hero_punch.stats.get("damage", 0.0)) > 0.0
+		and float(hero_punch.stats.get("range", 0.0)) > 0.0
+		and float(hero_punch.stats.get("radius", 0.0)) > 0.0
+		and float(hero_punch.stats.get("cooldown", 0.0)) > 0.0,
+		"Hero Punch is a sustained close-range jab with Starfire's left/right clips")
+	_expect(String(CharacterRig.CLIP_ALIASES.get("HeroPunchRight", ""))
+			== "Fighting_Right_Jab"
+		and String(CharacterRig.CLIP_ALIASES.get("HeroPunchLeft", ""))
+			== "Fighting_Left_Jab",
+		"Hero Punch aliases the same jab clips Starfire uses")
 	_expect(meteor != null and starfire != null
 		and is_equal_approx(
 			float(starfire.stats.get("crater_radius", 0.0)) * 2.0,
@@ -142,7 +185,10 @@ func _check_authored_ability_shapes() -> void:
 			== AbilityDefinition.ImpactType.MASSIVE_BLAST
 		and nuke.reaction_type == AbilityDefinition.ReactionType.RAGDOLL
 		and nuke.affects_players and nuke.self_launch
-		and nuke.blast_occlusion,
+		and nuke.blast_occlusion
+		and nuke.animation == &"Kame"
+		and nuke.hover_animation.is_empty()
+		and is_equal_approx(float(nuke.stats.get("animation_duration", 0.0)), 0.28),
 		"Nuke authors a host-resolved occluded orb blast and self-launch")
 	_expect(nuke != null
 		and is_equal_approx(float(nuke.stats.get("range", 0.0)), 240.0)
@@ -159,6 +205,25 @@ func _check_authored_ability_shapes() -> void:
 		and float(nuke.stats.get("range", 0.0))
 			> float(nuke.stats.get("radius", 0.0)),
 		"and can be thrown further than it reaches")
+	_expect(mini_nuke != null
+		and mini_nuke.projectile_type
+			== AbilityDefinition.ProjectileType.ENERGY_ORB
+		and mini_nuke.impact_type
+			== AbilityDefinition.ImpactType.MASSIVE_BLAST
+		and mini_nuke.implementation == nuke.implementation
+		and mini_nuke.animation == &"Kame"
+		and mini_nuke.hover_animation.is_empty()
+		and is_equal_approx(
+			float(mini_nuke.stats.get("animation_duration", 0.0)), 0.28)
+		and float(mini_nuke.stats.get("radius", 0.0))
+			< float(nuke.stats.get("radius", 0.0))
+		and float(mini_nuke.stats.get("speed", 0.0))
+			> float(nuke.stats.get("speed", 0.0))
+		and float(mini_nuke.stats.get("range", 0.0))
+			> float(nuke.stats.get("range", 0.0))
+		and float(mini_nuke.stats.get("range", 0.0))
+			> float(mini_nuke.stats.get("radius", 0.0)),
+		"Mini Nuke authors a smaller, faster, longer-flying orb blast")
 	_expect(lasso != null
 		and lasso.activation_type
 			== AbilityDefinition.ActivationType.SUSTAINED
@@ -183,6 +248,28 @@ func _check_authored_ability_shapes() -> void:
 		and is_equal_approx(
 			float(wall.stats.get("fade_duration", 0.0)), 4.0),
 		"Wall authors an eight-by-four indestructible fading barrier")
+	_expect(kame != null
+		and kame.activation_type
+			== AbilityDefinition.ActivationType.COMMITTED
+		and kame.projectile_type
+			== AbilityDefinition.ProjectileType.BEAM
+		and kame.impact_type
+			== AbilityDefinition.ImpactType.BURN
+		and kame.animation == &"Kame"
+		and kame.blocked_underwater
+		and float(kame.stats.get("damage", 0.0))
+			> float(ItemDB.stats_of("laser_eyes").get("damage", 0.0))
+		and float(kame.stats.get("range", 0.0))
+			> float(ItemDB.stats_of("laser_eyes").get("range", 0.0))
+		and float(kame.stats.get("radius", 0.0))
+			> float(ItemDB.stats_of("laser_eyes").get("radius", 0.0))
+		and float(kame.stats.get("cooldown", 0.0))
+			> float(ItemDB.stats_of("laser_eyes").get("cooldown", 0.0))
+		and is_equal_approx(float(kame.stats.get("beam_width", 0.0)), 1.2)
+		and is_equal_approx(float(kame.stats.get("damage_hz", 0.0)), 16.0),
+		"Kame authors a committed rooted two-hand burst, stronger than Laser Eyes")
+	_expect(String(CharacterRig.CLIP_ALIASES.get("Kame", "")) == "Two-hand_Blast",
+		"Kame plays the two-hand blast clip")
 	_expect(nausicaa != null
 		and nausicaa.activation_type
 			== AbilityDefinition.ActivationType.SUSTAINED
@@ -202,6 +289,121 @@ func _check_authored_ability_shapes() -> void:
 		and is_equal_approx(
 			float(nausicaa.stats.get("crater_depth", 0.0)), 0.55),
 		"Nausicaä authors a short Laser Eyes-style terrain chain with shallow indents")
+	_expect(lightning != null
+		and lightning.activation_type
+			== AbilityDefinition.ActivationType.SUSTAINED
+		and lightning.projectile_type
+			== AbilityDefinition.ProjectileType.BEAM
+		and lightning.blocked_underwater
+		and is_equal_approx(float(lightning.stats.get("arcs", 0.0)), 1.0)
+		and is_equal_approx(float(lightning.stats.get("shock", -1.0)), 0.0),
+		"Lightning authors a snapping eye bolt that can chain and shock")
+	_expect(load(ItemDB.ability_script("lightning")).new() is LaserEyes,
+		"Lightning reuses the pulsed-beam contract")
+	_expect(light_bolt != null
+			and light_bolt.activation_type
+				== AbilityDefinition.ActivationType.SUSTAINED
+			and light_bolt.projectile_type
+				== AbilityDefinition.ProjectileType.ENERGY_BOLT
+			and light_bolt.impact_type
+				== AbilityDefinition.ImpactType.EXPLOSION_CRATER
+			and light_bolt.animation.is_empty()
+			and is_equal_approx(float(light_bolt.stats.get("speed", 0.0)),
+				CrawlerRules.LIGHT_BOLT_SPEED)
+			and float(light_bolt.stats.get("cooldown", 1.0))
+				< float(ItemDB.stats_of("starfire").get("cooldown", 0.0)),
+		"Light Bolt authors a fast eye-cast particle stream")
+	_expect(icicle != null
+			and icicle.activation_type
+				== AbilityDefinition.ActivationType.SUSTAINED
+			and icicle.projectile_type
+				== AbilityDefinition.ProjectileType.ENERGY_ICICLE
+			and icicle.impact_type
+				== AbilityDefinition.ImpactType.FROST_BURST
+			and icicle.animation == starfire.animation
+			and icicle.alternate_animation == starfire.alternate_animation
+			and icicle.hover_animation == starfire.hover_animation
+			and icicle.alternate_hover_animation
+				== starfire.alternate_hover_animation
+			and is_equal_approx(float(icicle.stats.get("speed", 0.0)),
+				CrawlerRules.ICICLE_SPEED)
+			and is_equal_approx(float(icicle.stats.get("cold", 0.0)),
+				CrawlerRules.ICICLE_COLD)
+			and is_equal_approx(float(icicle.stats.get("cold_damage", 0.0)),
+				CrawlerRules.ICICLE_COLD_DAMAGE),
+		"Icicle authors a Starfire-jabbed frost spear with a cold burst")
+	_expect(teleport != null
+			and teleport.activation_type
+				== AbilityDefinition.ActivationType.INSTANT
+			and teleport.projectile_type
+				== AbilityDefinition.ProjectileType.TELEPORT_ORB
+			and teleport.impact_type
+				== AbilityDefinition.ImpactType.TELEPORT
+			and teleport.animation == &"NukeThrow"
+			and teleport.hover_animation == &"NukeFloatThrow"
+			and is_equal_approx(float(teleport.stats.get("damage", 1.0)), 0.0)
+			and is_equal_approx(float(teleport.stats.get("speed", 0.0)),
+				CrawlerRules.TELEPORT_SPEED)
+			and is_equal_approx(float(teleport.stats.get("swap", 1.0)), 0.0),
+		"Teleport authors a no-damage overhand marker")
+	_expect(fus != null
+			and fus.activation_type
+				== AbilityDefinition.ActivationType.COMMITTED
+			and fus.projectile_type
+				== AbilityDefinition.ProjectileType.ENERGY_CONE
+			and fus.impact_type
+				== AbilityDefinition.ImpactType.KNOCKBACK_BURST
+			and fus.reaction_type
+				== AbilityDefinition.ReactionType.KNOCKBACK
+			and fus.animation == &"Roar"
+			and is_equal_approx(float(fus.stats.get("damage", 0.0)),
+				CrawlerRules.FUS_DAMAGE)
+			and is_equal_approx(float(fus.stats.get("knockback", 0.0)),
+				CrawlerRules.FUS_KNOCKBACK)
+			and float(fus.stats.get("knockback", 0.0))
+				> CrawlerRules.ROAR_KNOCKBACK
+			and float(fus.stats.get("damage", 0.0))
+				< CrawlerRules.ROAR_DAMAGE,
+		"Fus authors a roar-posed green force cone with light damage and huge knockback")
+	_expect(load(ItemDB.ability_script("fus")).new() is Fus,
+		"Fus uses its own committed shout script")
+	_expect(roar != null and toxic != null and charm != null and frost != null
+			and roar.animation == &"Roar"
+			and toxic.animation == &"Roar"
+			and charm.animation == &"Roar"
+			and frost.animation == &"Roar"
+			and roar.implementation == toxic.implementation,
+		"the four shockwaves share the Roar animation and script")
+	_expect(static_field != null and toxic_field != null and freeze_field != null
+			and healing_field != null
+			and static_field.animation == &"FieldCast"
+			and toxic_field.animation == &"FieldCast"
+			and freeze_field.animation == &"FieldCast"
+			and healing_field.animation == &"FieldCast"
+			and static_field.implementation == toxic_field.implementation
+			and freeze_field.implementation == static_field.implementation
+			and healing_field.implementation == static_field.implementation
+			and is_equal_approx(float(static_field.stats.get("radius", 0.0)), 7.0)
+			and is_equal_approx(float(static_field.stats.get("cast", 0.0)), 1.0)
+			and is_equal_approx(float(static_field.stats.get("shock", 0.0)), 2.0)
+			and is_equal_approx(float(toxic_field.stats.get("toxic", 0.0)), 4.0)
+			and is_equal_approx(float(freeze_field.stats.get("freeze", 0.0)), 72.0)
+			and is_equal_approx(float(healing_field.stats.get("heal", 0.0)), 8.0),
+		"the four fields share the levitate-enter cast and expand to seven metres")
+	_expect(String(CharacterRig.CLIP_ALIASES.get("FieldCast", ""))
+			== "Spell_Simple_Enter",
+		"Field casts play the levitate entrance clip")
+	_expect(load(ItemDB.ability_script("static_field")).new() is CrawlerField,
+		"Field abilities share the expanding-sphere script")
+	_expect(overdrive != null
+			and overdrive.activation_type
+				== AbilityDefinition.ActivationType.COMMITTED
+			and overdrive.animation == &"Roar"
+			and overdrive.implementation != roar.implementation
+			and float(overdrive.stats.get("boost", 0.0)) > 0.0
+			and float(overdrive.stats.get("duration", 0.0)) > 0.0
+			and float(overdrive.stats.get("cooldown", 0.0)) > 0.0,
+		"Overdrive is a committed roar-pose buff with its own script")
 
 
 func _check_stat_lines() -> void:
@@ -312,6 +514,38 @@ func _check_starfire_alternation() -> void:
 			child.queue_free()
 
 
+func _check_hero_punch_alternation() -> void:
+	var definition := ItemDB.ability_definition("hero_punch")
+	var ability := HeroPunch.new()
+	ability.configure(_player, 0, "hero_punch", definition)
+	var fired := ability.press()
+	var first_clip := _player._ability_clip
+	ability.tick(0.0)
+	ability.tick(ability.cooldown() + 0.01)
+	var second_clip := _player._ability_clip
+	ability.tick(0.0)
+	ability.tick(ability.cooldown() + 0.01)
+	var third_clip := _player._ability_clip
+	ability.tick(0.0)
+	_expect(fired and ability.is_held(),
+		"holding Hero Punch throws each jab automatically")
+	_expect(first_clip == String(definition.animation)
+		and second_clip == String(definition.alternate_animation)
+		and third_clip == String(definition.animation),
+		"Hero Punch casts right, left, then right again")
+	ability.release()
+	var hover := HeroPunch.new()
+	hover.configure(_player, 0, "hero_punch", definition)
+	_player._apply_stance(OnlinePlayer.Stance.FLY)
+	_player._fly_blend = 0.0
+	_expect(hover.press(), "Hero Punch jabs while floating")
+	_expect(_player._ability_clip == String(definition.hover_animation),
+		"a floating Hero Punch still plays the matching jab")
+	hover.release()
+	_player._fly_blend = 0.0
+	_player._apply_stance(OnlinePlayer.Stance.STAND)
+
+
 func _check_starfire_motion() -> void:
 	var definition := ItemDB.ability_definition("starfire")
 	var ability := Starfire.new()
@@ -391,6 +625,9 @@ func _check_new_ability_runtime() -> void:
 	nuke.configure(_player, 0, "nuke", nuke_definition)
 	_player.velocity = Vector3(4.0, 1.0, -2.0)
 	_expect(nuke.press(), "Nuke launches its host-approved hand projectile")
+	_expect(_player._ability_clip == "Kame"
+			and is_equal_approx(_player._ability_clip_left, 0.28),
+		"Nuke snaps the kame pose instead of holding it")
 	var orb: AbilityProjectile
 	for child: Node in get_children():
 		if child is AbilityProjectile \
@@ -399,10 +636,86 @@ func _check_new_ability_runtime() -> void:
 	_expect(orb != null and orb._disk.mesh is SphereMesh
 		and orb.authoritative,
 		"Nuke builds a spherical orb whose offline copy owns impact")
+	if orb != null:
+		_expect(orb.global_position.distance_to(_player.merged_hand_point()) < 0.05,
+			"Nuke leaves from the front of both hands")
 	nuke.tick(0.0)
 	_player.velocity = Vector3.ZERO
 	if orb != null:
 		orb.queue_free()
+
+	var mini_definition := ItemDB.ability_definition("mini_nuke")
+	var mini_orb := AbilityProjectile.launch(
+		self, _player, "mini_nuke",
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
+	_expect(mini_orb != null and mini_definition != null
+			and mini_orb._disk.mesh is SphereMesh
+			and mini_orb._emits_blast_bubbles()
+			and mini_orb._speed > float(nuke_definition.stats.get("speed", 0.0))
+			and mini_orb._range > float(nuke_definition.stats.get("range", 0.0)),
+		"Mini Nuke builds a faster, longer-flying orb that blooms bubbles from the blast")
+	if mini_orb != null:
+		mini_orb.queue_free()
+	var disk := AbilityProjectile.launch(
+		self, _player, "starfire",
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
+	_expect(disk != null and not disk._emits_blast_bubbles(),
+		"Starfire still leaves bubbles along its path")
+	if disk != null:
+		disk.queue_free()
+	var bolt := AbilityProjectile.launch(
+		self, _player, "light_bolt",
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
+	_expect(bolt != null and bolt._disk.mesh is SphereMesh
+			and bolt._halo != null
+			and is_equal_approx(bolt._speed, CrawlerRules.LIGHT_BOLT_SPEED)
+			and not bolt._emits_blast_bubbles(),
+		"Light Bolt builds a small pulsating particle bolt")
+	if bolt != null:
+		bolt.queue_free()
+	var spear := AbilityProjectile.launch(
+		self, _player, "icicle",
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
+	_expect(spear != null and spear._disk.mesh is CylinderMesh
+			and spear._halo != null
+			and is_equal_approx(spear._speed, CrawlerRules.ICICLE_SPEED)
+			and not spear._emits_blast_bubbles(),
+		"Icicle builds a sharp flying spear")
+	if spear != null:
+		spear.queue_free()
+	var marker := AbilityProjectile.launch(
+		self, _player, "teleport",
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
+	_expect(marker != null and marker._disk.mesh is SphereMesh
+			and marker._halo != null
+			and marker._persist_trail != null
+			and is_equal_approx(marker._speed, CrawlerRules.TELEPORT_SPEED)
+			and marker._velocity.y > 0.0
+			and not marker._emits_blast_bubbles(),
+		"Teleport builds a lofted white marker with a lasting trail")
+	if marker != null:
+		marker.queue_free()
+	var cone := AbilityProjectile.launch(
+		self, _player, "fus",
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
+	_expect(cone != null and is_instance_valid(cone._shock)
+			and is_equal_approx(cone._speed, CrawlerRules.FUS_SPEED)
+			and cone._shock.visible
+			and not cone._emits_blast_bubbles(),
+		"Fus builds a travelling meteor-shock cone")
+	if cone != null:
+		cone.queue_free()
+	var thrown := Teleport.new()
+	thrown.configure(_player, 0, "teleport", ItemDB.ability_definition("teleport"))
+	_expect(thrown.press() and _player._ability_clip == "NukeThrow",
+		"Teleport casts with the overhand throw")
+	thrown.release()
+	for child: Node in get_children():
+		if child is AbilityProjectile \
+				and (child as AbilityProjectile).definition != null \
+				and (child as AbilityProjectile).definition.ability_id \
+					== "teleport":
+			child.queue_free()
 
 	var clips := [
 		"OverhandThrow", "Throw_Object",
@@ -428,6 +741,37 @@ func _check_new_ability_runtime() -> void:
 			and barrier.remaining() > 0.0,
 			"Wall fades gradually while its lifetime is still active")
 		barrier.queue_free()
+
+	var house := AbilityBarrier.create(
+		self, 78, _player.peer_id, Transform3D.IDENTITY,
+		Vector3(8.0, 4.0, 0.35), 7.0, 4.0, Color.CORNFLOWER_BLUE,
+		0.52, {"house": true, "firewall": 14.0})
+	_expect(house != null and house.is_house() and house.panel_count() >= 7
+			and house.firewall_damage() > 0.0
+			and house._burn_areas.size() >= 4
+			and house._burn_areas.size() < house.panel_count(),
+		"House builds a box with a doorway and burns only the walls")
+	if house != null:
+		house.queue_free()
+
+	var sliding := AbilityBarrier.create(
+		self, 79, _player.peer_id, Transform3D.IDENTITY,
+		Vector3(8.0, 4.0, 0.35), 7.0, 4.0, Color.CORNFLOWER_BLUE,
+		0.52, {
+			"house": true,
+			"project_speed": 3.5,
+			"project_along": Vector3(0.0, 0.0, -1.0),
+		})
+	_expect(sliding != null and sliding.is_house()
+			and is_equal_approx(sliding.project_speed(), 3.5),
+		"House and project can share one barrier")
+	if sliding != null:
+		sliding.sync_to_physics = false
+		var start := sliding.global_position
+		sliding._physics_process(1.0)
+		_expect(start.distance_to(sliding.global_position) > 3.0,
+			"Project slides the wall forward")
+		sliding.queue_free()
 
 	var first_warning := AbilityDelayedBlast.create(
 		self, _player, ItemDB.ability_definition("nausicaa"),

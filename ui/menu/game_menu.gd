@@ -43,6 +43,7 @@ const CONTENT_RECT := Rect2(0.065, 0.030, 0.870, 0.700)
 const SELECTOR_RECT := Rect2(0.250, 0.742, 0.220, 0.188)
 const ADMIN_RECT := Rect2(0.035, 0.848, 0.135, 0.090)
 const ACTIONS_RECT := Rect2(0.500, 0.742, 0.435, 0.128)
+const SANDBOX_ACTIONS_RECT := Rect2(0.500, 0.742, 0.435, 0.248)
 
 var _player: OnlinePlayer
 var _tab: Tab = Tab.HERO
@@ -55,6 +56,7 @@ var _active_page: Control
 var _selector_buttons: Dictionary = {}
 var _admin_button: Button
 var _settings_action: Button
+var _sandbox_cheat_buttons: Dictionary = {}
 
 
 ## Called before the menu enters the tree. Each routed page is configured from
@@ -76,6 +78,7 @@ func _ready() -> void:
 	_build_shell()
 	_replace_active_page()
 	_refresh_navigation()
+	CrtType.watch(self)
 
 
 ## Tab must be caught before GUI focus navigation consumes it. Escape follows the
@@ -95,7 +98,7 @@ func close() -> void:
 
 
 ## Opens a canonical page. Legacy aliases remain source-compatible:
-## INVENTORY / ITEMS / ABILITIES -> Hero, QUESTS -> Data/Quests,
+## INVENTORY -> Items, ABILITIES -> Hero, QUESTS -> Data/Quests,
 ## ACHIEVEMENTS -> Data/Achievements.
 func show_tab(tab: Tab) -> void:
 	if tab == Tab.QUESTS:
@@ -123,11 +126,13 @@ func current_tab() -> Tab:
 
 
 func _canonical_tab(tab: Tab) -> Tab:
-	if tab == Tab.INVENTORY or tab == Tab.ITEMS or tab == Tab.ABILITIES:
+	if tab == Tab.ABILITIES:
 		return Tab.HERO
+	if tab == Tab.INVENTORY:
+		return Tab.ITEMS
 	if tab == Tab.QUESTS or tab == Tab.ACHIEVEMENTS:
 		return Tab.DATA
-	if tab == Tab.HERO or tab == Tab.APPAREL \
+	if tab == Tab.HERO or tab == Tab.APPAREL or tab == Tab.ITEMS \
 			or tab == Tab.DATA or tab == Tab.SETTINGS or tab == Tab.ADMIN:
 		return tab
 	return Tab.HERO
@@ -229,10 +234,11 @@ func _build_bottom_selector() -> void:
 	_add_selector_button(
 		stack,
 		"TabApparel",
-		"Hats",
+		"Hats & Capes",
 		RedMenuGlyph.Glyph.HAT,
 		Tab.APPAREL
 	)
+	_add_selector_button(stack, "TabItems", "Items", RedMenuGlyph.Glyph.ITEMS, Tab.ITEMS)
 	_add_selector_button(stack, "TabData", "Data", RedMenuGlyph.Glyph.DATA, Tab.DATA)
 
 
@@ -294,12 +300,21 @@ func _build_admin_button() -> void:
 
 
 func _build_right_actions() -> void:
+	var column := VBoxContainer.new()
+	column.name = "SessionActionColumn"
+	column.alignment = BoxContainer.ALIGNMENT_BEGIN
+	column.add_theme_constant_override(&"separation", 4)
+	_apply_anchor_rect(
+		column,
+		SANDBOX_ACTIONS_RECT if CrawlerRules.sandbox() else ACTIONS_RECT)
+	_shell.add_child(column)
+
 	var cluster := HBoxContainer.new()
 	cluster.name = "SessionActions"
 	cluster.alignment = BoxContainer.ALIGNMENT_CENTER
 	cluster.add_theme_constant_override(&"separation", 20)
-	_apply_anchor_rect(cluster, ACTIONS_RECT)
-	_shell.add_child(cluster)
+	cluster.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(cluster)
 
 	var close_action := _action_button("CloseAction", RedMenuGlyph.Glyph.CLOSE)
 	close_action.tooltip_text = "Close menu"
@@ -358,6 +373,63 @@ func _build_right_actions() -> void:
 	if leave_glyph != null:
 		leave_glyph.green_color = BLACK_82
 		leave_glyph.black_color = BLACK_82
+
+	if CrawlerRules.sandbox():
+		_build_sandbox_cheats(column)
+
+
+func _build_sandbox_cheats(column: VBoxContainer) -> void:
+	var row := HBoxContainer.new()
+	row.name = "SandboxCheats"
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override(&"separation", 20)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(row)
+	_add_sandbox_cheat(
+		row, "SandboxMobs", CrawlerRules.CHEAT_MOBS,
+		RedMenuGlyph.Glyph.MOBS, "NO MOBS",
+		"Turn field packs off")
+	_add_sandbox_cheat(
+		row, "SandboxInvincible", CrawlerRules.CHEAT_INVINCIBLE,
+		RedMenuGlyph.Glyph.SHIELD, "INVINCIBLE",
+		"Ignore incoming damage")
+	_add_sandbox_cheat(
+		row, "SandboxFast", CrawlerRules.CHEAT_FAST,
+		RedMenuGlyph.Glyph.SPEED, "FAST",
+		"Full speed, faster acceleration, and infinite flight")
+	_add_sandbox_cheat(
+		row, "SandboxGold", CrawlerRules.CHEAT_GOLD,
+		RedMenuGlyph.Glyph.GOLD, "GOLD",
+		"Spend without emptying the purse")
+	_refresh_sandbox_cheats()
+
+
+func _add_sandbox_cheat(
+		row: HBoxContainer, node_name: String, cheat: String,
+		glyph_kind: RedMenuGlyph.Glyph, label_text: String,
+		tooltip: String) -> void:
+	var button := _action_button(node_name, glyph_kind)
+	button.tooltip_text = tooltip
+	button.toggle_mode = true
+	button.button_pressed = CrawlerRules.sandbox_cheat(cheat)
+	var wanted := cheat
+	button.pressed.connect(func() -> void:
+		if _player != null:
+			_player.set_sandbox_cheat(wanted, button.button_pressed)
+		_refresh_sandbox_cheats()
+	)
+	row.add_child(_action_entry(button, label_text))
+	_sandbox_cheat_buttons[cheat] = button
+
+
+func _refresh_sandbox_cheats() -> void:
+	for cheat: Variant in _sandbox_cheat_buttons:
+		var button := _sandbox_cheat_buttons[cheat] as Button
+		if button == null:
+			continue
+		var on := CrawlerRules.sandbox_cheat(str(cheat))
+		button.set_pressed_no_signal(on)
+		_style_action_button(button, on)
 
 
 func _action_button(node_name: String, glyph_kind: RedMenuGlyph.Glyph) -> Button:
@@ -448,6 +520,8 @@ func _build_page(tab: Tab) -> Control:
 			return hero
 		Tab.APPAREL:
 			return _catalogue_page(RedCataloguePage.Mode.APPAREL)
+		Tab.ITEMS:
+			return _catalogue_page(RedCataloguePage.Mode.ITEMS)
 		Tab.DATA:
 			var data := RedDataPage.new()
 			data.configure(_player.journal if _player != null else null)
@@ -527,6 +601,10 @@ func _refresh_navigation() -> void:
 	_style_selector_button(
 		_selector_buttons[Tab.APPAREL] as Button,
 		_tab == Tab.APPAREL
+	)
+	_style_selector_button(
+		_selector_buttons[Tab.ITEMS] as Button,
+		_tab == Tab.ITEMS
 	)
 	_style_selector_button(
 		_selector_buttons[Tab.DATA] as Button,

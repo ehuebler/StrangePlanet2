@@ -106,7 +106,7 @@ const MODES: Array[Dictionary] = [
 	{
 		"label": "Sandbox Mode",
 		"id": "sandbox",
-		"description": "Build, explore, and experiment without objectives.",
+		"description": "Crawler rules, plus Tab-menu tools to quiet mobs, go invincible, fly fast, and spend freely.",
 	},
 ]
 const DUELS_MODES: Array[Dictionary] = [
@@ -134,10 +134,23 @@ const HOME_BLACK := Color(0.0, 0.0, 0.0, 0.78)
 const HOME_ACTION_FONT_SIZE := 28
 const MODE_PANEL_HEIGHT := 226.0
 
-## Height of the band at the foot of the window the menu row runs along, and how
-## far its baseline sits off the bottom edge.
-const MENU_ROW_HEIGHT := 56.0
-const MENU_ROW_INSET := 38.0
+## Two text rows at the foot of the window, and how far the stack sits off
+## the bottom edge. The actions stretch across most of the window so the
+## longer labels keep their first and last letters.
+const MENU_ROW_HEIGHT := 36.0
+const MENU_ROW_GAP := 4.0
+const MENU_STACK_HEIGHT := 76.0
+const MENU_ROW_INSET := 28.0
+const MENU_SIDE_INSET := 40.0
+const MENU_ACTION_GAP := 36.0
+const MENU_ACTION_MIN_WIDTH := 160.0
+const MENU_ACTION_PAD_X := 26.0
+const MENU_ACTION_CRT_PAD := 18.0
+## Horizontally centred, at the preview figure's feet — about three quarters
+## down the frame, not on the window's bottom edge.
+const LOADING_BAR_WIDTH := 248.0
+const LOADING_BAR_HEIGHT := 10.0
+const LOADING_BAR_ANCHOR_Y := 0.76
 ## Share of the window the character editor's card is allowed, measured from the
 ## right edge. The rest is the figure, which is the whole reason the editor has no
 ## preview of its own — see [method _character_editor].
@@ -177,7 +190,7 @@ var _root: Control
 var _settings_background: TextureRect
 var _title: MeshInstance3D
 var _title_material: StandardMaterial3D
-var _menu: HBoxContainer
+var _menu: VBoxContainer
 ## New Game opens a two-stage panel: mode cards, then mode settings and an
 ## explicit Start Game action.
 var _picking_mode := false
@@ -203,9 +216,13 @@ var _awaiting_player := false
 ## Raised while the invisible pre-game warm-up is running. The menu remains
 ## unchanged, but a second New Game must not start another warm-up beside it.
 var _warming := false
+var _loading_bar: StartLoadingBar
+var _loading_block: ColorRect
+var _preview_hold_speed := 1.0
 var _edit_button: Button
-var _name_row: HBoxContainer
+var _name_row: VBoxContainer
 var _name_field: LineEdit
+var _rank_label: Label
 var _look: Dictionary = {}
 ## The containers the character editor is built against, held here rather than in
 ## the screen so the look survives the editor being closed and opened again.
@@ -533,19 +550,18 @@ func _build_overlay() -> void:
 	_back.visible = false
 	_root.add_child(_back)
 
-	# One row along the foot of the window rather than a list down the right.
-	# The list was there because the figure owned the left of the frame and the
-	# planet the right, which left one column of dark sky to put it in — but the
-	# figure has since been brought in close enough to want the middle as well,
-	# and a row along the bottom is the one place that crosses neither. It also
-	# stops being a column that grows downward off the screen as entries are
-	# added to it.
-	_menu = HBoxContainer.new()
+	# Two centred rows of bare type along the foot of the window. The figure
+	# owns the middle of the frame, so the actions stay low and do not sit on
+	# a plate.
+	_menu = VBoxContainer.new()
+	_menu.name = "HomeMenu"
 	_menu.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	_menu.offset_top = -(MENU_ROW_HEIGHT + MENU_ROW_INSET)
+	_menu.offset_left = MENU_SIDE_INSET
+	_menu.offset_top = -(MENU_STACK_HEIGHT + MENU_ROW_INSET)
+	_menu.offset_right = -MENU_SIDE_INSET
 	_menu.offset_bottom = -MENU_ROW_INSET
 	_menu.alignment = BoxContainer.ALIGNMENT_CENTER
-	_menu.add_theme_constant_override("separation", 8)
+	_menu.add_theme_constant_override("separation", MENU_ROW_GAP)
 	_root.add_child(_menu)
 	_fill_menu_row()
 	_build_mode_panel()
@@ -591,66 +607,104 @@ func _build_overlay() -> void:
 	_fade.color = Color(0.004, 0.006, 0.016)
 	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_fade)
+	_build_start_loading()
+	CrtType.watch(_root)
 	create_tween().tween_property(_fade, "modulate:a", 0.0, FADE_IN_TIME) \
 		.set_trans(Tween.TRANS_SINE)
 
 
-## The permanent home actions. New Game opens its own card flow rather than
-## replacing these with a row of unframed text.
+func _build_start_loading() -> void:
+	_loading_block = ColorRect.new()
+	_loading_block.name = "StartLoadingBlocker"
+	_loading_block.color = Color(0.0, 0.0, 0.0, 0.0)
+	_loading_block.mouse_filter = Control.MOUSE_FILTER_STOP
+	_loading_block.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_loading_block.visible = false
+	_root.add_child(_loading_block)
+	_loading_bar = StartLoadingBar.new()
+	_loading_bar.anchor_left = 0.5
+	_loading_bar.anchor_right = 0.5
+	_loading_bar.anchor_top = LOADING_BAR_ANCHOR_Y
+	_loading_bar.anchor_bottom = LOADING_BAR_ANCHOR_Y
+	_loading_bar.offset_left = -LOADING_BAR_WIDTH * 0.5
+	_loading_bar.offset_right = LOADING_BAR_WIDTH * 0.5
+	_loading_bar.offset_top = -LOADING_BAR_HEIGHT * 0.5
+	_loading_bar.offset_bottom = LOADING_BAR_HEIGHT * 0.5
+	_loading_bar.visible = false
+	_root.add_child(_loading_bar)
+
+
+## The permanent home actions, split across two rows of CRT type.
 func _fill_menu_row() -> void:
 	for child in _menu.get_children():
 		_menu.remove_child(child)
 		child.queue_free()
-	var actions: Array[Dictionary] = [
-		{
-			"name": "HomeNewGame",
-			"label": "Start Game",
-			"callback": func() -> void: start_new_game("crawler"),
-		},
-		{
-			"name": "HomeOnline",
-			"label": "Online",
-			"callback": func() -> void: show_view(View.ONLINE),
-		},
-		{
-			"name": "HomeSandbox",
-			"label": "Sandbox",
-			"callback": func() -> void: start_new_game("sandbox"),
-		},
-		{
-			"name": "HomeUpgrades",
-			"label": "Upgrades",
-			"callback": func() -> void: show_view(View.UPGRADES),
-		},
-		{
-			"name": "HomeAchievements",
-			"label": "Achieve",
-			"callback": func() -> void: show_view(View.ACHIEVEMENTS),
-		},
-		{
-			"name": "HomeSettings",
-			"label": "Settings",
-			"callback": func() -> void: show_view(View.SETTINGS),
-		},
-		{
-			"name": "HomeQuit",
-			"label": "Quit",
-			"callback": func() -> void: get_tree().quit(),
-			"destructive": true,
-		},
+	var rows: Array = [
+		[
+			{
+				"name": "HomeNewGame",
+				"label": "Start Game",
+				"callback": func() -> void: start_new_game("crawler"),
+			},
+			{
+				"name": "HomeLoad",
+				"label": "Load",
+				"callback": func() -> void: start_saved_game(),
+			},
+			{
+				"name": "HomeOnline",
+				"label": "Online",
+				"callback": func() -> void: show_view(View.ONLINE),
+			},
+			{
+				"name": "HomeSandbox",
+				"label": "Sandbox",
+				"callback": func() -> void: start_new_game("sandbox"),
+			},
+		],
+		[
+			{
+				"name": "HomeUpgrades",
+				"label": "Upgrades",
+				"callback": func() -> void: show_view(View.UPGRADES),
+			},
+			{
+				"name": "HomeAchievements",
+				"label": "Achievements",
+				"callback": func() -> void: show_view(View.ACHIEVEMENTS),
+			},
+			{
+				"name": "HomeSettings",
+				"label": "Settings",
+				"callback": func() -> void: show_view(View.SETTINGS),
+			},
+			{
+				"name": "HomeQuit",
+				"label": "Quit",
+				"callback": func() -> void: get_tree().quit(),
+				"destructive": true,
+			},
+		],
 	]
-	for action: Dictionary in actions:
-		var button := _home_button(
-			String(action["label"]),
-			action["callback"] as Callable,
-			false,
-			bool(action.get("destructive", false))
-		)
-		button.name = String(action["name"])
-		button.custom_minimum_size = Vector2(124.0, 50.0)
-		button.add_theme_font_size_override(
-			&"font_size", HOME_ACTION_FONT_SIZE)
-		_menu.add_child(button)
+	for row_index in rows.size():
+		var row := HBoxContainer.new()
+		row.name = "HomeMenuRow%d" % (row_index + 1)
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_theme_constant_override("separation", int(MENU_ACTION_GAP))
+		_menu.add_child(row)
+		for action: Dictionary in rows[row_index]:
+			var button := _home_action_button(
+				String(action["label"]),
+				action["callback"] as Callable,
+				bool(action.get("destructive", false))
+			)
+			button.name = String(action["name"])
+			if String(action["name"]) == "HomeSandbox":
+				_style_sandbox_button(button)
+			if String(action["name"]) == "HomeLoad":
+				_style_load_button(button)
+			row.add_child(button.crt_host())
 
 
 func _build_mode_panel() -> void:
@@ -727,12 +781,17 @@ func _build_mode_cards() -> void:
 	_mode_content.add_child(row)
 	for mode: Dictionary in MODES:
 		var mode_id := String(mode["id"])
+		var locked := mode_id == "sandbox" and not CrawlerMeta.sandbox_unlocked()
 		var card := _home_mode_card(
 			mode,
 			false,
-			func() -> void: _select_home_mode(mode_id)
+			func() -> void: _select_home_mode(mode_id),
+			locked
 		)
 		card.name = "HomeMode_%s" % mode_id
+		if locked:
+			card.disabled = true
+			card.tooltip_text = "Reach your first city to unlock Sandbox."
 		row.add_child(card)
 
 
@@ -839,6 +898,8 @@ func _pick_mode(picking: bool) -> void:
 
 
 func _select_home_mode(mode_id: String) -> void:
+	if mode_id == "sandbox" and not CrawlerMeta.sandbox_unlocked():
+		return
 	_selected_home_mode = NetworkManager.sanitize_game_mode(mode_id)
 	if _selected_home_mode == "duels":
 		_selected_home_duels_mode = NetworkManager.sanitize_duels_mode(
@@ -867,26 +928,32 @@ func _pick_home_duels_mode(mode_id: String) -> void:
 ## able to rename yourself without leaving the title screen is the point of having
 ## it here, and the editor is where you go when you want to change more than that.
 func _build_name_row() -> void:
-	var row := HBoxContainer.new()
-	row.name = "HomeNameRow"
-	row.add_theme_constant_override("separation", 8)
-	row.set_anchors_preset(Control.PRESET_CENTER_LEFT)
+	var column := VBoxContainer.new()
+	column.name = "HomeNameRow"
+	column.add_theme_constant_override("separation", 2)
+	column.alignment = BoxContainer.ALIGNMENT_CENTER
+	column.set_anchors_preset(Control.PRESET_CENTER_LEFT)
 	# Between the figure's feet and the menu row along the bottom, which is the
 	# band left over once the figure was brought in close. Anchored across rather
 	# than placed in pixels from the left edge: the figure's own position in the
 	# frame is a fraction of the width — it is parallax off a camera a metre and a
 	# half to the side — so a pixel offset only holds at one window size.
-	row.anchor_top = 0.75
-	row.anchor_bottom = 0.75
+	column.anchor_top = 0.75
+	column.anchor_bottom = 0.75
 	# The field itself, rather than the field-plus-pencil group, is centred under
 	# the figure. The pencil remains the small action immediately to its right.
-	row.anchor_left = 0.328
-	row.anchor_right = 0.328
-	row.offset_left = -75.0
-	row.offset_right = 117.0
-	row.offset_top = -18.0
-	row.offset_bottom = 18.0
-	_root.add_child(row)
+	column.anchor_left = 0.328
+	column.anchor_right = 0.328
+	column.offset_left = -75.0
+	column.offset_right = 117.0
+	column.offset_top = -18.0
+	column.offset_bottom = 42.0
+	_root.add_child(column)
+
+	var row := HBoxContainer.new()
+	row.name = "HomeNameFields"
+	row.add_theme_constant_override("separation", 8)
+	column.add_child(row)
 
 	_name_field = LineEdit.new()
 	_name_field.name = "HomeNameInput"
@@ -904,7 +971,14 @@ func _build_name_row() -> void:
 	_edit_button = _pencil_button()
 	_edit_button.pressed.connect(func() -> void: show_view(View.CHARACTER))
 	row.add_child(_edit_button)
-	_name_row = row
+
+	_rank_label = _sky_label("LV 1   NEWBIE", 13)
+	_rank_label.name = "HomePlayerRank"
+	_rank_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_rank_label.add_theme_color_override("font_color", HOME_GREEN_TEXT)
+	column.add_child(_rank_label)
+	_name_row = column
+	_refresh_player_rank()
 
 
 ## A pencil, drawn rather than set as text: no display face here carries a glyph
@@ -1003,6 +1077,47 @@ func _sky_button(text: String, callback: Callable) -> Button:
 	return button
 
 
+func _home_action_width(text: String) -> float:
+	var font: Font = ThemeDB.fallback_font
+	if _root != null and _root.theme != null and _root.theme.default_font != null:
+		font = _root.theme.default_font
+	var measured := font.get_string_size(
+		text.to_upper(),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		HOME_ACTION_FONT_SIZE
+	).x
+	return maxf(
+		MENU_ACTION_MIN_WIDTH,
+		measured + MENU_ACTION_PAD_X * 2.0 + MENU_ACTION_CRT_PAD
+	)
+
+
+func _home_action_button(
+		text: String,
+		callback: Callable,
+		destructive := false
+	) -> HomeActionButton:
+	var button := HomeActionButton.new()
+	button.text = text.to_upper()
+	button.set_destructive(destructive)
+	button.custom_minimum_size = Vector2(_home_action_width(text), MENU_ROW_HEIGHT)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.clip_text = false
+	button.add_theme_font_size_override(&"font_size", HOME_ACTION_FONT_SIZE)
+	var ink := HOME_RED_BRIGHT if destructive else HOME_GREEN_TEXT
+	button.add_theme_color_override(&"font_color", ink)
+	button.add_theme_color_override(&"font_hover_color", ink)
+	button.add_theme_color_override(&"font_pressed_color", ink)
+	button.add_theme_color_override(&"font_focus_color", ink)
+	button.add_theme_color_override(&"font_disabled_color", Color(ink, 0.42))
+	button.add_theme_color_override(&"font_outline_color", Color(0, 0, 0, 0))
+	button.add_theme_constant_override(&"outline_size", 0)
+	if callback.is_valid():
+		button.pressed.connect(callback)
+	return button
+
+
 func _home_button(
 		text: String,
 		callback := Callable(),
@@ -1026,7 +1141,8 @@ func _home_button(
 func _home_mode_card(
 		mode: Dictionary,
 		selected: bool,
-		callback: Callable
+		callback: Callable,
+		locked := false
 	) -> Button:
 	var card := _home_button("", callback, selected)
 	card.custom_minimum_size = Vector2(220.0, 116.0)
@@ -1059,7 +1175,8 @@ func _home_mode_card(
 	copy.add_child(title)
 
 	var description := _home_label(
-		String(mode.get("description", "")),
+		"Reach your first city to unlock." if locked \
+			else String(mode.get("description", "")),
 		15,
 		Color(0.96, 0.98, 1.0),
 		true
@@ -1235,6 +1352,44 @@ func _home_style(
 	return box
 
 
+func _refresh_player_rank() -> void:
+	if _rank_label == null:
+		return
+	_rank_label.text = "LV %d   %s" % [
+		CrawlerMeta.global_level(),
+		CrawlerMeta.title().to_upper(),
+	]
+
+
+func _style_sandbox_button(button: Button) -> void:
+	var open := CrawlerMeta.sandbox_unlocked()
+	button.disabled = not open
+	button.tooltip_text = "" if open else "Reach your first city to unlock Sandbox."
+
+
+func _style_load_button(button: Button) -> void:
+	var open := GameSave.has_save()
+	button.disabled = not open
+	button.tooltip_text = "" if open else "No saved game yet."
+
+
+func _refresh_load_button() -> void:
+	if _menu == null:
+		return
+	var button := _menu.find_child("HomeLoad", true, false) as Button
+	if button != null:
+		_style_load_button(button)
+
+
+func _refresh_sandbox_button() -> void:
+	if _menu == null:
+		return
+	var button := _menu.find_child("HomeSandbox", true, false) as Button
+	if button != null:
+		_style_sandbox_button(button)
+	_refresh_load_button()
+
+
 func _refresh_gem_counter() -> void:
 	if _gems == null:
 		return
@@ -1323,6 +1478,9 @@ func show_view(view: View) -> void:
 	# be a second field for the same name sitting beside it.
 	if is_instance_valid(_name_row):
 		_name_row.visible = view == View.HOME
+	if view == View.HOME:
+		_refresh_player_rank()
+		_refresh_sandbox_button()
 	# Online is one framed overlay with air on every side. It fills enough of the
 	# view to remain useful at 720p while leaving the live planet visible around
 	# its complete red rim. Character stays on the home pose so the preview keeps
@@ -1607,6 +1765,8 @@ func _on_steam_invite_received(
 func start_new_game(game_mode := "crawler", duels_mode := "") -> void:
 	if _handover_target != null or _awaiting_player or _warming:
 		return
+	if str(game_mode) == "sandbox" and not CrawlerMeta.sandbox_unlocked():
+		return
 	# The player starts exactly where the character they have been looking at was
 	# standing, facing the way it was facing. Anything else would be a jump on the
 	# frame the real body replaces the preview.
@@ -1615,7 +1775,7 @@ func start_new_game(game_mode := "crawler", duels_mode := "") -> void:
 	_world().override_local_look(_look)
 	# Crawler drops the home chrome before warm-up so Start Game is not sitting
 	# on a still-visible mode panel for a second.
-	if NetworkManager.sanitize_game_mode(game_mode) == CrawlerRules.MODE_ID:
+	if CrawlerRules.uses_mode(NetworkManager.sanitize_game_mode(game_mode)):
 		_dismiss_overlay()
 	# Before the session rather than after it, because the point is to be holding
 	# the player still while this happens. Once a session exists the world is
@@ -1624,17 +1784,83 @@ func start_new_game(game_mode := "crawler", duels_mode := "") -> void:
 	NetworkManager.start_single_player(str(game_mode), str(duels_mode))
 
 
+func start_saved_game() -> void:
+	if _handover_target != null or _awaiting_player or _warming:
+		return
+	var payload := GameSave.read()
+	if payload.is_empty():
+		return
+	CharacterDB.save_look(_look)
+	var xf := GameSave.player_transform(payload)
+	if xf.origin.length_squared() > 0.01:
+		_world().override_local_spawn(xf, true)
+	var look: Variant = payload.get("look", {})
+	if look is Dictionary and not (look as Dictionary).is_empty():
+		_world().override_local_look(look)
+	else:
+		_world().override_local_look(_look)
+	if CrawlerRules.uses_mode(GameSave.mode_of(payload)):
+		_dismiss_overlay()
+	await _warm_up()
+	NetworkManager.start_saved_game(payload)
+
+
 ## Pays for the descent in advance without replacing the menu with a loading
 ## screen. [WorldWarmup] draws through its own offscreen viewport, so the meshes
 ## that force texture and shader preparation never enter this camera's world.
+## A small red/green bar tracks that work so the still shot does not look hung.
 func _warm_up() -> void:
 	_warming = true
+	_hold_preview_still(true)
+	_show_start_loading()
 	var warmup := WorldWarmup.new()
 	warmup.name = "WorldWarmup"
+	warmup.progressed.connect(_on_warmup_progressed)
 	_world().add_child(warmup)
 	await warmup.run(_world(), _camera)
+	if warmup.progressed.is_connected(_on_warmup_progressed):
+		warmup.progressed.disconnect(_on_warmup_progressed)
 	warmup.queue_free()
+	_hide_start_loading()
+	_hold_preview_still(false)
 	_warming = false
+
+
+func _show_start_loading() -> void:
+	if is_instance_valid(_menu):
+		_menu.visible = false
+	if is_instance_valid(_mode_panel):
+		_mode_panel.visible = false
+	if is_instance_valid(_loading_block):
+		_loading_block.visible = true
+	if is_instance_valid(_loading_bar):
+		_loading_bar.share = 0.0
+		_loading_bar.visible = true
+
+
+func _hide_start_loading() -> void:
+	if is_instance_valid(_loading_bar):
+		_loading_bar.visible = false
+	if is_instance_valid(_loading_block):
+		_loading_block.visible = false
+
+
+func _on_warmup_progressed(share: float, _note: String) -> void:
+	if is_instance_valid(_loading_bar):
+		_loading_bar.share = share
+
+
+func _hold_preview_still(hold: bool) -> void:
+	if not is_instance_valid(_preview):
+		return
+	var animator := CharacterRig.animator_of(_preview)
+	if animator == null:
+		return
+	if hold:
+		_preview_hold_speed = animator.speed_scale
+		animator.speed_scale = 0.0
+	else:
+		animator.speed_scale = _preview_hold_speed
 
 
 func _on_session_started() -> void:

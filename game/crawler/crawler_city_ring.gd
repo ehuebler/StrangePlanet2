@@ -1,18 +1,27 @@
 class_name CrawlerCityRing
 extends Node3D
 
-## First crawler city. Gameplay is still the ring volume for shops, healing,
-## and mob keep-out. On a planet the Neon Fjord village sits in that volume;
-## tests without a planet keep the old translucent walls.
+## A crawler city ring. Gameplay is still the volume for shops, healing,
+## and mob keep-out. On a planet a Neon Whimsy village sits in that volume;
+## tests without a planet keep the old translucent walls. Neon Fjord is the
+## default; later towns pass their own site, title, and village.
 
 const GROUP := &"crawler_city_rings"
 const VILLAGE_MODEL := "res://assets/runtime/environment/neon_fjord_village.glb"
 const NIGHT_LIGHTS := preload("res://game/city/building_night_lights.gd")
+const FOLK := preload("res://game/crawler/crawler_village_folk.gd")
+const SIGN := preload("res://game/crawler/crawler_stall_sign.gd")
 const WALL_ALPHA := 0.40
 const WALL_COLOUR := Color(0.07, 0.03, 0.04, WALL_ALPHA)
 const SEGMENTS := 36
+const SIGN_HEIGHT := 3.4
+const CRESCENT_HIDDEN := Vector3(-36.0, 0.0, 24.0)
 
 var patch_id := -1
+var site_id := CrawlerRules.CITY_SITE_ID
+var site_title := CrawlerRules.CITY_SITE_TITLE
+var village_model := VILLAGE_MODEL
+var key_override := ""
 
 var _radius := CrawlerRules.CITY_RING_RADIUS
 var _height := CrawlerRules.CITY_RING_HEIGHT
@@ -22,9 +31,24 @@ var force_village := false
 var _village: Node3D
 
 
-func configure(id: int, at: Transform3D) -> void:
+func configure(
+		id: int,
+		at: Transform3D,
+		next_site := "",
+		next_title := "",
+		next_model := "",
+		next_key := ""
+	) -> void:
 	patch_id = id
 	transform = at
+	if not next_site.is_empty():
+		site_id = next_site
+	if not next_title.is_empty():
+		site_title = next_title
+	if not next_model.is_empty():
+		village_model = next_model
+	if not next_key.is_empty():
+		key_override = next_key
 
 
 func _ready() -> void:
@@ -128,6 +152,22 @@ func contains_player(player: Node) -> bool:
 	return player is Node3D and contains_point((player as Node3D).global_position)
 
 
+func city_key() -> String:
+	if not key_override.strip_edges().is_empty():
+		return key_override.strip_edges()
+	return str(patch_id) if patch_id >= 0 else "city"
+
+
+static func city_key_for(node: Node3D) -> String:
+	if node == null or not node.is_inside_tree():
+		return ""
+	for zone_variant: Variant in node.get_tree().get_nodes_in_group(GROUP):
+		var zone := zone_variant as CrawlerCityRing
+		if zone != null and zone.contains_player(node):
+			return zone.city_key()
+	return ""
+
+
 func push_out(point: Vector3, pad := 1.2) -> Vector3:
 	if not blocks_near(point):
 		return point
@@ -216,14 +256,16 @@ func _wall_material() -> StandardMaterial3D:
 func _attach_village() -> bool:
 	if not force_village and _planet_host() == null:
 		return false
-	if not ResourceLoader.exists(VILLAGE_MODEL):
+	if not ResourceLoader.exists(village_model):
 		return false
 	var held := get_node_or_null("Village") as Node3D
 	if held != null:
 		_village = held
 		NIGHT_LIGHTS.bind(held, _planet_host())
+		_seed_folk()
+		refresh_stall_signs()
 		return true
-	var packed := load(VILLAGE_MODEL) as PackedScene
+	var packed := load(village_model) as PackedScene
 	if packed == null:
 		return false
 	var body := packed.instantiate() as Node3D
@@ -235,7 +277,97 @@ func _attach_village() -> bool:
 	BuildingFoundation.seat(body, _planet_host())
 	NIGHT_LIGHTS.bind(body, _planet_host())
 	_village = body
+	_seed_folk()
+	refresh_stall_signs()
 	return true
+
+
+func _seed_folk() -> void:
+	if _village == null or _village.get_node_or_null("VillageFolk") != null:
+		return
+	var folk = FOLK.new()
+	_village.add_child(folk)
+	folk.populate(_village, 91031 + patch_id, _hidden_local())
+
+
+func _hidden_local() -> Vector3:
+	if village_model == CrawlerRules.CRESCENT_VILLAGE:
+		return CRESCENT_HIDDEN
+	return Vector3.ZERO
+
+
+func refresh_stall_signs(tries := 0) -> void:
+	if _village == null or not is_inside_tree():
+		if tries < 16:
+			call_deferred(&"refresh_stall_signs", tries + 1)
+		return
+	_clear_stall_signs()
+	for shop_id: String in _hours_ledger().signed_shops_for(city_key()):
+		_mount_stall_sign(shop_id)
+
+
+func _clear_stall_signs() -> void:
+	var doomed: Array[Node] = []
+	for child: Node in get_children():
+		if child is CrawlerStallSign or str(child.name).begins_with("StallSign_"):
+			doomed.append(child)
+	if _village != null:
+		for child: Node in _village.get_children():
+			if child is CrawlerStallSign or str(child.name).begins_with("StallSign_"):
+				doomed.append(child)
+	for child: Node in doomed:
+		child.free()
+
+
+func _mount_stall_sign(shop_id: String) -> void:
+	var anchor := _stall_anchor(shop_id)
+	if anchor == null:
+		return
+	var tex := CrawlerShopIcons.texture_for(shop_id)
+	if tex == null:
+		return
+	var sign = SIGN.new()
+	sign.name = "StallSign_%s" % shop_id
+	sign.texture = tex
+	add_child(sign)
+	sign.global_position = anchor.global_position + world_up() * SIGN_HEIGHT
+
+
+func _stall_anchor(shop_id: String) -> Node3D:
+	var mark_name := CrawlerShopIcons.stall_mark(shop_id)
+	if not mark_name.is_empty():
+		var found := find_child(mark_name, true, false)
+		if found is Node3D:
+			return found as Node3D
+	var mesh_name := CrawlerShopIcons.stall_name(shop_id)
+	if not mesh_name.is_empty():
+		var found := find_child(mesh_name, true, false)
+		if found is Node3D:
+			return found as Node3D
+	if _village == null:
+		return null
+	var mark := CrawlerVillageFolk._named_contains(_village, mark_name) as Node3D
+	if mark != null:
+		return mark
+	return CrawlerVillageFolk._named_contains(_village, mesh_name) as Node3D
+
+
+func _hours_ledger() -> CrawlerProgress:
+	if is_inside_tree():
+		for node_variant: Variant in get_tree().get_nodes_in_group("network_players"):
+			var player := node_variant as OnlinePlayer
+			if player != null and player.crawler_progress != null:
+				return player.crawler_progress
+	var ledger := CrawlerProgress.new()
+	if not CrawlerProgress.session_payload.is_empty():
+		ledger.from_dict(CrawlerProgress.session_payload)
+	elif ledger.statue_seed == 0:
+		ledger.statue_seed = 1
+	return ledger
+
+
+func village() -> Node3D:
+	return _village
 
 
 func _ensure_waypoint() -> Landmark:
@@ -246,8 +378,9 @@ func _ensure_waypoint() -> Landmark:
 	if mark == null:
 		mark = CrawlerSite.new()
 		mark.name = "CrawlerWaypoint"
-	mark.site_id = CrawlerRules.CITY_SITE_ID
-	mark.title = CrawlerRules.CITY_SITE_TITLE
+	mark.site_id = site_id
+	mark.title = site_title
+	mark.city_key = city_key()
 	mark.enter_radius = CrawlerRules.CITY_ENTER_RADIUS
 	mark.hide_beyond = 0.0
 	mark.show_beyond = 0.0
@@ -257,7 +390,8 @@ func _ensure_waypoint() -> Landmark:
 	mark.planet = planet
 	if mark.get_parent() != self:
 		add_child(mark)
-	mark.unlock_waypoint()
+	if CrawlerRules.starts_visible(site_id):
+		mark.unlock_waypoint()
 	if mark.is_inside_tree() and planet != null:
 		mark.place()
 	return mark

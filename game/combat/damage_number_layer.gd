@@ -37,7 +37,9 @@ func show_event(event: DamageNumberEvent, camera: Camera3D) -> void:
 		return
 	var key := _key(event)
 	var running: Variant = _open.get(key)
-	if running is Dictionary and _merge(running, event, camera):
+	if event.kind != DamageNumberEvent.Kind.CHARM \
+			and event.kind != DamageNumberEvent.Kind.SHOCK \
+			and running is Dictionary and _merge(running, event, camera):
 		return
 
 	var nudge := _world_nudge(camera)
@@ -172,6 +174,14 @@ func _colour(event: DamageNumberEvent) -> Color:
 		return Color(0.32, 0.62, 1.0)
 	if event.kind == DamageNumberEvent.Kind.GEM:
 		return Color(0.55, 0.92, 1.0)
+	if event.kind == DamageNumberEvent.Kind.POISON:
+		return Color(0.35, 0.92, 0.28)
+	if event.kind == DamageNumberEvent.Kind.CHARM:
+		return Color(1.0, 0.42, 0.72)
+	if event.kind == DamageNumberEvent.Kind.SHOCK:
+		return Color(0.75, 0.92, 1.0)
+	if event.kind == DamageNumberEvent.Kind.FREEZE:
+		return Color(0.72, 0.92, 1.0)
 	if event.blocked:
 		return Color(0.55, 0.82, 1.0)
 	if event.critical:

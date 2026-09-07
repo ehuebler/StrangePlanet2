@@ -34,6 +34,7 @@ var crawler_uid := ""
 ## Seconds until it may be used again, counted down by the controller.
 var _cooldown_left := 0.0
 var _held := false
+var _ammo_spent := false
 
 
 ## Called once when the slot is filled. A subclass overrides
@@ -66,6 +67,20 @@ func apply_crawler(card: CrawlerCard) -> void:
 		return
 	crawler_uid = card.uid
 	modifiers = card.filled_modifier_ids()
+	if player != null and player.has_method(&"overdrive_active") \
+			and bool(player.call(&"overdrive_active")) \
+			and card.id != "overdrive" \
+			and player.has_method(&"overdrive_borrowed_mods"):
+		var held: Variant = player.call(&"overdrive_borrowed_mods")
+		if held is Array:
+			for item: Variant in held:
+				var mod := item as CrawlerCard
+				if mod == null or mod.id.is_empty():
+					continue
+				if not CrawlerCatalog.compatible(mod.id, card.id):
+					continue
+				if not modifiers.has(mod.id):
+					modifiers.append(mod.id)
 	var kit := player.crawler_kit if player != null else null
 	if kit != null:
 		stats = kit.stats_for(card)
@@ -75,6 +90,46 @@ func apply_crawler(card: CrawlerCard) -> void:
 
 func has_modifier(id: String) -> bool:
 	return modifiers.has(id) or stat(id, 0.0) > 0.0
+
+
+func host_card() -> CrawlerCard:
+	if player == null or player.crawler_kit == null:
+		return null
+	var kit := player.crawler_kit
+	var seated := kit.equipped_card(slot)
+	if seated != null and (crawler_uid.is_empty() or seated.uid == crawler_uid):
+		return seated
+	if not crawler_uid.is_empty():
+		return kit.cards.get(crawler_uid) as CrawlerCard
+	return null
+
+
+func seated_mods(id: String) -> Array[CrawlerCard]:
+	var out: Array[CrawlerCard] = []
+	var seen := {}
+	var card := host_card()
+	if card != null:
+		for index in card.slot_count:
+			var child := card.mod_at(index)
+			if child != null and child.id == id:
+				out.append(child)
+				seen[child.uid] = true
+	if player != null and ability_id != "overdrive" \
+			and player.has_method(&"overdrive_active") \
+			and bool(player.call(&"overdrive_active")) \
+			and player.has_method(&"overdrive_borrowed_mods") \
+			and CrawlerCatalog.compatible(id, ability_id):
+		var held: Variant = player.call(&"overdrive_borrowed_mods")
+		if held is Array:
+			for item: Variant in held:
+				var child := item as CrawlerCard
+				if child == null or child.id != id:
+					continue
+				if seen.has(child.uid):
+					continue
+				out.append(child)
+				seen[child.uid] = true
+	return out
 
 
 func _configure() -> void:
@@ -120,7 +175,18 @@ func can_use() -> bool:
 	if not allowed_stances.is_empty() \
 			and not allowed_stances.has(player.stance()):
 		return false
+	if not _has_shots():
+		return false
 	return _can_use()
+
+
+func _has_shots() -> bool:
+	if player == null or player.crawler_kit == null:
+		return true
+	var card := host_card()
+	if card == null:
+		return true
+	return player.crawler_kit.can_fire(card)
 
 
 func _can_use() -> bool:
@@ -133,12 +199,32 @@ func press() -> bool:
 	if _held or not can_use():
 		return false
 	_held = true
+	_ammo_spent = false
 	if player != null:
 		player.note_crawler_cast(stats)
 	if not _press():
 		_held = false
 		return false
+	_ammo_spent = _spend_shot()
 	return true
+
+
+func _spend_shot() -> bool:
+	if player == null or player.crawler_kit == null:
+		return false
+	var card := host_card()
+	if card == null or not player.crawler_kit.uses_ammo(card):
+		return false
+	return player.crawler_kit.spend_ammo(card)
+
+
+func refund_shot() -> void:
+	if not _ammo_spent or player == null or player.crawler_kit == null:
+		return
+	var card := host_card()
+	if card != null:
+		player.crawler_kit.refund_ammo(card)
+	_ammo_spent = false
 
 
 func _press() -> bool:

@@ -50,11 +50,36 @@ const ENTRIES := {
 		"category": "Combat",
 		"title": "Kill 10 mobs",
 		"summary": "Defeat ten crawler enemies.",
-		"detail": "Any crawler kill counts. The tenth one unlocks five gems. "
-			+ "Claim them from Achievements in the menu.",
-		"reward": "5 gems",
+		"detail": "Any crawler kill counts. The tenth one grants global XP "
+			+ "immediately and unlocks five gems to claim from Achievements.",
+		"reward": "50 XP, 5 gems",
 		"gems": 5,
+		"xp": 50,
 		"kills": 10,
+	},
+	"reach_global_5": {
+		"kind": "achievement",
+		"category": "Progress",
+		"title": "Recruit",
+		"summary": "Reach global level 5.",
+		"detail": "Global level comes from expeditions, not the in-run bar. "
+			+ "The fifth rank pays ten gems as soon as you earn it.",
+		"reward": "10 gems",
+		"auto_gems": 10,
+		"global_level": 5,
+	},
+	"first_city": {
+		"kind": "achievement",
+		"category": "Exploration",
+		"title": "First City",
+		"summary": "Reach your first crawler city.",
+		"detail": "Walk into a city ring. Sandbox Mode unlocks at home, "
+			+ "and the gems and XP land immediately.",
+		"reward": "Sandbox Mode, 10 gems, 100 XP",
+		"auto_gems": 10,
+		"xp": 100,
+		"unlocks": ["sandbox"],
+		"city": true,
 	},
 }
 
@@ -123,6 +148,49 @@ static func kills_of(id: String) -> int:
 
 static func gems_of(id: String) -> int:
 	return maxi(int(field(id, "gems", 0)), 0)
+
+
+static func auto_gems_of(id: String) -> int:
+	return maxi(int(field(id, "auto_gems", 0)), 0)
+
+
+static func xp_of(id: String) -> int:
+	return maxi(int(field(id, "xp", 0)), 0)
+
+
+static func global_level_of(id: String) -> int:
+	return maxi(int(field(id, "global_level", 0)), 0)
+
+
+static func wants_city(id: String) -> bool:
+	return bool(field(id, "city", false))
+
+
+static func unlocks_of(id: String) -> PackedStringArray:
+	var raw: Variant = field(id, "unlocks", [])
+	var out := PackedStringArray()
+	if raw is Array or raw is PackedStringArray:
+		for value: Variant in raw:
+			var name := str(value).strip_edges()
+			if not name.is_empty() and not out.has(name):
+				out.append(name)
+	return out
+
+
+static func instant_reward_lines(id: String) -> PackedStringArray:
+	var lines := PackedStringArray()
+	for unlock: String in unlocks_of(id):
+		if unlock == "sandbox":
+			lines.append("Sandbox Mode")
+		elif not unlock.is_empty():
+			lines.append(unlock.capitalize())
+	var gems := auto_gems_of(id)
+	if gems > 0:
+		lines.append("%d Gems" % gems)
+	var xp := xp_of(id)
+	if xp > 0:
+		lines.append("%d XP" % xp)
+	return lines
 
 
 static func field(id: String, key: String, fallback: Variant) -> Variant:

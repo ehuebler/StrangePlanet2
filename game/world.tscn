@@ -51,6 +51,7 @@
 [ext_resource type="Script" path="res://game/props/ability_test_site.gd" id="51_test_site"]
 [ext_resource type="Script" path="res://game/city/land_patch_overlay.gd" id="52_patches"]
 [ext_resource type="Script" path="res://game/props/patch_monuments.gd" id="53_monuments"]
+[ext_resource type="Script" path="res://game/crawler/crawler_statues.gd" id="54_statues"]
 
 [sub_resource type="ShaderMaterial" id="SkyMaterial"]
 shader = ExtResource("4_space")
@@ -332,6 +333,9 @@ script = ExtResource("52_patches")
 
 [node name="PatchMonuments" type="Node3D" parent="Planet"]
 script = ExtResource("53_monuments")
+
+[node name="CrawlerStatues" type="Node3D" parent="Planet"]
+script = ExtResource("54_statues")
 
 ; The coastal sign for Vacationer's Landing, placed by hand because Settlements
 ; leaves this town's waypoints empty. It is the noon anchor, the fauna showcase

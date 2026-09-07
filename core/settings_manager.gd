@@ -89,12 +89,14 @@ const DEFAULTS := {
 		"kills": 0,
 		"claim_revision": 0,
 	},
-	## Gems, unlocked homescreen hats, and permanent crawler stat ranks. Lives
-	## outside a run so the home screen can spend them and the next crawler
-	## session still sees the same bonuses.
+	## Gems, unlocked homescreen hats, permanent crawler stat ranks, and the
+	## player's global level. Lives outside a run so the home screen can
+	## spend them and the next crawler session still sees the same bonuses.
 	"meta": {
 		"gems": 0,
 		"unlocked_hats": [],
+		"xp": 0,
+		"sandbox_unlocked": false,
 		"ranks": {
 			"health": 0,
 			"dexterity": 0,
@@ -102,8 +104,12 @@ const DEFAULTS := {
 			"dodge": 0,
 			"defense": 0,
 			"juke": 0,
+			"juke_distance": 0,
 			"damage": 0,
+			"knockback": 0,
+			"range": 0,
 			"luck": 0,
+			"elemental": 0,
 		},
 	},
 }
@@ -179,6 +185,21 @@ func _apply_defaults() -> void:
 		for key: String in DEFAULTS[section]:
 			if not _config.has_section_key(section, key):
 				_config.set_value(section, key, DEFAULTS[section][key])
+	_ensure_meta_ranks()
+
+
+## Older saves only stored the first wave of gem ranks. Fill any later in-run
+## stats so the homescreen shop and the next crawler session share one table.
+func _ensure_meta_ranks() -> void:
+	var held: Variant = _config.get_value("meta", "ranks", {})
+	var ranks: Dictionary = held.duplicate() if held is Dictionary else {}
+	var changed := false
+	for stat_id: String in CrawlerProgress.LEVEL_STATS:
+		if not ranks.has(stat_id):
+			ranks[stat_id] = 0
+			changed = true
+	if changed:
+		_config.set_value("meta", "ranks", ranks)
 
 
 ## Makes the newly shipped Luke painting visible on the next launch even when

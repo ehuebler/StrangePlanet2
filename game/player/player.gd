@@ -76,6 +76,12 @@ const ANIM_PICKER_HOLD := 0.18
 ## Crawler pad arrival: Death_C played backwards, from the ground up.
 const SPAWN_ARRIVAL_CLIP := "Death_C"
 const SPAWN_ARRIVAL_SPEED := -1.0
+const WAYPOINT_REVEAL_TURN := 0.72
+const WAYPOINT_REVEAL_BLINK := 0.88
+const WAYPOINT_REVEAL_HOLD := 0.55
+const WAYPOINT_REVEAL_FADE := 0.8
+const WAYPOINT_REVEAL_TURN_RATE := 3.4
+const WAYPOINT_REVEAL_NEAR := 50.0
 ## A normal hop lands before this. Longer arcs earn a deliberate landing stride
 ## instead of leaving the arms-back launch pose to sag in a looping fall.
 const AIR_RUN_DELAY := 1.0
@@ -186,7 +192,7 @@ const HERO_LANDING_TIME := 0.8
 ## Right-click dash. A few metres, short i-frames, and afterimages.
 const JUKE_DISTANCE := 6.5
 const JUKE_TIME := 0.18
-const JUKE_COOLDOWN := 0.85
+const JUKE_COOLDOWN := 0.55
 const JUKE_GHOST_GAP := 0.04
 const METEOR_LAUNCH_SPEED := 60.0
 ## Metres a second squared up to the ability's top speed. Reaches two hundred
@@ -637,8 +643,8 @@ var equipment := ItemContainer.new(ItemDB.SLOT_ORDER.size())
 var hotbar := ItemContainer.new(HOTBAR_SLOTS)
 var abilities := ItemContainer.new(ABILITY_SLOTS)
 var backpack := ItemContainer.new(BACKPACK_SLOTS)
-## Present only in crawler sessions. Story and the other modes keep the
-## catalogue-id ability row and never instantiate this.
+## Present only in crawler and sandbox sessions. Story and the other modes keep
+## the catalogue-id ability row and never instantiate this.
 var crawler_kit: CrawlerKit
 var crawler_progress: CrawlerProgress
 var _crawler_cast_stats: Dictionary = {}
@@ -646,6 +652,12 @@ var _crawler_speed_base := 0.0
 var _authored_ground_accel := 0.0
 var _authored_air_accel := 0.0
 var _authored_flight_accel := 0.0
+var _authored_boost_time := 0.0
+var _authored_ease_time := 0.0
+var _full_speeds := Vector4.ZERO
+var _full_fly_speed := 0.0
+var _full_float_speed := 0.0
+var _full_climb_speed := 0.0
 
 ## Compatibility alias for pages and tests written against the old rack model.
 var weapons: ItemContainer:
@@ -661,7 +673,7 @@ var statuses := CombatStatuses.new()
 ## not a diary — which is why this is built here rather than handed down from the
 ## host with the rest of the spawn metadata.
 var journal := Journal.new()
-var _achievement_toasts: Array[String] = []
+var _achievement_toasts: Array[Dictionary] = []
 
 var _stance: int = Stance.STAND
 var _camera_mode: int = CameraMode.FIRST
@@ -709,9 +721,9 @@ var _hero_left := 0.0
 ## Landing pose selected by the ability definition that committed this landing.
 ## Ordinary high-speed flight keeps the same HeroLand fallback.
 var _hero_clip := "HeroLand"
-## Meteor punch: the launch direction, held fixed for the whole flight so the
-## punch goes where it was aimed rather than wherever the player looks next.
+## Meteor punch: the launch direction. Homing can turn it toward a locked mob.
 var _meteor_along := Vector3.FORWARD
+var _meteor_lock: Node
 var _meteor_speed := 0.0
 var _meteor_travelled := 0.0
 var _meteor_range := 0.0
@@ -900,12 +912,20 @@ var _host_ability_wall_sequence := 0
 var _last_ability_wall_sequence := 0
 var _ability_wall_result_sequence := 0
 var _ability_wall_result: int = ProjectileRequestState.REJECTED
+var _ability_field_request_sequence := 0
+var _last_ability_field_request_sequence := 0
+var _host_ability_field_sequence := 0
+var _last_ability_field_sequence := 0
 var _delayed_blast_request_sequence := 0
 var _last_delayed_blast_request_sequence := 0
 var _host_delayed_blast_sequence := 0
 var _last_delayed_blast_sequence := 0
 var _delayed_blast_result_sequence := 0
 var _delayed_blast_result: int = ProjectileRequestState.REJECTED
+var _host_impact_cast_sequence := 0
+var _last_impact_cast_sequence := 0
+var _host_hero_punch_sequence := 0
+var _last_hero_punch_sequence := 0
 var _combat_state_sequence := 0
 var _last_combat_state_sequence := 0
 var _feedback_sequence := 0
@@ -925,7 +945,15 @@ var _last_juke_event_sequence := 0
 var _juke_ghost_acc := 0.0
 var _ward_bubble: CrawlerWardBubble
 var _ward_up := false
+var _ward_hits_left := 0
 var _ward_recharge := 0.0
+var _missile_cooldown := 0.0
+var _mine_cooldown := 0.0
+var _fool_cape_lock := 0.0
+var _fool_cape_rng := RandomNumberGenerator.new()
+var _fool_cape_distance_override := -1.0
+var _fool_cape_dir_override := Vector3.ZERO
+var _juke_struck: Dictionary = {}
 var _dodge_rng := RandomNumberGenerator.new()
 ## When >= 0, apply_damage uses this instead of a random roll. Tests set it.
 var _dodge_roll_override := -1.0
@@ -971,12 +999,22 @@ var _hotbar_drawn := false
 var _held := ""
 var _held_mesh: MeshInstance3D
 var _weapon_pose: WeaponPose
+var _roar_pose: RoarPose
+var _weapon_pose_before_roar := true
+var _roar_held_arms := false
+var _overdrive_left := 0.0
+var _overdrive_boost := 0.0
+var _overdrive_body_scale := 1.0
+var _overdrive_card_uid := ""
+var _overdrive_mods: Array[CrawlerCard] = []
+var _base_capsule_radius := 0.32
 var _weapon_bar: WeaponBar
 ## Built for the local player only, in [method _ready].
 var _ability_controller: AbilityController
 ## Built on demand, on every peer: a remote player's beams are driven by the
 ## packets their machine sends, not by an ability of ours.
 var _laser_beams: LaserBeams
+var _lightning_bolts: LightningBolts
 ## Also built on demand and also on every peer, and for the same reason: the
 ## stance a punch is drawn from replicates, the ability behind it does not.
 var _meteor_shock: MeteorShock
@@ -1023,6 +1061,10 @@ var _anim_hold := 0.0
 var _anim_preview := ""
 var _ability_clip := ""
 var _ability_clip_left := 0.0
+var _beam_root := 0.0
+var _beam_root_wanted := 0.0
+var _beam_look_scale := 1.0
+var _field_cast := false
 ## Reverse Death_C on the Tide Margin pad. Armed at spawn/respawn, held
 ## while the home-screen body is still hidden, then consumed once.
 var _arrival_armed := false
@@ -1030,6 +1072,15 @@ var _arrival_pending := false
 var _arrival_left := 0.0
 var _arrival_clip := ""
 var _arrival_speed := 1.0
+## One-shot unlock presentation: turn to the new mark, blink it in with a radar
+## pulse, then fade it. Tilde stays closed; later views use the overlay.
+var _reveal_landmark: Landmark
+var _reveal_left := 0.0
+var _reveal_age := 0.0
+var _reveal_queue: Array[Landmark] = []
+var _revealed_waypoints: Dictionary = {}
+var _opening_reveal_done := false
+var _opening_reveal_wait := 0.0
 var _land_left := 0.0
 var _was_airborne := false
 var _airborne_time := 0.0
@@ -1100,20 +1151,23 @@ func _ready() -> void:
 	# the scene body until the creator copies the live player's look.
 	if peer_id == multiplayer.get_unique_id() and not training_enemy:
 		apply_look(CharacterDB.load_look())
-		if crawler_kit != null:
-			crawler_kit.restore_or_seed()
 		_restore_crawler_progress()
+		if crawler_kit != null:
+			sync_crawler_ability_bar()
+			crawler_kit.restore_or_seed()
 		_apply_meta_progress()
 	else:
 		_bind_character_nodes()
 		_character_meshes = SurfaceSkin.apply(character, true)
 		_prepare_animations()
 		_add_weapon_pose()
+		_add_roar_pose()
 		_add_ragdoll()
 	# The arm would otherwise pull the camera in on our own capsule, and the aim
 	# ray would report us as the thing under the crosshair in third person.
 	camera_arm.add_excluded_object(get_rid())
 	aim_ray.add_exception(self)
+	_capture_base_capsule_radius()
 	_apply_stance(_stance)
 	_parry_shield = ParryShield.new()
 	_parry_shield.name = "ParryShield"
@@ -1181,6 +1235,7 @@ func _ready() -> void:
 		_minimap = CityMinimap.new()
 		_minimap.bind(_coordinates)
 		hud.add_child(_minimap)
+		CrtType.watch(hud, false)
 		# Only the person who died is told about it. Everyone else sees a body.
 		died.connect(_on_died)
 		respawned.connect(_on_respawned)
@@ -1198,6 +1253,17 @@ func _ready() -> void:
 ## Takes the viewport, the mouse and the HUD, for a player spawned with
 ## [member defer_camera] set. Idempotent: a player that already has them keeps
 ## them.
+func look_pitch() -> float:
+	return _pitch
+
+
+func set_look_pitch(value: float) -> void:
+	_pitch = clampf(value, -1.48, 1.48)
+	_target_pitch = _pitch
+	if head != null:
+		head.rotation.x = _pitch
+
+
 func take_camera() -> void:
 	defer_camera = false
 	if peer_id != multiplayer.get_unique_id():
@@ -1209,6 +1275,8 @@ func take_camera() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if _arrival_pending:
 		play_spawn_arrival()
+	elif CrawlerRules.active():
+		_try_opening_waypoint_reveal()
 
 
 func set_camera_mode(mode: CameraMode) -> void:
@@ -1220,6 +1288,51 @@ func reset_network_state(at_transform: Transform3D) -> void:
 	_host_last_position = at_transform.origin
 	_host_has_state = true
 	_extrapolated = 0.0
+
+
+func warp_to(at: Vector3, look_along := Vector3.ZERO,
+		keep_momentum := false, snap_ground := true) -> bool:
+	if not at.is_finite() or _dead:
+		return false
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		return false
+	var posed := _warp_transform_at(at, look_along, snap_ground)
+	var carry := velocity if keep_momentum and velocity.is_finite() else Vector3.ZERO
+	_apply_warp(posed, carry)
+	if _has_listeners():
+		_apply_warp.rpc(posed, carry)
+	return true
+
+
+func _warp_transform_at(at: Vector3, look_along: Vector3,
+		snap_ground := true) -> Transform3D:
+	var world_planet := planet()
+	var up := _up()
+	var point := at
+	if world_planet != null:
+		var local := world_planet.to_local(at)
+		if local.length_squared() > 0.0001:
+			var surface := world_planet.surface_position(local)
+			up = world_planet.up_at(surface)
+			if not snap_ground:
+				var floor := maxf(_stance_height(_stance) * 0.5, 0.45)
+				var altitude := (at - surface).dot(up)
+				if altitude < floor:
+					point = surface + up * floor
+			elif _stance == Stance.FLY:
+				var altitude := (at - surface).dot(up)
+				if altitude < 0.6:
+					point = surface + up * 0.6
+			else:
+				point = surface + up * maxf(_stance_height(_stance) * 0.5, 0.45)
+	var forward := look_along
+	if forward.length_squared() < 0.001:
+		forward = -global_basis.z
+	forward = forward - up * forward.dot(up)
+	if forward.length_squared() < 0.001:
+		forward = -global_basis.z
+	forward = forward.normalized()
+	return Transform3D(Basis.looking_at(forward, up), point)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1234,9 +1347,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		return
 
-	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED \
+			and _reveal_left <= 0.0:
 		# Sighted down the optic, the same hand movement should cover less ground.
-		var sensitivity := mouse_sensitivity * (1.0 - 0.5 * _aim_amount())
+		var sensitivity := mouse_sensitivity * (1.0 - 0.5 * _aim_amount()) \
+			* beam_look_scale()
 		# About the body's own up rather than the parent's. `rotate_y` takes its
 		# axis in parent space, which on a sphere is the way up at exactly one
 		# point on it; anywhere else it tips the body off the ground instead of
@@ -1259,7 +1374,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_shoulder = -_shoulder
 	elif event.is_action_pressed("interact"):
 		if CrawlerRules.active():
-			if not _interact() and in_crawler_city():
+			if CrawlerRules.duel_active():
+				_open_duel_end_menu()
+			elif not _interact() and in_crawler_city():
 				_open_crawler_field_menu()
 		elif not _interact():
 			# Tilde map: E renders the patch city from the live generator.
@@ -1317,6 +1434,10 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 	_ability_clip_left = maxf(_ability_clip_left - delta, 0.0)
 	_tick_spawn_arrival(delta)
+	if _opening_reveal_wait > 0.0 and not _opening_reveal_done:
+		_opening_reveal_wait = maxf(_opening_reveal_wait - delta, 0.0)
+		_try_opening_waypoint_reveal()
+	_tick_waypoint_reveal(delta)
 	_update_anim_picker(delta)
 	_update_animation(delta)
 	_update_dust_trails()
@@ -1328,6 +1449,7 @@ func _process(delta: float) -> void:
 		# Everyone's, not just our own: a remote player's pitch is synced, and their
 		# barrel should point where they are looking.
 		_weapon_pose.set_pitch(_pitch)
+	_sync_roar_pose()
 	if peer_id == multiplayer.get_unique_id():
 		_update_weapon(delta)
 		_update_hud(delta)
@@ -1484,16 +1606,25 @@ func _on_game_menu_closed() -> void:
 ## and alone a frozen ragdoll reads as the game having hung rather than as a
 ## death.
 func _on_died(_source_peer: int, cause: String) -> void:
+	if CrawlerRules.duel_active():
+		var world := DamageHit.game_world_of(self)
+		if world != null and world.has_method(&"request_duel_respawn"):
+			world.call(&"request_duel_respawn")
+		return
 	if is_instance_valid(_death_screen):
 		_death_screen.set_notice(cause)
 		return
 	_death_screen = DeathScreen.new()
 	if CrawlerRules.active():
 		var progress := crawler_progress
+		var recap := {}
+		if progress != null and not progress.has_respawn_ticket():
+			recap = CrawlerMeta.settle_run(progress, journal)
 		_death_screen.present_crawler(
 			cause,
 			progress.run_summary() if progress != null else "",
-			progress != null and progress.has_respawn_ticket()
+			progress != null and progress.has_respawn_ticket(),
+			recap
 		)
 		_death_screen.home_requested.connect(_on_leave_requested)
 	else:
@@ -1738,12 +1869,14 @@ func _set_body(next_body: String) -> void:
 	_character_meshes = SurfaceSkin.apply(character, true)
 	_prepare_animations()
 	_add_weapon_pose()
+	_add_roar_pose()
 	_add_ragdoll()
 	_apply_stance(_stance)
 	if _parry_shield != null:
-		_parry_shield.fit_body(_body_height)
+		_parry_shield.fit_body(_body_height * overdrive_size_scale())
 	if _ward_bubble != null:
-		_ward_bubble.fit_body(_body_height)
+		_ward_bubble.fit_body(_body_height * overdrive_size_scale())
+	_apply_overdrive_visual()
 
 
 func _bind_character_nodes() -> void:
@@ -1760,7 +1893,12 @@ func _apply_tints() -> void:
 	for mesh_instance in _character_meshes:
 		if mesh_instance == null or not is_instance_valid(mesh_instance):
 			continue
-		if String(mesh_instance.name).begins_with(Wardrobe.NODE_PREFIX):
+		if String(mesh_instance.name).begins_with(Wardrobe.NODE_PREFIX) \
+				or (
+					mesh_instance.get_parent() != null
+					and String(mesh_instance.get_parent().name).begins_with(
+						Wardrobe.NODE_PREFIX)
+				):
 			continue
 		SurfaceSkin.paint(
 			mesh_instance, {}, String(mesh_instance.name) == "Character")
@@ -1770,10 +1908,7 @@ func _apply_tints() -> void:
 		if body_tint != Color.WHITE:
 			SurfaceSkin.tint(mesh_instance, body_tint)
 	for slot: String in ItemDB.SLOT_ORDER:
-		var garment: MeshInstance3D = null
-		for node in character.find_children(Wardrobe.NODE_PREFIX + slot, "MeshInstance3D", true, false):
-			garment = node as MeshInstance3D
-			break
+		var garment := Wardrobe.worn_mesh(character, slot)
 		if garment == null:
 			continue
 		SurfaceSkin.paint(garment, {}, true)
@@ -1815,35 +1950,98 @@ func _prepare_crawler_loadout() -> void:
 func _apply_crawler_limits() -> void:
 	if training_enemy or not CrawlerRules.active():
 		return
-	walk_speed *= CrawlerRules.SPEED_SCALE
-	sprint_speed *= CrawlerRules.SPEED_SCALE
-	crouch_speed *= CrawlerRules.SPEED_SCALE
-	arms_back_speed *= CrawlerRules.SPEED_SCALE
+	if _full_speeds == Vector4.ZERO:
+		_full_speeds = Vector4(walk_speed, sprint_speed, crouch_speed, arms_back_speed)
+		_full_fly_speed = fly_speed
+		_full_float_speed = float_speed
+		_full_climb_speed = climb_speed
+		_authored_ground_accel = ground_accel
+		_authored_air_accel = air_accel
+		_authored_flight_accel = flight_accel
+		_authored_boost_time = boost_time
+		_authored_ease_time = ease_time
+	if _authored_boost_time <= 0.0:
+		_authored_boost_time = boost_time
+		_authored_ease_time = ease_time
+	var fast := CrawlerRules.sandbox_fast()
+	var scale := 1.0 if fast else CrawlerRules.SPEED_SCALE
+	var accel := CrawlerRules.sandbox_fast_accel()
+	walk_speed = _full_speeds.x * scale
+	sprint_speed = _full_speeds.y * scale
+	crouch_speed = _full_speeds.z * scale
+	arms_back_speed = _full_speeds.w * scale
 	_authored_speeds = Vector4(walk_speed, sprint_speed, crouch_speed, arms_back_speed)
 	_crawler_speed_base = walk_speed
-	_authored_ground_accel = ground_accel
-	_authored_air_accel = air_accel
-	_authored_flight_accel = flight_accel
 	stats.set_base(PlayerStats.SPEED, walk_speed)
-	fly_speed = CrawlerRules.FLY_SPEED
-	float_speed = CrawlerRules.FLOAT_SPEED
-	climb_speed = CrawlerRules.CLIMB_SPEED
+	fly_speed = _full_fly_speed if fast else CrawlerRules.FLY_SPEED
+	float_speed = _full_float_speed if fast else CrawlerRules.FLOAT_SPEED
+	climb_speed = _full_climb_speed if fast else CrawlerRules.CLIMB_SPEED
+	boost_time = _authored_boost_time / accel
+	ease_time = _authored_ease_time / accel
 	_cruise = float_speed
 	_run_speed = walk_speed
 	_flight_fuel = 1.0
+	_apply_crawler_progress()
+
+
+func set_sandbox_cheat(cheat: String, on: bool) -> void:
+	if training_enemy or not CrawlerRules.sandbox():
+		return
+	if not _has_listeners() or multiplayer.is_server():
+		_publish_sandbox_cheat(cheat, on)
+		return
+	_request_sandbox_cheat.rpc_id(1, cheat, on)
+
+
+func _publish_sandbox_cheat(cheat: String, on: bool) -> void:
+	if not _has_listeners():
+		_apply_sandbox_cheat(cheat, on)
+		return
+	_apply_sandbox_cheat.rpc(cheat, on)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_sandbox_cheat(cheat: String, on: bool) -> void:
+	if not multiplayer.is_server():
+		return
+	if multiplayer.get_remote_sender_id() != peer_id:
+		return
+	_publish_sandbox_cheat(cheat, on)
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_sandbox_cheat(cheat: String, on: bool) -> void:
+	CrawlerRules.set_sandbox_cheat(cheat, on)
+	if cheat == CrawlerRules.CHEAT_FAST:
+		_apply_crawler_limits()
+	elif cheat == CrawlerRules.CHEAT_GOLD and on and crawler_progress != null:
+		crawler_progress.grant_sandbox_gold()
+	elif cheat == CrawlerRules.CHEAT_MOBS and on:
+		_clear_sandbox_mobs()
+
+
+func _clear_sandbox_mobs() -> void:
+	if not _is_host_authority():
+		return
+	var world := get_parent()
+	if world == null:
+		return
+	var horde := world.get_node_or_null("CrawlerHorde") as CrawlerHorde
+	if horde != null:
+		horde.clear_wild()
 
 
 func _apply_tilde_overlay() -> void:
 	var marks := _waypoints_wanted and not _menu_open
-	var extras := marks and not CrawlerRules.active()
-	_coordinates_wanted = _waypoints_wanted and not CrawlerRules.active()
+	var extras := marks and not CrawlerRules.crawler()
+	_coordinates_wanted = _waypoints_wanted and not CrawlerRules.crawler()
 	if _waypoints != null:
 		_waypoints.enabled = _waypoints_wanted
-		_waypoints.visible = marks
+		_waypoints.visible = marks or is_revealing_waypoint()
 	if _coordinates != null:
 		_coordinates.visible = extras
 	if _land_patches != null:
-		_land_patches.set_overlay_enabled(extras)
+		_land_patches.set_overlay_enabled(marks)
 	if _minimap != null and not extras:
 		_minimap.visible = false
 
@@ -1915,6 +2113,189 @@ func _tick_spawn_arrival(delta: float) -> void:
 		return
 	_arrival_clip = ""
 	_clip = ""
+	_try_opening_waypoint_reveal()
+
+
+func _try_opening_waypoint_reveal() -> void:
+	if _opening_reveal_done or training_enemy or not CrawlerRules.active():
+		return
+	if defer_camera or not visible:
+		return
+	var city := _city_waypoint_landmark()
+	if city == null:
+		_opening_reveal_wait = 2.5
+		return
+	_opening_reveal_done = true
+	_opening_reveal_wait = 0.0
+	CrawlerSites.unlock(city)
+	reveal_waypoint(city)
+
+
+func _city_waypoint_landmark() -> Landmark:
+	if not is_inside_tree():
+		return null
+	for node_variant: Variant in get_tree().get_nodes_in_group(CrawlerRules.SITE_GROUP):
+		var site := node_variant as CrawlerSite
+		if site != null and site.site_id == CrawlerRules.CITY_SITE_ID:
+			return site
+	for node_variant: Variant in get_tree().get_nodes_in_group(CrawlerRules.CITY_WAYPOINT_GROUP):
+		var mark := node_variant as Landmark
+		if mark != null and mark.title == CrawlerRules.CITY_SITE_TITLE:
+			return mark
+	return null
+
+
+## Turns the local player toward a newly unlocked landmark and blinks its
+## waypoint in outside tilde. After the fade, only tilde shows it again.
+func reveal_waypoint(landmark: Landmark) -> void:
+	if landmark == null or not is_instance_valid(landmark):
+		return
+	if _reveal_left > 0.0 and _reveal_landmark != landmark:
+		if not _reveal_queue.has(landmark):
+			_reveal_queue.append(landmark)
+		return
+	_begin_waypoint_reveal(landmark)
+
+
+func notice_waypoint_unlocked(landmark: Landmark) -> void:
+	if training_enemy or defer_camera or not CrawlerRules.active():
+		return
+	if landmark == null or not is_instance_valid(landmark):
+		return
+	if _is_underfoot_waypoint(landmark):
+		return
+	if _revealed_waypoints.has(_reveal_key(landmark)):
+		return
+	reveal_waypoint(landmark)
+
+
+func is_revealing_waypoint() -> bool:
+	return _reveal_left > 0.0
+
+
+func waypoint_reveal_left() -> float:
+	return _reveal_left
+
+
+func _begin_waypoint_reveal(landmark: Landmark) -> void:
+	_reveal_landmark = landmark
+	_reveal_age = 0.0
+	_reveal_left = WAYPOINT_REVEAL_TURN + WAYPOINT_REVEAL_BLINK \
+		+ WAYPOINT_REVEAL_HOLD + WAYPOINT_REVEAL_FADE
+	_revealed_waypoints[_reveal_key(landmark)] = true
+	_pending_yaw = 0.0
+	if _waypoints != null:
+		_waypoints.set_reveal(landmark, 0.0, 0.0)
+	_apply_tilde_overlay()
+
+
+func _tick_waypoint_reveal(delta: float) -> void:
+	if _reveal_left <= 0.0:
+		return
+	if _reveal_landmark == null or not is_instance_valid(_reveal_landmark):
+		_finish_waypoint_reveal()
+		return
+	_reveal_age += delta
+	_reveal_left = maxf(_reveal_left - delta, 0.0)
+	_steer_look_toward(_reveal_landmark.global_position, delta)
+	var visual := _waypoint_reveal_visual(_reveal_age)
+	if _waypoints != null:
+		_waypoints.set_reveal(
+			_reveal_landmark, float(visual.alpha), float(visual.pulse))
+	_apply_tilde_overlay()
+	if peer_id == multiplayer.get_unique_id():
+		_update_camera(delta)
+	if _reveal_left <= 0.0:
+		_finish_waypoint_reveal()
+
+
+func _finish_waypoint_reveal() -> void:
+	_reveal_landmark = null
+	_reveal_left = 0.0
+	_reveal_age = 0.0
+	if _waypoints != null:
+		_waypoints.clear_reveal()
+	_apply_tilde_overlay()
+	if _reveal_queue.is_empty():
+		return
+	var next := _reveal_queue[0]
+	_reveal_queue.remove_at(0)
+	reveal_waypoint(next)
+
+
+func _waypoint_reveal_visual(age: float) -> Dictionary:
+	var appear_at := WAYPOINT_REVEAL_TURN * 0.55
+	if age < appear_at:
+		return {"alpha": 0.0, "pulse": 0.0}
+	var t := age - appear_at
+	if t < WAYPOINT_REVEAL_BLINK:
+		var flashes := 3.0
+		var wave := absf(sin(t / WAYPOINT_REVEAL_BLINK * flashes * PI))
+		return {"alpha": wave, "pulse": t / WAYPOINT_REVEAL_BLINK}
+	t -= WAYPOINT_REVEAL_BLINK
+	if t < WAYPOINT_REVEAL_HOLD:
+		return {"alpha": 1.0, "pulse": 1.0 + t}
+	t -= WAYPOINT_REVEAL_HOLD
+	var fade := clampf(1.0 - t / WAYPOINT_REVEAL_FADE, 0.0, 1.0)
+	return {"alpha": fade, "pulse": 1.55 + (1.0 - fade)}
+
+
+func _steer_look_toward(world_point: Vector3, delta: float) -> void:
+	if not world_point.is_finite():
+		return
+	var up := _up()
+	if up.length_squared() < 0.5:
+		up = Vector3.UP
+	up = up.normalized()
+	var to := world_point - global_position
+	var flat := to - up * to.dot(up)
+	if flat.length_squared() > 0.0001:
+		var desired := flat.normalized()
+		var current := -global_basis.z
+		var current_flat := current - up * current.dot(up)
+		if current_flat.length_squared() > 0.0001:
+			var angle := current_flat.normalized().signed_angle_to(desired, up)
+			var step := clampf(
+				angle, -WAYPOINT_REVEAL_TURN_RATE * delta, WAYPOINT_REVEAL_TURN_RATE * delta)
+			rotate_object_local(Vector3.UP, step)
+	_pending_yaw = 0.0
+	var from := head.global_position if head != null \
+		else global_position + up * _body_eye
+	var look := world_point - from
+	if look.length_squared() > 0.0001:
+		look = look.normalized()
+		var wanted := clampf(-asin(clampf(look.dot(up), -1.0, 1.0)), -1.48, 1.48)
+		_pitch = lerpf(_pitch, wanted, clampf(delta * 3.2, 0.0, 1.0))
+		if head != null:
+			head.rotation.x = _pitch
+
+
+func _is_underfoot_waypoint(landmark: Landmark) -> bool:
+	if landmark is CrawlerSite \
+			and (landmark as CrawlerSite).site_id == CrawlerRules.START_SITE_ID:
+		return true
+	if not landmark is Node3D:
+		return true
+	var span := global_position.distance_to((landmark as Node3D).global_position)
+	if landmark is CrawlerSite:
+		return span <= maxf((landmark as CrawlerSite).enter_radius, WAYPOINT_REVEAL_NEAR)
+	if landmark is PatchMonument:
+		return span <= maxf((landmark as PatchMonument).keepout_radius, WAYPOINT_REVEAL_NEAR)
+	return span < WAYPOINT_REVEAL_NEAR
+
+
+func _reveal_key(landmark: Landmark) -> String:
+	if landmark is CrawlerSite:
+		var site_id := (landmark as CrawlerSite).site_id
+		if not site_id.is_empty():
+			return "site:%s" % site_id
+	if landmark is PatchMonument:
+		var monument_id := (landmark as PatchMonument).monument_id
+		if not monument_id.is_empty():
+			return "monument:%s" % monument_id
+	if not landmark.title.strip_edges().is_empty():
+		return "title:%s" % landmark.title.strip_edges()
+	return "id:%d" % landmark.get_instance_id()
 
 
 func _play_spawn_flash() -> void:
@@ -1923,8 +2304,19 @@ func _play_spawn_flash() -> void:
 	CrawlerArrivalFlashScript.play(self, combat_position(), _up())
 
 
+func _open_duel_end_menu() -> void:
+	if _menu_open or not CrawlerRules.duel_active():
+		return
+	var menu = load("res://ui/menu/crawler_duel_menu.gd").new()
+	if menu.has_method(&"configure"):
+		menu.configure(self)
+	menu.closed.connect(_on_game_menu_closed)
+	open_menu()
+	hud.add_child(menu)
+
+
 func _open_crawler_field_menu() -> void:
-	if _menu_open or not in_crawler_city():
+	if _menu_open or CrawlerRules.duel_active() or not in_crawler_city():
 		return
 	var menu = load("res://ui/menu/crawler_field_menu.gd").new()
 	if menu.has_method(&"configure"):
@@ -1948,15 +2340,42 @@ func _restore_crawler_progress() -> void:
 func refresh_crawler_look() -> void:
 	if crawler_progress == null:
 		return
-	_strip_foreign_crawler_hat()
-	var hat := crawler_progress.worn_hat
-	if hat.is_empty() or not crawler_progress.owns_hat(hat):
-		hat = ""
+	var keep_hat := crawler_progress.worn_hat
+	var keep_cape := crawler_progress.worn_cape
+	_strip_foreign_crawler_apparel()
+	if crawler_progress.owns_hat(keep_hat):
+		crawler_progress.note_worn(keep_hat)
+	if crawler_progress.owns_cape(keep_cape):
+		crawler_progress.note_worn_cape(keep_cape)
 	_applying_loadout = true
-	apply_worn(PackedStringArray([hat]))
+	apply_worn(_crawler_worn())
 	_applying_loadout = false
 	_apply_crawler_progress()
+	sync_crawler_ability_bar()
 	_sync_ward_from_hat()
+	_sync_rubber_from_hat()
+
+
+func sync_crawler_ability_bar() -> void:
+	if training_enemy or not CrawlerRules.active() or abilities == null:
+		return
+	var wanted := CrawlerRules.ABILITY_SLOTS
+	if crawler_progress != null:
+		wanted = crawler_progress.ability_bar_slots()
+	wanted = clampi(wanted, CrawlerRules.ABILITY_SLOTS, CrawlerRules.ABILITY_SLOTS_MAX)
+	var overflow := PackedStringArray()
+	if abilities.size() != wanted:
+		overflow = abilities.resize(wanted)
+	for index in abilities.size():
+		abilities.set_filter(index, ItemDB.ABILITY)
+	if crawler_kit == null:
+		return
+	for token: String in overflow:
+		if token.is_empty():
+			continue
+		var dest := crawler_kit.inventory.first_accepting(token)
+		if dest >= 0:
+			crawler_kit.inventory.set_item(dest, token)
 
 
 func wear_crawler_hat(on := true) -> bool:
@@ -1968,14 +2387,49 @@ func wear_crawler_hat(on := true) -> bool:
 	return true
 
 
-func _strip_foreign_crawler_hat() -> void:
+func _crawler_worn() -> PackedStringArray:
+	var worn := PackedStringArray()
+	worn.resize(ItemDB.SLOT_ORDER.size())
+	if crawler_progress == null:
+		return worn
+	for index in ItemDB.SLOT_ORDER.size():
+		var slot: String = ItemDB.SLOT_ORDER[index]
+		var item_id := ""
+		match slot:
+			"hat":
+				item_id = crawler_progress.worn_hat
+				if not crawler_progress.owns_hat(item_id):
+					item_id = ""
+			"cape":
+				item_id = crawler_progress.worn_cape
+				if not crawler_progress.owns_cape(item_id):
+					item_id = ""
+		worn[index] = item_id
+	return worn
+
+
+func _strip_foreign_crawler_apparel() -> void:
 	if crawler_progress == null or equipment.size() <= 0:
 		return
-	var hat := equipment.get_item(0)
-	if hat.is_empty() or crawler_progress.owns_hat(hat):
+	var next := equipment.items()
+	var dirty := false
+	for index in mini(next.size(), ItemDB.SLOT_ORDER.size()):
+		var item_id := next[index]
+		if item_id.is_empty():
+			continue
+		var slot: String = ItemDB.SLOT_ORDER[index]
+		var keep := (
+			(slot == "hat" and crawler_progress.owns_hat(item_id))
+			or (slot == "cape" and crawler_progress.owns_cape(item_id))
+		)
+		if keep:
+			continue
+		next[index] = ""
+		dirty = true
+	if not dirty:
 		return
 	_applying_loadout = true
-	apply_worn(PackedStringArray([""]))
+	apply_worn(next)
 	_applying_loadout = false
 
 
@@ -2012,16 +2466,19 @@ func _apply_crawler_progress() -> void:
 	if gained > 0.0:
 		stats.set_health(stats.health() + gained)
 	var dex := crawler_progress.dex_scale()
+	var accel := CrawlerRules.sandbox_fast_accel()
 	var speed := maxf(_crawler_speed_base, 0.01) * dex
 	stats.set_base(PlayerStats.SPEED, speed)
-	ground_accel = _authored_ground_accel * dex
-	air_accel = _authored_air_accel * dex
-	flight_accel = _authored_flight_accel * dex
+	ground_accel = _authored_ground_accel * dex * accel
+	air_accel = _authored_air_accel * dex * accel
+	flight_accel = _authored_flight_accel * dex * accel
 	_run_speed = walk_speed
 
 
 func _on_crawler_progress_changed() -> void:
 	_apply_crawler_progress()
+	sync_crawler_ability_bar()
+	_sync_rubber_from_hat()
 	if _is_host_authority():
 		var quiet := DamageHit.impact(combat_position(), 0.1, 0.0)
 		quiet.faction = DamageHit.Faction.NEUTRAL
@@ -2030,6 +2487,9 @@ func _on_crawler_progress_changed() -> void:
 
 func _on_crawler_leveled_up() -> void:
 	_apply_crawler_level_heal()
+	if crawler_progress != null:
+		crawler_progress.auto_claim_level_offers()
+		_apply_crawler_progress()
 	_play_crawler_level_burst()
 
 
@@ -2057,33 +2517,44 @@ func _play_crawler_level_burst() -> void:
 
 
 func _on_crawler_level_burst_finished() -> void:
-	_open_crawler_level_menu()
 	_flush_achievement_toasts()
 
 
 func _on_journal_completed(id: String) -> void:
 	if JournalDB.kind_of(id) != JournalDB.ACHIEVEMENT:
 		return
-	_queue_achievement_burst(JournalDB.title_of(id))
+	_queue_achievement_burst(
+		JournalDB.title_of(id),
+		JournalDB.instant_reward_lines(id)
+	)
 
 
-func _queue_achievement_burst(title: String) -> void:
+func _queue_achievement_burst(
+		title: String,
+		rewards: PackedStringArray = PackedStringArray()
+	) -> void:
 	if hud == null or not is_inside_tree() or title.strip_edges().is_empty():
 		return
+	var payload := {"title": title, "rewards": rewards}
 	if hud.get_node_or_null("AchievementBurst") != null \
 			or hud.get_node_or_null("CrawlerLevelBurst") != null:
-		if not _achievement_toasts.has(title):
-			_achievement_toasts.append(title)
+		for held: Dictionary in _achievement_toasts:
+			if str(held.get("title", "")) == title:
+				return
+		_achievement_toasts.append(payload)
 		return
-	_play_achievement_burst(title)
+	_play_achievement_burst(title, rewards)
 
 
-func _play_achievement_burst(title: String) -> void:
+func _play_achievement_burst(
+		title: String,
+		rewards: PackedStringArray = PackedStringArray()
+	) -> void:
 	if hud == null or not is_inside_tree():
 		return
 	var burst = load("res://ui/combat/achievement_burst.gd").new()
 	if burst.has_method(&"configure"):
-		burst.configure(title)
+		burst.configure(title, rewards)
 	burst.finished.connect(_on_achievement_burst_finished, CONNECT_ONE_SHOT)
 	hud.add_child(burst)
 
@@ -2097,7 +2568,11 @@ func _flush_achievement_toasts() -> void:
 		return
 	if _achievement_toasts.is_empty():
 		return
-	_play_achievement_burst(str(_achievement_toasts.pop_front()))
+	var next: Dictionary = _achievement_toasts.pop_front()
+	_play_achievement_burst(
+		str(next.get("title", "")),
+		PackedStringArray(next.get("rewards", PackedStringArray()))
+	)
 
 
 func _open_crawler_level_menu() -> void:
@@ -2146,20 +2621,61 @@ func reroll_crawler_offers() -> bool:
 	return crawler_progress.reroll_level_offers()
 
 
+func crawler_shop_open(shop_id: String) -> bool:
+	if crawler_progress == null:
+		return not CrawlerRules.crawler()
+	return crawler_progress.shop_open(shop_id, crawler_city_key())
+
+
 func buy_crawler_hat(item_id := CrawlerProgress.HAT_ID) -> bool:
-	if crawler_progress == null or not in_crawler_city():
+	if crawler_progress == null or not in_crawler_city() \
+			or not crawler_shop_open("hats"):
+		return false
+	var city := crawler_city_key()
+	if not crawler_progress.shop_has_unsold("hats", item_id, city):
 		return false
 	if not crawler_progress.buy_hat(item_id):
 		return false
+	crawler_progress.mark_shop_sold("hats", item_id, city)
 	_applying_loadout = true
-	apply_worn(PackedStringArray([item_id]))
+	apply_worn(_crawler_worn())
 	_applying_loadout = false
 	_sync_ward_from_hat()
 	return true
 
 
+func merge_crawler_hats(keep_uid: String, other_uid: String) -> bool:
+	if crawler_progress == null or not in_crawler_city() \
+			or not crawler_shop_open("caps"):
+		return false
+	var city := crawler_city_key()
+	if city.is_empty() or not crawler_progress.cap_merge_free(city):
+		return false
+	if not crawler_progress.merge_hats(keep_uid, other_uid):
+		return false
+	crawler_progress.mark_cap_merged(city)
+	_applying_loadout = true
+	apply_worn(_crawler_worn())
+	_applying_loadout = false
+	_sync_ward_from_hat()
+	return true
+
+
+func buy_crawler_cape(item_id := CrawlerProgress.CAPE_ID) -> bool:
+	if crawler_progress == null or not in_crawler_city() \
+			or not crawler_shop_open("capes"):
+		return false
+	if not crawler_progress.buy_cape(item_id):
+		return false
+	_applying_loadout = true
+	apply_worn(_crawler_worn())
+	_applying_loadout = false
+	return true
+
+
 func buy_crawler_quest(quest_id: String) -> bool:
-	if crawler_progress == null or not in_crawler_city():
+	if crawler_progress == null or not in_crawler_city() \
+			or not crawler_shop_open("quests"):
 		return false
 	if not crawler_progress.buy_quest(quest_id):
 		return false
@@ -2168,25 +2684,94 @@ func buy_crawler_quest(quest_id: String) -> bool:
 
 
 func buy_crawler_ticket() -> bool:
-	if crawler_progress == null or not in_crawler_city():
+	if crawler_progress == null or not in_crawler_city() \
+			or not crawler_shop_open("market"):
 		return false
 	return crawler_progress.buy_respawn_ticket()
 
 
+func buy_crawler_rest_health() -> bool:
+	if crawler_progress == null or not in_crawler_city():
+		return false
+	var city := crawler_city_key()
+	if city.is_empty():
+		return false
+	if health() >= maximum_health() - 0.001:
+		return false
+	var price := crawler_progress.rest_health_price_for(city)
+	if price > 0 and not crawler_progress.spend_gold(price):
+		return false
+	var gained := apply_heal(maximum_health())
+	if gained <= 0.0:
+		if price > 0:
+			crawler_progress.gold += price
+			crawler_progress.remember()
+			crawler_progress.changed.emit()
+		return false
+	crawler_progress.mark_rested_health(city)
+	return true
+
+
+func buy_crawler_rest_ammo() -> bool:
+	if crawler_progress == null or crawler_kit == null or not in_crawler_city():
+		return false
+	var city := crawler_city_key()
+	if city.is_empty():
+		return false
+	if not crawler_kit.needs_ammo_refill():
+		return false
+	var price := crawler_progress.rest_ammo_price_for(city)
+	if price > 0 and not crawler_progress.spend_gold(price):
+		return false
+	if not crawler_kit.refill_all_ammo():
+		if price > 0:
+			crawler_progress.gold += price
+			crawler_progress.remember()
+			crawler_progress.changed.emit()
+		return false
+	crawler_progress.mark_rested_ammo(city)
+	return true
+
+
+func grant_crawler_rest_gold() -> bool:
+	if crawler_progress == null or not in_crawler_city():
+		return false
+	crawler_progress.grant_gold(CrawlerProgress.REST_GOLD_GRANT)
+	return true
+
+
+func enable_crawler_unlimited_shops() -> bool:
+	if crawler_progress == null or not in_crawler_city():
+		return false
+	crawler_progress.set_shops_unlimited(true)
+	return true
+
+
 func buy_crawler_card(catalog_id: String) -> bool:
 	if crawler_kit == null or crawler_progress == null or not in_crawler_city():
+		return false
+	var stall := "abilities" if CrawlerCatalog.is_ability(catalog_id) else "cards"
+	if not crawler_shop_open(stall):
 		return false
 	if CrawlerCatalog.is_ability(catalog_id):
 		if not CrawlerProgress.ability_stock().has(catalog_id):
 			return false
 	elif not CrawlerCatalog.is_modifier(catalog_id):
 		return false
+	var city := crawler_city_key()
+	var kind := "abilities" if CrawlerCatalog.is_ability(catalog_id) else "mods"
+	if not crawler_progress.shop_has_unsold(kind, catalog_id, city):
+		return false
 	var price := CrawlerProgress.card_price(catalog_id)
-	if price <= 0 or crawler_progress.gold < price:
+	if price <= 0 or not crawler_progress.has_gold(price):
 		return false
 	if not crawler_progress.spend_gold(price):
 		return false
-	if crawler_kit.shop_grant(catalog_id):
+	var granted := crawler_kit.shop_grant_result(
+		catalog_id, selected_ability_index())
+	if bool(granted.get("ok", false)):
+		crawler_progress.mark_shop_sold(kind, catalog_id, city)
+		_spawn_displaced_crawler_card(granted.get("displaced", {}))
 		return true
 	crawler_progress.gold += price
 	crawler_progress.remember()
@@ -2194,16 +2779,42 @@ func buy_crawler_card(catalog_id: String) -> bool:
 	return false
 
 
+func refresh_crawler_shop(kind: String) -> bool:
+	if crawler_progress == null or not in_crawler_city():
+		return false
+	var stall := "cards" if kind == "mods" else kind
+	if not crawler_shop_open(stall):
+		return false
+	return crawler_progress.refresh_shop_offers(kind, crawler_city_key())
+
+
+func _spawn_displaced_crawler_card(payload: Variant) -> void:
+	if not (payload is Dictionary) or (payload as Dictionary).is_empty():
+		return
+	var world := get_parent() as GameWorld
+	if world == null:
+		world = NetworkManager.active_world as GameWorld
+	if world != null:
+		world.spawn_displaced_crawler_card(self, payload as Dictionary)
+
+
 func upgrade_crawler_card(uid: String, stat_id := "") -> bool:
-	if crawler_kit == null or crawler_progress == null or not in_crawler_city():
+	if crawler_kit == null or crawler_progress == null or not in_crawler_city() \
+			or not crawler_shop_open("upgrades"):
 		return false
 	var card := crawler_kit.cards.get(uid) as CrawlerCard
 	if card == null:
 		return false
+	var wanted := stat_id
+	if wanted.is_empty():
+		var listed := CrawlerRules.upgrade_stats_for(card.id)
+		wanted = listed[0] if not listed.is_empty() else ""
+	if not crawler_progress.upgrade_in_stock(card.id, wanted, crawler_city_key()):
+		return false
 	var price := CrawlerProgress.upgrade_price(crawler_kit.shop_rank_for(card), card.id)
 	if not crawler_progress.spend_gold(price):
 		return false
-	if crawler_kit.upgrade_card(uid, stat_id):
+	if crawler_kit.upgrade_card(uid, wanted):
 		return true
 	crawler_progress.gold += price
 	crawler_progress.remember()
@@ -2214,15 +2825,27 @@ func upgrade_crawler_card(uid: String, stat_id := "") -> bool:
 func award_crawler_kill(mob_level: int, kind := "", at: Variant = null) -> void:
 	if crawler_progress == null or not _is_host_authority():
 		return
-	var gold := CrawlerProgress.kill_gold(mob_level)
-	var xp := CrawlerProgress.kill_xp(mob_level, kind)
-	var gems := CrawlerMeta.kill_gems(mob_level)
+	var gold := crawler_progress.scaled_kill_gold(mob_level)
+	var xp := crawler_progress.scaled_kill_xp(mob_level, kind)
+	var gems := crawler_progress.scaled_kill_gems(mob_level)
 	crawler_progress.award_kill(mob_level, kind)
 	CrawlerMeta.add_gems(gems)
 	if journal != null:
 		journal.note_kill()
 	if at is Vector3 and (at as Vector3).is_finite():
 		_publish_crawler_kill_loot(gold, xp, gems, at)
+		_roll_crawler_kill_drops(at)
+
+
+func _roll_crawler_kill_drops(at: Vector3) -> void:
+	if crawler_progress == null or not at.is_finite():
+		return
+	var world := get_parent() as GameWorld
+	if world == null:
+		return
+	world.spawn_crawler_kill_loot(
+		CrawlerLoot.roll_kill_drops(crawler_progress, crawler_progress.offer_rng()),
+		at)
 
 
 func _publish_crawler_kill_loot(gold: int, xp: int, gems: int, at: Vector3) -> void:
@@ -2241,6 +2864,12 @@ func crawler_owned_hats() -> PackedStringArray:
 	return crawler_progress.owned_hats.duplicate()
 
 
+func crawler_owned_capes() -> PackedStringArray:
+	if crawler_progress == null:
+		return PackedStringArray()
+	return crawler_progress.owned_capes.duplicate()
+
+
 func crawler_damage_scale() -> float:
 	return crawler_progress.damage_scale() if crawler_progress != null else 1.0
 
@@ -2249,8 +2878,16 @@ func crawler_knockback_scale() -> float:
 	return crawler_progress.knockback_scale() if crawler_progress != null else 1.0
 
 
+func crawler_cast_trim() -> float:
+	return crawler_progress.cast_trim() if crawler_progress != null else 0.0
+
+
 func crawler_range_scale() -> float:
 	return crawler_progress.range_scale() if crawler_progress != null else 1.0
+
+
+func crawler_element_scale() -> float:
+	return crawler_progress.elemental_scale() if crawler_progress != null else 1.0
 
 
 func crawler_dodge_chance() -> float:
@@ -2269,6 +2906,12 @@ func juke_cooldown() -> float:
 	if CrawlerRules.active() and crawler_progress != null:
 		return crawler_progress.juke_cooldown()
 	return JUKE_COOLDOWN
+
+
+func juke_distance() -> float:
+	if CrawlerRules.active() and crawler_progress != null:
+		return crawler_progress.juke_distance()
+	return JUKE_DISTANCE
 
 
 func _crawler_dodge_roll() -> float:
@@ -2319,6 +2962,25 @@ func in_crawler_city() -> bool:
 		if city != null and city.contains_world(global_position):
 			return true
 	return false
+
+
+func crawler_city_key() -> String:
+	if not CrawlerRules.active() or not is_inside_tree():
+		return ""
+	var ring_key := CrawlerCityRingScript.city_key_for(self)
+	if not ring_key.is_empty():
+		return ring_key
+	var overlay := get_tree().get_first_node_in_group(LandPatchOverlay.GROUP) \
+		as LandPatchOverlay
+	if overlay == null:
+		return ""
+	for held in overlay.all_cities():
+		var city := held as PatchCity
+		if city == null or not city.contains_world(global_position):
+			continue
+		var patch_id := city.city_id()
+		return str(patch_id) if patch_id >= 0 else "city"
+	return ""
 
 
 func note_crawler_cast(overlay: Dictionary) -> void:
@@ -2531,6 +3193,8 @@ func _on_equipment_changed() -> void:
 	_dress()
 	if crawler_progress != null and equipment.size() > 0:
 		crawler_progress.note_worn(equipment.get_item(0))
+		if equipment.size() > 1:
+			crawler_progress.note_worn_cape(equipment.get_item(1))
 		_apply_crawler_progress()
 		_sync_ward_from_hat()
 	if _applying_loadout:
@@ -2724,6 +3388,9 @@ func _dress() -> void:
 			Wardrobe.unequip(character, body_slot)
 			continue
 		var garment := Wardrobe.equip(character, body_slot, ItemDB.scene_path(id))
+		var worn := Wardrobe.worn_node(character, body_slot)
+		if worn != null and worn.has_method(&"apply_item"):
+			worn.call(&"apply_item", id)
 		if garment != null:
 			SurfaceSkin.paint(garment, {}, true)
 			LagTracker.note_throttled("look", "dress_%s" % id, "equipped %s" % id, 0.4)
@@ -2756,6 +3423,147 @@ func _add_weapon_pose() -> void:
 	_weapon_pose = WeaponPose.new()
 	_weapon_pose.name = "WeaponPose"
 	skeleton.add_child(_weapon_pose)
+
+
+func _add_roar_pose() -> void:
+	if _roar_pose != null and is_instance_valid(_roar_pose):
+		_roar_pose.queue_free()
+		_roar_pose = null
+	var skeleton := Weapons.skeleton_of(character)
+	if skeleton == null:
+		return
+	_roar_pose = RoarPose.new()
+	_roar_pose.name = "RoarPose"
+	skeleton.add_child(_roar_pose)
+
+
+func begin_roar(duration: float) -> bool:
+	if _roar_pose == null or not is_instance_valid(_roar_pose):
+		_add_roar_pose()
+	if _roar_pose == null:
+		return false
+	if _weapon_pose != null:
+		_weapon_pose_before_roar = _weapon_pose.active
+		_weapon_pose.active = false
+		_roar_held_arms = true
+	_roar_pose.play(duration)
+	return true
+
+
+func roar_playing() -> bool:
+	return _roar_pose != null and _roar_pose.playing()
+
+
+func begin_overdrive(overlay: Dictionary, card: CrawlerCard) -> void:
+	var duration := maxf(float(overlay.get("duration",
+		CrawlerRules.OVERDRIVE_DURATION)), 0.05)
+	var boost := maxf(float(overlay.get("boost", CrawlerRules.OVERDRIVE_BOOST)), 0.0)
+	_overdrive_left = duration
+	_overdrive_boost = boost
+	_overdrive_card_uid = card.uid if card != null else ""
+	_overdrive_mods.clear()
+	var has_big := false
+	var big_rank := 0
+	if card != null:
+		for child: CrawlerCard in card.filled_mods():
+			_overdrive_mods.append(child)
+			if child.id == "big":
+				has_big = true
+				big_rank = clampi(child.upgrade_rank("size"), 0,
+					CrawlerRules.BIG_SIZE_MAX_RANK)
+	_overdrive_body_scale = CrawlerRules.overdrive_body_scale(boost, has_big, big_rank)
+	_apply_overdrive_visual()
+	_refresh_crawler_ability_stats()
+	if _has_listeners():
+		_sync_overdrive.rpc(_overdrive_left, _overdrive_boost, _overdrive_body_scale)
+
+
+func overdrive_active() -> bool:
+	return _overdrive_left > 0.0
+
+
+func overdrive_boost() -> float:
+	return _overdrive_boost if overdrive_active() else 0.0
+
+
+func overdrive_boost_mul() -> float:
+	return CrawlerRules.overdrive_boost_mul(_overdrive_boost) \
+		if overdrive_active() else 1.0
+
+
+func overdrive_size_scale() -> float:
+	return _overdrive_body_scale if overdrive_active() else 1.0
+
+
+func overdrive_borrowed_mods() -> Array[CrawlerCard]:
+	if not overdrive_active():
+		return []
+	if not _overdrive_card_uid.is_empty() and crawler_kit != null:
+		var live := crawler_kit.cards.get(_overdrive_card_uid) as CrawlerCard
+		if live != null:
+			return live.filled_mods()
+	return _overdrive_mods
+
+
+func overdrive_left() -> float:
+	return _overdrive_left
+
+
+func end_overdrive() -> void:
+	if _overdrive_left <= 0.0 and is_equal_approx(_overdrive_body_scale, 1.0) \
+			and _overdrive_mods.is_empty():
+		return
+	_overdrive_left = 0.0
+	_overdrive_boost = 0.0
+	_overdrive_body_scale = 1.0
+	_overdrive_card_uid = ""
+	_overdrive_mods.clear()
+	_apply_overdrive_visual()
+	_refresh_crawler_ability_stats()
+	if _has_listeners():
+		_sync_overdrive.rpc(0.0, 0.0, 1.0)
+
+
+func _tick_overdrive(delta: float) -> void:
+	if _overdrive_left <= 0.0:
+		return
+	_overdrive_left = maxf(_overdrive_left - delta, 0.0)
+	if _overdrive_left <= 0.0:
+		end_overdrive()
+
+
+func _refresh_crawler_ability_stats() -> void:
+	if is_instance_valid(_ability_controller) \
+			and _ability_controller.has_method(&"refresh_crawler_stats"):
+		_ability_controller.call(&"refresh_crawler_stats")
+
+
+func _capture_base_capsule_radius() -> void:
+	if collider == null or overdrive_active():
+		return
+	var capsule := collider.shape as CapsuleShape3D
+	if capsule != null and capsule.radius > 0.0:
+		_base_capsule_radius = capsule.radius
+
+
+func _apply_overdrive_visual() -> void:
+	var scale := overdrive_size_scale()
+	if character != null and is_instance_valid(character):
+		character.scale = Vector3(scale, scale, scale)
+	_apply_stance(_stance)
+	if _parry_shield != null:
+		_parry_shield.fit_body(_body_height * scale)
+	if _ward_bubble != null:
+		_ward_bubble.fit_body(_body_height * scale)
+
+
+func _sync_roar_pose() -> void:
+	if _roar_pose != null and _roar_pose.playing():
+		return
+	if not _roar_held_arms or _weapon_pose == null:
+		return
+	_weapon_pose.active = _weapon_pose_before_roar
+	_roar_held_arms = false
 
 
 ## Rigid bodies built onto the same skeleton, idle until a crash. Added after the
@@ -2941,11 +3749,21 @@ func can_attack() -> bool:
 	return not _dead and not _grabbed and not _lassoed and not _forced_ragdoll \
 		and _stance != Stance.CRASH and _stance != Stance.GRAPPLE \
 		and _arrival_left <= 0.0 \
+		and _reveal_left <= 0.0 \
+		and not is_status_locked() \
 		and not in_crawler_safe_zone()
 
 
 func in_crawler_safe_zone() -> bool:
 	return CrawlerRules.active() and CrawlerSafeBox.contains_any(self)
+
+
+func can_edit_crawler_mods() -> bool:
+	if not CrawlerRules.active():
+		return true
+	if crawler_progress != null and crawler_progress.wearing_kit_hat():
+		return true
+	return in_crawler_city() or in_crawler_safe_zone()
 
 
 func cancel_combat_actions() -> void:
@@ -3056,6 +3874,14 @@ func laser_beams() -> LaserBeams:
 	return _laser_beams
 
 
+func lightning_bolts() -> LightningBolts:
+	if not is_instance_valid(_lightning_bolts):
+		_lightning_bolts = LightningBolts.new()
+		_lightning_bolts.name = "LightningBolts"
+		add_child(_lightning_bolts, false, Node.INTERNAL_MODE_BACK)
+	return _lightning_bolts
+
+
 ## The shock standing off this player's fist, built the first time anything
 ## asks. Sized to the fist's own damage cylinder, so what is drawn is what the
 ## punch cuts.
@@ -3081,9 +3907,14 @@ func fire_beam(id: String, left_eye: Vector3, right_eye: Vector3, at: Vector3,
 		return
 	_beam_request_sequence += 1
 	if not _has_listeners():
-		LaserEyes.apply_effect(
-			self, id, left_eye, right_eye, at, landed, radius, beam_width,
-			wobble, pulse)
+		if id == "lightning":
+			Lightning.apply_effect(
+				self, id, left_eye, right_eye, at, landed, radius, beam_width,
+				wobble, pulse)
+		else:
+			LaserEyes.apply_effect(
+				self, id, left_eye, right_eye, at, landed, radius, beam_width,
+				wobble, pulse)
 	elif multiplayer.is_server():
 		_publish_ability_beam(
 			id, left_eye, right_eye, at, landed, radius, beam_width, wobble,
@@ -3097,7 +3928,8 @@ func fire_beam(id: String, left_eye: Vector3, right_eye: Vector3, at: Vector3,
 func _publish_ability_beam(id: String, left_eye: Vector3,
 		right_eye: Vector3, at: Vector3, landed: bool,
 		radius := -1.0, beam_width := 1.0, wobble := 0.0, pulse := false) -> void:
-	if not can_attack() or id != "laser_eyes" or not ItemDB.accepts_ability(id) \
+	if not can_attack() or not _is_replicated_beam(id) \
+			or not ItemDB.accepts_ability(id) \
 			or not left_eye.is_finite() \
 			or not right_eye.is_finite() or not at.is_finite():
 		return
@@ -3153,6 +3985,10 @@ func _uses_launched_projectile(definition: AbilityDefinition) -> bool:
 	return definition != null and definition.projectile_type in [
 		AbilityDefinition.ProjectileType.ENERGY_DISK,
 		AbilityDefinition.ProjectileType.ENERGY_ORB,
+		AbilityDefinition.ProjectileType.ENERGY_BOLT,
+		AbilityDefinition.ProjectileType.ENERGY_ICICLE,
+		AbilityDefinition.ProjectileType.TELEPORT_ORB,
+		AbilityDefinition.ProjectileType.ENERGY_CONE,
 	]
 
 
@@ -3163,12 +3999,14 @@ func _publish_ability_projectile(request_sequence: int, id: String,
 	if not inherited_velocity.is_finite():
 		return false
 	var from_left := (variant & 1) != 0
-	var host_from := hand_point(from_left)
-	var host_along := aim_direction(host_from).normalized()
+	var socket := _projectile_socket(id, from_left)
+	var host_along := aim_direction(socket).normalized()
+	var host_from := CrawlerReach.shift(socket, host_along, overlay)
 	var claimed_along := along.normalized() \
 		if along.length_squared() > 0.001 else Vector3.ZERO
 	var spawn_tolerance := maxf(
 		2.5, velocity.length() * SYNC_INTERVAL * 3.0)
+	spawn_tolerance += CrawlerReach.far_cast(overlay) + 0.75
 	if not can_attack() or definition == null \
 			or not _uses_launched_projectile(definition) \
 			or not from.is_finite() or not along.is_finite() \
@@ -3184,6 +4022,27 @@ func _publish_ability_projectile(request_sequence: int, id: String,
 		_host_projectile_sequence, request_sequence, id,
 		host_from, host_along, authoritative_velocity, variant, overlay)
 	return true
+
+
+func mouth_point() -> Vector3:
+	var up := up_direction if up_direction.length_squared() > 0.01 \
+		else Vector3.UP
+	return combat_position() + up * 0.22
+
+
+func _projectile_socket(id: String, from_left: bool) -> Vector3:
+	if id == "fus":
+		return mouth_point()
+	if id == "light_bolt":
+		var eyes := eye_points()
+		if eyes.size() >= 2:
+			return eyes[0] if from_left else eyes[1]
+		if not eyes.is_empty():
+			return eyes[0]
+		return combat_position()
+	if CrawlerRules.is_orb_blast(id):
+		return merged_hand_point()
+	return hand_point(from_left)
 
 
 func _spawn_ability_projectile(id: String, from: Vector3, along: Vector3,
@@ -3212,8 +4071,37 @@ func _spawn_ability_projectile(id: String, from: Vector3, along: Vector3,
 		clip = definition.hover_animation
 	elif from_left and not definition.alternate_animation.is_empty():
 		clip = definition.alternate_animation
-	play_ability_animation(clip,
-		float(definition.stats.get("animation_duration", 0.32)))
+	if id != "fus":
+		play_ability_animation(clip,
+			float(definition.stats.get("animation_duration", 0.32)))
+	if id == "icicle":
+		CrawlerBurst.snow(get_parent(), from, along, 1.05)
+	return true
+
+
+func fire_hero_punch(id: String, from_left := false) -> bool:
+	var definition := ItemDB.ability_definition(id)
+	if not can_attack() or definition == null or definition.ability_id != id:
+		return false
+	var overlay := crawler_ability_overlay(id)
+	var variant := 1 if from_left else 0
+	if uses_float_pose():
+		variant |= 2
+	if not _has_listeners() or multiplayer.is_server():
+		return _publish_hero_punch(id, variant, overlay)
+	_request_hero_punch.rpc_id(1, id, variant)
+	return true
+
+
+func _publish_hero_punch(id: String, variant: int, overlay: Dictionary) -> bool:
+	var definition := ItemDB.ability_definition(id)
+	if not can_attack() or definition == null:
+		return false
+	_host_hero_punch_sequence += 1
+	if not _has_listeners():
+		_apply_hero_punch(_host_hero_punch_sequence, id, variant, overlay)
+	else:
+		_apply_hero_punch.rpc(_host_hero_punch_sequence, id, variant, overlay)
 	return true
 
 
@@ -3222,6 +4110,57 @@ func play_ability_animation(clip: StringName, duration: float) -> void:
 		return
 	_ability_clip = String(clip)
 	_ability_clip_left = maxf(duration, 0.0)
+
+
+func clear_ability_animation() -> void:
+	_ability_clip = ""
+	_ability_clip_left = 0.0
+
+
+func set_beam_root(on: bool, look_scale := 1.0) -> void:
+	_beam_root_wanted = 1.0 if on else 0.0
+	_beam_look_scale = clampf(look_scale, 0.12, 1.0) if on else 1.0
+
+
+func beam_look_scale() -> float:
+	if _beam_root <= 0.001:
+		return 1.0
+	return lerpf(1.0, _beam_look_scale, _beam_root)
+
+
+func set_field_cast(on: bool) -> void:
+	_field_cast = on
+	if on:
+		_beam_root_wanted = 1.0
+		_beam_root = 1.0
+		_beam_look_scale = 1.0
+	else:
+		_beam_root_wanted = 0.0
+		_beam_root = 0.0
+		_beam_look_scale = 1.0
+
+
+func field_casting() -> bool:
+	return _field_cast
+
+
+func _update_beam_root(delta: float) -> void:
+	var rate := 3.4 if _beam_root_wanted > _beam_root else 7.0
+	_beam_root = move_toward(_beam_root, _beam_root_wanted, rate * delta)
+
+
+func _apply_beam_root_brake(delta: float) -> void:
+	if _beam_root <= 0.001:
+		return
+	var brake := 12.0 * _beam_root
+	var speed := velocity.length()
+	velocity = velocity.move_toward(Vector3.ZERO, maxf(speed, 10.0) * brake * delta)
+	if _stance == Stance.FLY:
+		_cruise = move_toward(_cruise, 0.0, 70.0 * _beam_root * delta)
+
+
+func _is_replicated_beam(id: String) -> bool:
+	return id == "laser_eyes" or id == "kame" or id == "lightning"
 
 
 ## Cosmetic dust at a laser landing. Beam packets and carbine bolts already run
@@ -3347,6 +4286,10 @@ func death_screen() -> DeathScreen:
 	return _death_screen if is_instance_valid(_death_screen) else null
 
 
+func is_status_locked() -> bool:
+	return statuses.movement_locked()
+
+
 func has_status(id: StringName) -> bool:
 	return statuses.has(id)
 
@@ -3356,7 +4299,17 @@ func status_remaining(id: StringName) -> float:
 
 
 func status_rows() -> Array[Dictionary]:
-	return statuses.rows()
+	var rows := statuses.rows()
+	if in_crawler_city() or in_crawler_safe_zone():
+		rows.append({
+			"id": &"safe_zone",
+			"title": "Safe Zone",
+			"description": "Ability mods can be moved.",
+			"remaining": 0.0,
+			"lasting": true,
+			"text": "",
+		})
+	return rows
 
 
 func status_snapshot() -> Dictionary:
@@ -3364,7 +4317,8 @@ func status_snapshot() -> Dictionary:
 
 
 func can_fly() -> bool:
-	if CrawlerRules.active() and _flight_fuel <= 0.02:
+	if CrawlerRules.active() and not CrawlerRules.sandbox_fast() \
+			and _flight_fuel <= 0.02:
 		return false
 	return not _dead and not _grabbed and not _lassoed \
 		and not statuses.has(CombatStatuses.FLIGHTLESS)
@@ -3384,6 +4338,7 @@ func combat_snapshot() -> Dictionary:
 		"parry_perfect": _parry_perfect_left,
 		"parry_cooldown": _parry_cooldown_left,
 		"ward_up": _ward_up,
+		"ward_hits": _ward_hits_left,
 		"ward_recharge": _ward_recharge,
 		"stagger": _stagger_left,
 		"forced_ragdoll": _forced_ragdoll,
@@ -3413,6 +4368,7 @@ func apply_combat_snapshot(snapshot: Dictionary) -> void:
 		float(snapshot.get("parry_perfect", 0.0)), 0.0), _parry_window_left)
 	_parry_cooldown_left = maxf(float(snapshot.get("parry_cooldown", 0.0)), 0.0)
 	_ward_up = bool(snapshot.get("ward_up", _ward_up))
+	_ward_hits_left = maxi(int(snapshot.get("ward_hits", _ward_hits_left)), 0)
 	_ward_recharge = maxf(float(snapshot.get("ward_recharge", _ward_recharge)), 0.0)
 	_update_ward_bubble()
 	_stagger_left = maxf(float(snapshot.get("stagger", 0.0)), 0.0)
@@ -3483,10 +4439,11 @@ func respawn_at(at_transform: Transform3D, sequence := 0) -> void:
 	_juke_cooldown_left = 0.0
 	_juke_carry = Vector3.ZERO
 	if crawler_progress != null and crawler_progress.wearing_ward_hat():
-		_ward_up = true
+		_raise_ward_bubble()
 		_ward_recharge = 0.0
 	else:
 		_ward_up = false
+		_ward_hits_left = 0
 		_ward_recharge = 0.0
 	_clear_ragdoll()
 	stats.set_health(stats.base_of(PlayerStats.HEALTH))
@@ -3505,6 +4462,8 @@ func respawn_at(at_transform: Transform3D, sequence := 0) -> void:
 func apply_damage(hit: DamageHit) -> float:
 	if hit == null or _dead or not _is_host_authority():
 		return 0.0
+	if CrawlerRules.sandbox_invincible() and not training_enemy:
+		return 0.0
 	if training_enemy:
 		if hit.faction != DamageHit.Faction.PLAYER:
 			return 0.0
@@ -3520,6 +4479,15 @@ func apply_damage(hit: DamageHit) -> float:
 	if _try_crawler_dodge(hit):
 		_broadcast_combat_state(0.0, hit, false, false, false, true)
 		return 0.0
+	if _phase_hat_blocks(hit):
+		_broadcast_combat_state(0.0, hit, false, false, false, true)
+		return 0.0
+	if _ordinance_hat_blocks(hit):
+		_broadcast_combat_state(0.0, hit, false, false, false)
+		return 0.0
+	if _rubber_hat_blocks(hit):
+		_broadcast_combat_state(0.0, hit, false, false, false)
+		return 0.0
 	if _absorb_ward_hit(hit):
 		return 0.0
 
@@ -3530,13 +4498,13 @@ func apply_damage(hit: DamageHit) -> float:
 	var actual := minf(maxf(authored_amount, 0.0), before)
 	if actual > 0.0:
 		stats.set_health(before - actual)
-	var status_impact := not hit.status.is_empty() and hit.status_duration > 0.0
-	if status_impact:
-		statuses.apply_status(hit.status, hit.status_duration)
+	var status_impact := CrawlerElements.apply_to_combatant(self, hit)
 	var became_dead := stats.health() <= 0.0 and before > 0.0
 	if became_dead:
 		_die(hit)
 	_broadcast_combat_state(actual, hit, status_impact, false, false)
+	if actual > 0.0 and not became_dead:
+		_trigger_fool_cape()
 	return actual
 
 
@@ -3751,6 +4719,7 @@ func request_juke() -> bool:
 
 func can_juke() -> bool:
 	return can_attack() \
+		and not _field_cast \
 		and _juke_cooldown_left <= 0.0 \
 		and _juke_left <= 0.0 \
 		and _stance != Stance.METEOR \
@@ -3813,7 +4782,7 @@ func _server_accept_juke(request_sequence: int, sender: int,
 
 
 func _juke_move(delta: float) -> void:
-	var burst := JUKE_DISTANCE / maxf(JUKE_TIME, 0.01)
+	var burst := juke_distance() / maxf(JUKE_TIME, 0.01)
 	if _juke_along.length_squared() > 0.0001:
 		var carry := _juke_carry if _juke_carry.is_finite() else Vector3.ZERO
 		velocity = carry + _juke_along * burst
@@ -3824,6 +4793,7 @@ func _juke_move(delta: float) -> void:
 	move_and_slide()
 	_resolve_flora_contacts(carried)
 	_catch_ground()
+	_juke_hat_strike()
 
 
 func _update_juke_afterimages(delta: float) -> void:
@@ -3898,6 +4868,7 @@ func _die(hit: DamageHit) -> void:
 		return
 	_dead = true
 	_death_cause = _death_notice(hit)
+	end_overdrive()
 	_interrupt_combat_actions()
 	_grabbed = false
 	_lassoed = false
@@ -3997,7 +4968,12 @@ func _tick_combat(delta: float) -> void:
 	_juke_cooldown_left = maxf(_juke_cooldown_left - delta, 0.0)
 	_stagger_left = maxf(_stagger_left - delta, 0.0)
 	_tick_ward(delta)
+	_tick_missile_hat(delta)
+	_tick_mine_hat(delta)
+	_fool_cape_lock = maxf(_fool_cape_lock - delta, 0.0)
+	_tick_overdrive(delta)
 	var expired := statuses.tick(delta)
+	_emit_local_status_floats()
 	if expired and _is_host_authority():
 		var quiet := DamageHit.impact(combat_position(), 0.01, 0.0)
 		quiet.faction = DamageHit.Faction.ENEMY
@@ -4027,8 +5003,10 @@ func _absorb_ward_hit(hit: DamageHit) -> bool:
 	var amount := hit.amount if hit != null and is_finite(hit.amount) else 0.0
 	if amount <= 0.0:
 		return false
-	_ward_up = false
-	_ward_recharge = CrawlerProgress.WARD_RESPAWN
+	_ward_hits_left = maxi(_ward_hits_left - 1, 0)
+	if _ward_hits_left <= 0:
+		_ward_up = false
+		_ward_recharge = CrawlerProgress.WARD_RESPAWN
 	_update_ward_bubble()
 	_broadcast_combat_state(0.0, hit, false, false, false)
 	return true
@@ -4041,6 +5019,7 @@ func _tick_ward(delta: float) -> void:
 			or _dead:
 		if _ward_up or _ward_recharge > 0.0:
 			_ward_up = false
+			_ward_hits_left = 0
 			_ward_recharge = 0.0
 		return
 	if _ward_up:
@@ -4048,7 +5027,7 @@ func _tick_ward(delta: float) -> void:
 	var before := _ward_recharge
 	_ward_recharge = maxf(_ward_recharge - delta, 0.0)
 	if before > 0.0 and _ward_recharge <= 0.0:
-		_ward_up = true
+		_raise_ward_bubble()
 		_update_ward_bubble()
 		var quiet := DamageHit.impact(combat_position(), 0.01, 0.0)
 		quiet.faction = DamageHit.Faction.ENEMY
@@ -4059,11 +5038,309 @@ func _sync_ward_from_hat() -> void:
 	if crawler_progress != null and crawler_progress.wearing_ward_hat() \
 			and not _dead:
 		if not _ward_up and _ward_recharge <= 0.0:
-			_ward_up = true
+			_raise_ward_bubble()
+		elif _ward_up:
+			_ward_hits_left = maxi(_ward_hits_left, 1)
 	else:
 		_ward_up = false
+		_ward_hits_left = 0
 		_ward_recharge = 0.0
 	_update_ward_bubble()
+
+
+func _raise_ward_bubble() -> void:
+	_ward_up = true
+	var charges := crawler_progress.ward_charges() if crawler_progress != null else 1
+	_ward_hits_left = maxi(charges, 1)
+
+
+func _tick_missile_hat(delta: float) -> void:
+	if not _is_host_authority() or not CrawlerRules.active():
+		return
+	if crawler_progress == null or not crawler_progress.wearing_missile_hat() \
+			or _dead:
+		_missile_cooldown = 0.0
+		return
+	_missile_cooldown = maxf(_missile_cooldown - delta, 0.0)
+	if _missile_cooldown > 0.0:
+		return
+	var prey := _nearest_missile_mob()
+	if prey == null:
+		return
+	_missile_cooldown = crawler_progress.missile_interval()
+	var from := combat_position() + _up() * 0.55
+	var toward := _combat_point_of(prey) - from
+	if toward.length_squared() < 0.0001:
+		toward = -global_basis.z
+	_publish_hat_missiles(
+		from,
+		toward,
+		crawler_progress.missile_count(),
+		crawler_progress.missile_damage(),
+		crawler_progress.missile_range()
+	)
+
+
+func _nearest_missile_mob() -> Node:
+	if not is_inside_tree() or crawler_progress == null:
+		return null
+	var best: Node = null
+	var best_span := crawler_progress.missile_range()
+	var at := combat_position()
+	for node_variant: Variant in get_tree().get_nodes_in_group(CrawlerMob.GROUP):
+		var node := node_variant as Node
+		if node == null or not _is_missile_prey(node):
+			continue
+		var span := at.distance_to(_combat_point_of(node))
+		if span >= best_span:
+			continue
+		best = node
+		best_span = span
+	return best
+
+
+func _is_missile_prey(node: Node) -> bool:
+	if node == null or node == self:
+		return false
+	if node.has_method(&"is_alive") and not bool(node.call(&"is_alive")):
+		return false
+	if node.has_method(&"is_dead") and bool(node.call(&"is_dead")):
+		return false
+	if node.has_method(&"is_charmed") and bool(node.call(&"is_charmed")):
+		return false
+	return true
+
+
+func _combat_point_of(node: Node) -> Vector3:
+	if node.has_method(&"combat_position"):
+		return node.call(&"combat_position")
+	var body := node as Node3D
+	return body.global_position if body != null else combat_position()
+
+
+func _publish_hat_missiles(
+		from: Vector3, toward: Vector3, count: int, damage: float,
+		reach: float
+	) -> void:
+	if not from.is_finite() or not toward.is_finite() or count <= 0 \
+			or damage <= 0.0 or reach <= 0.0:
+		return
+	if _has_listeners():
+		_apply_hat_missiles.rpc(from, toward, count, damage, reach)
+		return
+	_spawn_hat_missiles(from, toward, count, damage, reach)
+
+
+func _tick_mine_hat(delta: float) -> void:
+	if not _is_host_authority() or not CrawlerRules.active():
+		return
+	if crawler_progress == null or not crawler_progress.wearing_mine_hat() \
+			or _dead:
+		_mine_cooldown = 0.0
+		return
+	_mine_cooldown = maxf(_mine_cooldown - delta, 0.0)
+	if _mine_cooldown > 0.0:
+		return
+	_mine_cooldown = crawler_progress.mine_interval()
+	var at := combat_position() - _up() * 0.85
+	_publish_hat_mine(
+		at, crawler_progress.mine_damage(), crawler_progress.mine_radius())
+
+
+func _publish_hat_mine(at: Vector3, damage: float, reach: float) -> void:
+	if not at.is_finite() or damage <= 0.0 or reach <= 0.0:
+		return
+	if _has_listeners():
+		_apply_hat_mine.rpc(at, damage, reach)
+		return
+	_spawn_hat_mine(at, damage, reach)
+
+
+func _spawn_hat_mine(at: Vector3, damage: float, reach: float) -> void:
+	CrawlerHatMine.drop(get_parent(), self, at, {
+		"damage": damage,
+		"radius": reach,
+		"fuse": CrawlerRules.MINE_HAT_FUSE,
+		"size": CrawlerRules.MINE_HAT_SIZE,
+	}, _is_host_authority())
+
+
+func _phase_hat_blocks(hit: DamageHit) -> bool:
+	if hit == null or not hit.projectile or not CrawlerRules.active():
+		return false
+	if crawler_progress == null or not crawler_progress.wearing_phase_hat():
+		return false
+	var amount := hit.amount if is_finite(hit.amount) else 0.0
+	if amount <= 0.0:
+		return false
+	var chance := crawler_progress.phase_chance()
+	if chance <= 0.0:
+		return false
+	return _crawler_dodge_roll() < chance
+
+
+func _ordinance_hat_blocks(hit: DamageHit) -> bool:
+	if hit == null or not hit.explosive or not CrawlerRules.active():
+		return false
+	return crawler_progress != null and crawler_progress.wearing_ordinance_hat()
+
+
+func _rubber_hat_blocks(hit: DamageHit) -> bool:
+	if hit == null or not CrawlerRules.active() or not shock_immune():
+		return false
+	return hit.ability_id == "lightning" or hit.ability_id == "static_field"
+
+
+func shock_immune() -> bool:
+	return crawler_progress != null and crawler_progress.wearing_rubber_hat()
+
+
+func wearing_fool_cape() -> bool:
+	return crawler_progress != null and crawler_progress.wearing_fool_cape()
+
+
+func _trigger_fool_cape() -> bool:
+	if not _is_host_authority() or not CrawlerRules.active() or _dead:
+		return false
+	if not wearing_fool_cape() or _fool_cape_lock > 0.0:
+		return false
+	var dest := _fool_cape_destination()
+	if not dest.is_finite():
+		return false
+	_fool_cape_lock = CrawlerRules.FOOL_CAPE_LOCK
+	var from := global_position
+	play_ability_explosion(from, 0.55, Color(0.62, 0.18, 0.72), 0.22)
+	play_ability_explosion(dest, 0.7, Color(0.86, 0.16, 0.22), 0.26)
+	return warp_to(dest, -global_basis.z, true, false)
+
+
+func _fool_cape_destination() -> Vector3:
+	var from := global_position
+	if not from.is_finite():
+		return Vector3.INF
+	for _try in CrawlerRules.FOOL_CAPE_TRIES:
+		var along := _fool_cape_dir_override
+		if along.length_squared() < 0.0001:
+			along = Vector3(
+				_fool_cape_rng.randf_range(-1.0, 1.0),
+				_fool_cape_rng.randf_range(-1.0, 1.0),
+				_fool_cape_rng.randf_range(-1.0, 1.0)
+			)
+		if along.length_squared() < 0.0001:
+			along = -global_basis.z
+		along = along.normalized()
+		var span := _fool_cape_distance_override
+		if span < 0.0:
+			span = CrawlerRules.fool_cape_distance(_fool_cape_rng)
+		var at := _fool_cape_resolve(from + along * span)
+		if _fool_cape_spot_clear(at):
+			return at
+	return Vector3.INF
+
+
+func _fool_cape_resolve(at: Vector3) -> Vector3:
+	if not at.is_finite():
+		return Vector3.INF
+	var world_planet := planet()
+	if world_planet == null:
+		return at
+	var local := world_planet.to_local(at)
+	if local.length_squared() < 0.0001:
+		return at
+	var surface := world_planet.surface_position(local)
+	var up := world_planet.up_at(surface)
+	var floor := maxf(_stance_height(_stance) * 0.5, 0.45)
+	var altitude := (at - surface).dot(up)
+	if altitude < floor:
+		return surface + up * floor
+	return at
+
+
+func _fool_cape_spot_clear(at: Vector3) -> bool:
+	if not at.is_finite() or not is_inside_tree():
+		return false
+	var space := get_world_3d().direct_space_state
+	if space == null or collider == null or collider.shape == null:
+		return true
+	var query := PhysicsShapeQueryParameters3D.new()
+	query.shape = collider.shape
+	query.transform = Transform3D(global_transform.basis, at)
+	query.exclude = DamageHit.rid_list(get_rid())
+	query.collision_mask = collision_mask
+	query.collide_with_areas = false
+	return space.intersect_shape(query, 1).is_empty()
+
+
+func _sync_rubber_from_hat() -> void:
+	if shock_immune() and statuses.has(CombatStatuses.SHOCK):
+		statuses.clear(CombatStatuses.SHOCK)
+
+
+func _vampire_hat_heal(target: Node, amount: float) -> void:
+	if crawler_progress == null or not crawler_progress.wearing_vampire_hat():
+		return
+	if target == null or target == self:
+		return
+	var share := crawler_progress.vampire_steal()
+	if share <= 0.0:
+		return
+	apply_heal(amount * share)
+
+
+func _juke_hat_strike() -> void:
+	if not _is_host_authority() or not CrawlerRules.active():
+		return
+	if crawler_progress == null or not crawler_progress.wearing_juke_hat():
+		return
+	var damage := crawler_progress.juke_hat_damage()
+	if damage <= 0.0 or not is_inside_tree():
+		return
+	var at := combat_position()
+	var reach := CrawlerRules.JUKE_HAT_RADIUS + combat_radius()
+	for node_variant: Variant in get_tree().get_nodes_in_group(DamageHit.COMBATANT_GROUP):
+		var node := node_variant as Node
+		if node == null or node == self or not is_instance_valid(node):
+			continue
+		if node.has_method(&"is_alive") and not bool(node.call(&"is_alive")):
+			continue
+		if node.has_method(&"is_dead") and bool(node.call(&"is_dead")):
+			continue
+		if node.has_method(&"is_charmed") and bool(node.call(&"is_charmed")):
+			continue
+		var id := node.get_instance_id()
+		if _juke_struck.has(id):
+			continue
+		var them := _combat_point_of(node)
+		var bounds := 0.4
+		if node.has_method(&"combat_radius"):
+			bounds = float(node.call(&"combat_radius"))
+		if at.distance_to(them) > reach + bounds:
+			continue
+		_juke_struck[id] = true
+		var hit := DamageHit.impact(them, maxf(bounds, 0.4), damage)
+		hit.ability_id = "hat_juke"
+		hit.affects_flora = false
+		hit.faction = combat_faction()
+		hit.set_source(self, peer_id)
+		if not node.has_method(&"apply_damage"):
+			continue
+		var result: Variant = node.call(&"apply_damage", hit.resolved_for(node))
+		var dealt := float(result) if result is float or result is int else 0.0
+		if dealt > 0.0:
+			combat_damage_dealt(node, dealt, hit)
+
+
+func _spawn_hat_missiles(
+		from: Vector3, toward: Vector3, count: int, damage: float,
+		reach: float
+	) -> void:
+	CrawlerMissile.volley(get_parent(), self, from, toward, count, {
+		"damage": damage,
+		"range": reach,
+		"speed": CrawlerRules.MISSILE_HAT_SPEED,
+		"size": CrawlerRules.MISSILE_HAT_SIZE,
+		"linger": CrawlerRules.MISSILE_HAT_LINGER,
+	})
 
 
 func _update_ward_bubble() -> void:
@@ -4115,9 +5392,45 @@ func flora_contact_feedback(speed: float) -> void:
 		_combat_feedback.flora_contact(speed)
 
 
+func combat_world_float(kind: int, amount: float, at: Vector3,
+		merge_key := "") -> void:
+	if not _is_host_authority() or amount <= 0.0:
+		return
+	_feedback_sequence += 1
+	var event := DamageNumberEvent.new()
+	event.kind = kind as DamageNumberEvent.Kind
+	event.amount = amount
+	event.world_position = at
+	event.source_peer = peer_id
+	event.merge_key = merge_key
+	if _has_listeners():
+		_apply_outgoing_feedback.rpc(_feedback_sequence, event.to_wire())
+	else:
+		_apply_outgoing_feedback(_feedback_sequence, event.to_wire())
+
+
+func _emit_local_status_floats() -> void:
+	if _combat_feedback == null:
+		return
+	if statuses.consume_pulse(CombatStatuses.CHARM, CombatStatuses.CHARM_PULSE):
+		_show_local_status_float(DamageNumberEvent.Kind.CHARM, 1.0)
+	if statuses.consume_shock_pulse():
+		_show_local_status_float(DamageNumberEvent.Kind.SHOCK, 1.0)
+
+
+func _show_local_status_float(kind: int, amount: float) -> void:
+	var event := DamageNumberEvent.new()
+	event.kind = kind as DamageNumberEvent.Kind
+	event.amount = amount
+	event.world_position = combat_position()
+	event.incoming = true
+	_combat_feedback.world_float(event)
+
+
 func combat_damage_dealt(target: Node, amount: float, hit: DamageHit) -> void:
 	if not _is_host_authority() or amount <= 0.0:
 		return
+	_vampire_hat_heal(target, amount)
 	enemy_damaged.emit(target, amount, hit)
 	_feedback_sequence += 1
 	var target_peer_id := int(target.call(&"combat_peer_id")) \
@@ -4273,6 +5586,7 @@ func _simulate_local_player(delta: float) -> void:
 	# Before anything moves. Every branch below finishes in `_catch_ground`, and
 	# what it needs to know is where the body set off from.
 	_swept_from = global_position
+	_update_beam_root(delta)
 	if absf(_pending_yaw) > 0.000001:
 		rotate_object_local(Vector3.UP, _pending_yaw)
 		_pending_yaw = 0.0
@@ -4300,7 +5614,14 @@ func _simulate_local_player(delta: float) -> void:
 		move_and_slide()
 		_catch_ground()
 		return
-	if _arrival_left > 0.0:
+	if _arrival_left > 0.0 or _reveal_left > 0.0:
+		velocity = Vector3.ZERO
+		if not grounded:
+			velocity -= _up() * (_gravity() * delta)
+		move_and_slide()
+		_catch_ground()
+		return
+	if is_status_locked():
 		velocity = Vector3.ZERO
 		if not grounded:
 			velocity -= _up() * (_gravity() * delta)
@@ -4325,6 +5646,7 @@ func _simulate_local_player(delta: float) -> void:
 	_update_flight_water_state()
 	if _stance == Stance.FLY:
 		_fly_move(delta)
+		_apply_beam_root_brake(delta)
 		# No stair step: there is no floor under a flight, and the probe only ever
 		# runs against one.
 		var carried := velocity
@@ -4371,6 +5693,12 @@ func _simulate_local_player(delta: float) -> void:
 		wish = wish.normalized()
 	else:
 		wish = Vector3.ZERO
+	if _field_cast:
+		wish = Vector3.ZERO
+	elif _beam_root > 0.001:
+		wish *= 1.0 - _beam_root
+		if wish.length_squared() < 0.0001:
+			wish = Vector3.ZERO
 
 	_update_stance(delta, grounded)
 	_update_run_speed(delta, wish != Vector3.ZERO)
@@ -4398,6 +5726,7 @@ func _simulate_local_player(delta: float) -> void:
 		_slide_move(delta, wish)
 	else:
 		_walk_move(delta, wish, grounded)
+	_apply_beam_root_brake(delta)
 	# Kept from before the move, because the collision spends it: this is the
 	# speed that says whether the ground was landed on or hit.
 	var carried := velocity
@@ -5007,7 +6336,7 @@ func _regain_footing() -> void:
 func _try_jump(delta: float, grounded: bool) -> void:
 	_coyote_left = coyote_time if grounded else maxf(_coyote_left - delta, 0.0)
 	_jump_buffered = jump_buffer if _steer_just(&"jump") else maxf(_jump_buffered - delta, 0.0)
-	if _jump_buffered <= 0.0 or _coyote_left <= 0.0:
+	if _jump_buffered <= 0.0 or _coyote_left <= 0.0 or _beam_root > 0.4:
 		return
 	_jump_buffered = 0.0
 	_coyote_left = 0.0
@@ -5152,6 +6481,9 @@ func start_flying() -> void:
 func _update_crawler_flight(delta: float, grounded: bool) -> void:
 	if not CrawlerRules.active():
 		return
+	if CrawlerRules.sandbox_fast():
+		_flight_fuel = 1.0
+		return
 	if _stance == Stance.FLY:
 		var rate := 1.0 / maxf(crawler_flight_seconds(), 0.1)
 		if _steer_held(&"sprint") and _steer_vector().length_squared() > 0.0001:
@@ -5177,13 +6509,13 @@ func _update_flight_state(delta: float, grounded: bool) -> void:
 		if not can_fly():
 			_end_flight(CrawlerRules.active() and _flight_fuel <= 0.02)
 			return
-		if grounded or _steer_just(&"land"):
+		if grounded or (_steer_just(&"land") and _beam_root < 0.25):
 			_end_flight()
-		elif velocity.length() <= float_speed * 1.6 \
+		elif _beam_root < 0.25 and velocity.length() <= float_speed * 1.6 \
 				and test_move(global_transform, -_up() * land_clearance):
 			_end_flight()
 		return
-	if not can_fly():
+	if not can_fly() or _beam_root > 0.4:
 		return
 	var launched_from_swim := _stance == Stance.SWIM
 	if launched_from_swim:
@@ -6179,6 +7511,59 @@ func _clear_ability_lasso() -> void:
 	_ability_lasso_pending_left = 0.0
 
 
+func apply_construct_carry(motion: Vector3) -> void:
+	if not motion.is_finite():
+		return
+	velocity = motion
+	_flight_velocity = motion
+	if _stance == Stance.FLY:
+		_cruise = motion.length()
+
+
+func spawn_ability_field(id: String) -> bool:
+	if not can_attack() or not CrawlerRules.is_field_ability(id):
+		return false
+	if not _has_listeners() or multiplayer.is_server():
+		return _publish_ability_field(id)
+	_ability_field_request_sequence += 1
+	_request_ability_field.rpc_id(1, _ability_field_request_sequence, id)
+	return true
+
+
+func field_cast_origin() -> Vector3:
+	var up := _up().normalized()
+	var forward := look_direction()
+	forward -= up * forward.dot(up)
+	if forward.length_squared() < 0.001:
+		forward = -global_basis.z
+		forward -= up * forward.dot(up)
+	if forward.length_squared() < 0.001:
+		forward = Vector3.FORWARD
+	forward = forward.normalized()
+	return combat_position() + up * 0.12 + forward * 0.55
+
+
+func _publish_ability_field(id: String) -> bool:
+	if not can_attack() or not CrawlerRules.is_field_ability(id):
+		return false
+	var definition := ItemDB.ability_definition(id)
+	if definition == null:
+		return false
+	var stats := definition.stats.duplicate(true)
+	var overlay := crawler_ability_overlay(id)
+	for key: Variant in overlay:
+		stats[str(key)] = overlay[key]
+	if has_method(&"crawler_element_scale"):
+		stats["element"] = maxf(float(call(&"crawler_element_scale")), 0.0)
+	var at := field_cast_origin()
+	_host_ability_field_sequence += 1
+	if not _has_listeners():
+		_apply_ability_field(_host_ability_field_sequence, id, at, stats)
+	else:
+		_apply_ability_field.rpc(_host_ability_field_sequence, id, at, stats)
+	return true
+
+
 func place_ability_wall(id: String) -> int:
 	var definition := ItemDB.ability_definition(id)
 	if not can_attack() or definition == null \
@@ -6212,11 +7597,17 @@ func _publish_ability_wall(request_sequence: int, id: String) -> bool:
 			or definition.construct_type \
 				!= AbilityDefinition.ConstructType.BARRIER:
 		return false
-	var stats := definition.stats
+	var stats := definition.stats.duplicate(true)
+	var overlay := crawler_ability_overlay(id)
+	for key: Variant in overlay:
+		stats[str(key)] = overlay[key]
 	var size := Vector3(
 		maxf(float(stats.get("wall_width", 8.0)), 0.2),
 		maxf(float(stats.get("wall_height", 4.0)), 0.2),
 		maxf(float(stats.get("wall_thickness", 0.35)), 0.05))
+	var house := float(stats.get("house", 0.0)) > 0.0
+	var project_speed := maxf(float(stats.get("project", 0.0)), 0.0)
+	var firewall := maxf(float(stats.get("firewall", 0.0)), 0.0)
 	var up := _up().normalized()
 	var forward := look_direction()
 	forward -= up * forward.dot(up)
@@ -6226,37 +7617,49 @@ func _publish_ability_wall(request_sequence: int, id: String) -> bool:
 	forward = forward.normalized()
 	var right := forward.cross(up).normalized()
 	var basis := Basis(right, up, right.cross(up)).orthonormalized()
-	var at := Transform3D(
-		basis,
-		global_position
-			+ forward * maxf(float(stats.get("range", 4.0)), 1.0) \
-				* crawler_range_scale()
-			+ up * (size.y * 0.5 + 0.18))
-	if not _ability_wall_space_clear(at, size):
-		return false
+	var origin := global_position + up * (size.y * 0.5 + 0.18)
+	if house:
+		origin = global_position + up * (size.y * 0.5 - size.z * 0.5)
+	else:
+		origin += forward * maxf(float(stats.get("range", 4.0)), 1.0) \
+			* crawler_range_scale()
 	var world := DamageHit.game_world_of(self) as GameWorld
 	if world == null:
 		return false
-	var construct_id := world.allocate_ability_construct_id()
-	if construct_id <= 0:
-		return false
+	var extras := {
+		"ability_id": id,
+		"house": house,
+		"project_speed": project_speed,
+		"project_along": forward,
+		"firewall": firewall,
+	}
 	var variant := 2 if uses_float_pose() else 0
-	_host_ability_wall_sequence += 1
-	if not _has_listeners():
-		_apply_ability_wall(
-			_host_ability_wall_sequence, request_sequence, construct_id,
-			id, at, size,
-			maxf(float(stats.get("duration", 7.0)), 0.2),
-			maxf(float(stats.get("fade_duration", 4.0)), 0.0),
-			definition.tint, variant)
-	else:
-		_apply_ability_wall.rpc(
-			_host_ability_wall_sequence, request_sequence, construct_id,
-			id, at, size,
-			maxf(float(stats.get("duration", 7.0)), 0.2),
-			maxf(float(stats.get("fade_duration", 4.0)), 0.0),
-			definition.tint, variant)
-	return true
+	var duration := maxf(float(stats.get("duration", 7.0)), 0.2)
+	var fade := maxf(float(stats.get("fade_duration", 4.0)), 0.0)
+	var offsets := PackedFloat32Array([0.0])
+	if not house:
+		offsets = CrawlerMulti.wall_offsets(CrawlerMulti.shots(stats), size.x)
+	var placed := 0
+	for slide: float in offsets:
+		var at := Transform3D(basis, origin + right * slide)
+		if not house and not _ability_wall_space_clear(at, size):
+			if placed == 0:
+				return false
+			continue
+		var construct_id := world.allocate_ability_construct_id()
+		if construct_id <= 0:
+			return placed > 0
+		_host_ability_wall_sequence += 1
+		if not _has_listeners():
+			_apply_ability_wall(
+				_host_ability_wall_sequence, request_sequence, construct_id,
+				id, at, size, duration, fade, definition.tint, variant, extras)
+		else:
+			_apply_ability_wall.rpc(
+				_host_ability_wall_sequence, request_sequence, construct_id,
+				id, at, size, duration, fade, definition.tint, variant, extras)
+		placed += 1
+	return placed > 0
 
 
 func _ability_wall_space_clear(at: Transform3D,
@@ -6307,42 +7710,67 @@ func ability_delayed_blast_request_state(request_sequence: int) -> int:
 func _publish_ability_delayed_blast(request_sequence: int, id: String,
 		from: Vector3, along: Vector3) -> bool:
 	var definition := ItemDB.ability_definition(id)
+	var overlay := crawler_ability_overlay(id)
+	var far := CrawlerReach.far_cast(overlay)
 	if not can_attack() or definition == null \
 			or definition.projectile_type \
 				!= AbilityDefinition.ProjectileType.BEAM \
 			or definition.impact_type \
 				!= AbilityDefinition.ImpactType.DELAYED_BLAST \
 			or not from.is_finite() or not along.is_finite() \
-			or from.distance_to(combat_position()) > 5.0 \
+			or from.distance_to(combat_position()) > 5.0 + far + 1.0 \
 			or along.length_squared() < 0.001:
 		return false
 	var host_eyes := eye_points()
 	var host_from: Vector3 = (host_eyes[0] + host_eyes[1]) * 0.5
 	var host_along := aim_direction(host_from).normalized()
-	if host_along.dot(along.normalized()) < 0.35:
+	var used_along := along.normalized() \
+		if along.length_squared() > 0.001 else host_along
+	if host_along.dot(used_along) < 0.35:
 		return false
-	var reach := maxf(float(definition.stats.get("range", 14.0)), 1.0) \
+	host_from = CrawlerReach.shift(host_from, used_along, overlay)
+	var reach := maxf(float(overlay.get("range", definition.stats.get("range", 14.0))), 1.0) \
 		* crawler_range_scale()
-	var target := host_from + host_along * reach
-	var hit := LaserEyes.terrain_surface(self, host_from, target)
-	if hit.is_empty():
-		return false
-	var at: Vector3 = hit["position"]
-	var normal: Vector3 = hit["normal"]
-	if not at.is_finite() or not normal.is_finite():
-		return false
+	var warning := maxf(float(overlay.get("delay", definition.stats.get("delay", 1.0))), 0.1)
 	var variant := 2 if uses_float_pose() else 0
-	_host_delayed_blast_sequence += 1
-	var warning := maxf(float(definition.stats.get("delay", 1.0)), 0.1)
-	if not _has_listeners():
-		_apply_ability_delayed_blast(
-			_host_delayed_blast_sequence, request_sequence, id,
-			host_from, at, normal, warning, variant)
-	else:
-		_apply_ability_delayed_blast.rpc(
-			_host_delayed_blast_sequence, request_sequence, id,
-			host_from, at, normal, warning, variant)
-	return true
+	var cursor := host_from
+	var dir := used_along
+	var left := reach
+	var remaining := CrawlerBounce.count(overlay)
+	var painted := 0
+	while left > 0.02:
+		var any := LaserEyes._surface(self, cursor, cursor + dir * left)
+		if any.is_empty():
+			break
+		var at: Vector3 = any.get("position", cursor)
+		var normal: Vector3 = any.get("normal", -dir)
+		if not at.is_finite() or not normal.is_finite():
+			break
+		var span := cursor.distance_to(at)
+		left -= maxf(span, 0.02)
+		if LaserEyes.is_planet_hit(self, any):
+			_host_delayed_blast_sequence += 1
+			var fuse := warning + float(painted) * 0.06
+			if not _has_listeners():
+				_apply_ability_delayed_blast(
+					_host_delayed_blast_sequence, request_sequence, id,
+					host_from, at, normal, fuse, variant, overlay)
+			else:
+				_apply_ability_delayed_blast.rpc(
+					_host_delayed_blast_sequence, request_sequence, id,
+					host_from, at, normal, fuse, variant, overlay)
+			painted += 1
+		if remaining <= 0:
+			break
+		var outgoing := CrawlerBounce.reflect(dir, normal)
+		if outgoing.length_squared() < 0.000001:
+			break
+		cursor = CrawlerBounce.nudge(at, normal, outgoing)
+		dir = outgoing
+		if CrawlerHoming.enabled(overlay):
+			dir = CrawlerHoming.aim(cursor, dir, overlay, self)
+		remaining -= 1
+	return painted > 0
 
 
 func _ability_grapple_move(delta: float) -> void:
@@ -6418,11 +7846,8 @@ func _land_ability_grapple() -> void:
 
 ## Throws the body forward, fist first. Returns whether the punch started.
 ##
-## The direction is taken once and kept. A punch that steered would be a second
-## flight mode with a strange animation; what makes this read as a strike is
-## that it commits, and that the player has to have aimed it before they threw
-## it. [param stats] is the ability's catalogue entry, so the reach and the top
-## speed shown in the menu are the ones the body actually uses.
+## The direction is taken once and kept, unless Homing is seated, in which
+## case the fist locks onto a nearby mob and turns toward them.
 func begin_meteor_punch(stats: Dictionary) -> bool:
 	if not can_attack() or _stance == Stance.METEOR or _stance == Stance.HERO:
 		return false
@@ -6430,6 +7855,11 @@ func begin_meteor_punch(stats: Dictionary) -> bool:
 	_meteor_along = look_direction()
 	if _meteor_along.length_squared() < 0.5:
 		return false
+	_meteor_lock = CrawlerHoming.lock(
+		self, global_position, _meteor_along, stats)
+	if _meteor_lock != null:
+		_meteor_along = CrawlerHoming.aim(
+			global_position, _meteor_along, stats, self)
 	_meteor_range = maxf(float(stats.get("range", 50.0)), 1.0) \
 		* crawler_range_scale()
 	# Whatever they already had, or a shove if they were standing still. Taking
@@ -6493,6 +7923,15 @@ func _meteor_move(delta: float) -> void:
 	if _meteor_falling:
 		velocity += -_up() * _gravity() * delta
 	else:
+		if CrawlerHoming.enabled(_meteor_stats):
+			if not CrawlerHoming.is_live(_meteor_lock):
+				_meteor_lock = CrawlerHoming.lock(
+					self, global_position, _meteor_along, _meteor_stats)
+			if _meteor_lock != null:
+				_meteor_along = CrawlerHoming.turn(
+					_meteor_along,
+					CrawlerHoming.combat_at(_meteor_lock) - global_position,
+					_meteor_stats, delta)
 		_meteor_speed = move_toward(_meteor_speed, _meteor_top_speed,
 			METEOR_ACCELERATION * delta)
 		velocity = _meteor_along * _meteor_speed
@@ -6558,14 +7997,18 @@ func _sweep_fist(delta: float) -> void:
 		return
 	_meteor_since_sweep -= METEOR_DAMAGE_STEP
 	var fist := fist_point()
-	var hit := DamageHit.beam(_meteor_fist, fist,
-		float(_meteor_stats.get("radius", METEOR_FIST_RADIUS)),
-		float(_meteor_stats.get("damage", 0.0)) * METEOR_TICK_SHARE)
-	hit.ability_id = "meteor_punch"
 	var knockback := _meteor_knockback()
-	if knockback > 0.0:
-		hit.world_impulse = _meteor_along * knockback * METEOR_TICK_SHARE
-	deal_damage(hit)
+	for slide: float in CrawlerMulti.punch_offsets(CrawlerMulti.shots(_meteor_stats)):
+		var from := _meteor_fist + _meteor_along * slide
+		var to := fist + _meteor_along * slide
+		var hit := DamageHit.beam(from, to,
+			float(_meteor_stats.get("radius", METEOR_FIST_RADIUS)),
+			float(_meteor_stats.get("damage", 0.0)) * METEOR_TICK_SHARE)
+		hit.ability_id = "meteor_punch"
+		if knockback > 0.0:
+			hit.world_impulse = _meteor_along * knockback * METEOR_TICK_SHARE
+		CrawlerElements.stamp(hit, self, "meteor_punch", _meteor_stats)
+		deal_damage(hit)
 	_meteor_fist = fist
 
 
@@ -6712,13 +8155,21 @@ func _land_meteor_on_building(contact: Dictionary, arrival: float) -> void:
 		normal = -_meteor_along
 	normal = normal.normalized()
 	var force := _impact_scale(arrival)
-	var blow := DamageHit.impact(at,
-		maxf(float(_meteor_stats.get("radius", METEOR_FIST_RADIUS)) * 1.6, 2.4),
-		float(_meteor_stats.get("impact", 0.0)) * force)
-	blow.ability_id = "meteor_punch"
-	blow.affects_flora = false
-	_apply_meteor_knockback(blow, force)
-	deal_damage(blow)
+	var reach := maxf(float(_meteor_stats.get("radius", METEOR_FIST_RADIUS)) * 1.6, 2.4)
+	for slide: float in CrawlerMulti.punch_offsets(CrawlerMulti.shots(_meteor_stats)):
+		var blow_at := at + _meteor_along * slide
+		var blow := DamageHit.impact(blow_at, reach,
+			float(_meteor_stats.get("impact", 0.0)) * force)
+		blow.ability_id = "meteor_punch"
+		blow.affects_flora = false
+		blow.explosive = true
+		_apply_meteor_knockback(blow, force)
+		CrawlerElements.stamp(blow, self, "meteor_punch", _meteor_stats)
+		deal_damage(blow)
+		CrawlerBubbles.emit_blast(self, "meteor_punch", blow_at, reach)
+		CrawlerLingers.emit_blast(self, "meteor_punch", blow_at, reach)
+		if slide > 0.001:
+			play_meteor_impact_dust(blow_at, normal, METEOR_FIST_RADIUS * force, force)
 	play_meteor_impact_dust(at, normal, METEOR_FIST_RADIUS * force, force)
 	global_position = at + normal * 0.65
 	_swept_from = global_position
@@ -6750,23 +8201,33 @@ func _land_meteor(at: Vector3, struck: bool, arrival: float) -> void:
 	var crater_depth := maxf(
 		float(_meteor_stats.get("crater_depth", METEOR_CRATER_DEPTH)), 0.1)
 	var spread := METEOR_SPREAD * maxf(float(_meteor_stats.get("size", 1.0)), 1.0)
-	var blow := DamageHit.area(at, spread * force,
-		float(_meteor_stats.get("impact", 0.0)) * force, 1.0)
-	blow.ability_id = "meteor_punch"
-	_apply_meteor_knockback(blow, force)
-	# Flora gets the smaller categorical crater volume below. Offering this
-	# wider actor spread to it first both left a tapered rim and paid for the
-	# densest part of the jungle twice on the landing frame.
-	blow.affects_flora = false
-	deal_damage(blow)
+	var world_planet := _planet_below()
+	var impact_up := world_planet.up_at(at) if world_planet != null else _up()
+	var copies := CrawlerMulti.shots(_meteor_stats)
+	for slide: float in CrawlerMulti.punch_offsets(copies):
+		var blow_at := at + _meteor_along * slide
+		var blow := DamageHit.area(blow_at, spread * force,
+			float(_meteor_stats.get("impact", 0.0)) * force, 1.0)
+		blow.ability_id = "meteor_punch"
+		blow.explosive = true
+		_apply_meteor_knockback(blow, force)
+		# Flora gets the smaller categorical crater volume below. Offering this
+		# wider actor spread to it first both left a tapered rim and paid for the
+		# densest part of the jungle twice on the landing frame.
+		blow.affects_flora = false
+		CrawlerElements.stamp(blow, self, "meteor_punch", _meteor_stats)
+		deal_damage(blow)
+		CrawlerBubbles.emit_blast(self, "meteor_punch", blow_at, spread * force)
+		CrawlerLingers.emit_blast(self, "meteor_punch", blow_at, spread * force)
+		if slide > 0.001:
+			play_meteor_impact_dust(
+				blow_at, impact_up, crater_radius * force, force)
 
 	# Measured before the hole is cut, so that whenever it does turn up — this
 	# frame on a host, a round trip later on a client — there is something to
 	# recognise it against.
 	_await_crater()
 
-	var world_planet := _planet_below()
-	var impact_up := world_planet.up_at(at) if world_planet != null else _up()
 	play_meteor_impact_dust(
 		at, impact_up, crater_radius * force, force)
 	if world_planet != null:
@@ -6894,6 +8355,16 @@ func _field_radius_here() -> float:
 
 ## Where either animated hand is in the world. Starfire alternates these, while
 ## Meteor Punch keeps the right-hand convenience wrapper below.
+func hand_points() -> Array[Vector3]:
+	return [hand_point(true), hand_point(false)]
+
+
+## Midpoint of both palms. Kame's beam and the nuke cores leave from here.
+func merged_hand_point() -> Vector3:
+	var hands := hand_points()
+	return (hands[0] + hands[1]) * 0.5
+
+
 func hand_point(left := false) -> Vector3:
 	var skeleton := Wardrobe.skeleton_of(character) if character != null else null
 	if skeleton != null:
@@ -7007,8 +8478,10 @@ func _fly_move(delta: float) -> void:
 	var wish := camera.global_basis * Vector3(input.x, 0.0, input.y)
 	if not _steer_held(&"jump"):
 		_flight_jump_latched = false
-	if _steer_held(&"jump") and not _flight_jump_latched:
+	if _steer_held(&"jump") and not _flight_jump_latched and _beam_root < 0.4:
 		wish += _up()
+	if _beam_root > 0.001:
+		wish *= 1.0 - _beam_root
 	var steering := wish.length_squared() > 0.0001
 
 	# Level or on the way down the hover runs at its full pace; the more of the
@@ -7414,6 +8887,7 @@ func _apply_stance(next: int) -> void:
 	var capsule := collider.shape as CapsuleShape3D
 	var height := _stance_height(_stance)
 	capsule.height = height
+	capsule.radius = _base_capsule_radius * overdrive_size_scale()
 	collider.position.y = height * 0.5
 	# HERO is always an impact pose: steep flight and Meteor both enter it once.
 	# Driving the pop from the transition makes remote players see it from the
@@ -7425,11 +8899,13 @@ func _apply_stance(next: int) -> void:
 ## Stance heights scale with the body's authored height so a 1.6 m settler does
 ## not crouch inside a 1.45 m capsule.
 func _stance_height(stance: int) -> float:
-	return COLLIDER_HEIGHTS[stance] * (_body_height / COLLIDER_HEIGHTS[Stance.STAND])
+	return COLLIDER_HEIGHTS[stance] * (_body_height / COLLIDER_HEIGHTS[Stance.STAND]) \
+		* overdrive_size_scale()
 
 
 func _stance_eye(stance: int) -> float:
-	return EYE_HEIGHTS[stance] * (_body_eye / EYE_HEIGHTS[Stance.STAND])
+	return EYE_HEIGHTS[stance] * (_body_eye / EYE_HEIGHTS[Stance.STAND]) \
+		* overdrive_size_scale()
 
 
 # --- Camera and presentation ------------------------------------------------
@@ -7774,7 +9250,8 @@ func _update_meteor_shock() -> void:
 		return
 	var speed := velocity.length()
 	var along := velocity / speed if speed > 0.01 else _meteor_along
-	meteor_shock().aim(fist_point(), along, speed)
+	meteor_shock().aim(
+		fist_point(), along, speed, CrawlerMulti.shots(_meteor_stats))
 
 
 func _update_animation(delta: float) -> void:
@@ -7982,6 +9459,8 @@ func _update_hud(delta: float) -> void:
 		_combat_hud.refresh(delta)
 	if CrawlerRules.active() and not training_enemy and not _dead:
 		CrawlerSites.poll(self)
+		if in_crawler_city() and journal != null:
+			journal.note_city()
 	if _weapon_bar != null:
 		var cell := ItemDB.cell_size(_held)
 		_weapon_bar.show_cell("cell  %d / %d" % [_charge(), cell] if cell > 0 else "")
@@ -7994,13 +9473,17 @@ func _update_hud(delta: float) -> void:
 			var overlay := _find_land_patches()
 			var patch_id := _aimed_patch_id()
 			if overlay != null and patch_id >= 0 \
-					and patch_id < overlay.partition.patches.size():
+					and patch_id < overlay.partition.patches.size() \
+					and not CrawlerRules.active():
 				var patch := overlay.partition.patches[patch_id]
 				prompt_plate.visible = true
 				interact_prompt.text = "E    Generate %s    Q    Yards" % patch.name
 				if overlay.has_baked_city(patch_id):
 					interact_prompt.text += "    J    Place baked"
 				interact_prompt.text += "    K    Place all    T    Enemy creator"
+			elif CrawlerRules.duel_active():
+				prompt_plate.visible = true
+				interact_prompt.text = "E    End Duel"
 			elif _waypoints_wanted and not CrawlerRules.active():
 				prompt_plate.visible = true
 				interact_prompt.text = "K    Place all baked    T    Enemy creator"
@@ -8182,13 +9665,18 @@ func _apply_ability_beam(event_sequence: int, id: String,
 	if event_sequence <= _last_beam_sequence:
 		return
 	_last_beam_sequence = event_sequence
-	if id != "laser_eyes" or not ItemDB.accepts_ability(id) \
+	if not _is_replicated_beam(id) or not ItemDB.accepts_ability(id) \
 			or not left_eye.is_finite() \
 			or not right_eye.is_finite() or not at.is_finite():
 		return
-	LaserEyes.apply_effect(
-		self, id, left_eye, right_eye, at, landed, radius, beam_width,
-		wobble, pulse)
+	if id == "lightning":
+		Lightning.apply_effect(
+			self, id, left_eye, right_eye, at, landed, radius, beam_width,
+			wobble, pulse)
+	else:
+		LaserEyes.apply_effect(
+			self, id, left_eye, right_eye, at, landed, radius, beam_width,
+			wobble, pulse)
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -8238,6 +9726,26 @@ func _apply_ability_projectile(event_sequence: int, request_sequence: int,
 			and request_sequence == _projectile_result_sequence:
 		_projectile_result = ProjectileRequestState.ACCEPTED \
 			if spawned else ProjectileRequestState.REJECTED
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_hat_missiles(
+		from: Vector3, toward: Vector3, count: int, damage: float,
+		reach: float
+	) -> void:
+	if not from.is_finite() or not toward.is_finite() \
+			or toward.length_squared() < 0.0001 \
+			or count <= 0 or damage <= 0.0 or reach <= 0.0:
+		return
+	_spawn_hat_missiles(
+		from, toward, clampi(count, 1, 24), damage, reach)
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_hat_mine(at: Vector3, damage: float, reach: float) -> void:
+	if not at.is_finite() or damage <= 0.0 or reach <= 0.0:
+		return
+	_spawn_hat_mine(at, damage, reach)
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -8340,6 +9848,41 @@ func _apply_ability_lasso_motion(sequence: int, target_path: String,
 
 
 @rpc("any_peer", "call_remote", "reliable")
+func _request_ability_field(request_sequence: int, id: String) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != peer_id \
+			or request_sequence <= _last_ability_field_request_sequence:
+		return
+	_last_ability_field_request_sequence = request_sequence
+	_publish_ability_field(id)
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_ability_field(event_sequence: int, id: String, at: Vector3,
+		stats: Dictionary) -> void:
+	if event_sequence <= _last_ability_field_sequence or not at.is_finite() \
+			or not CrawlerRules.is_field_ability(id):
+		return
+	var definition := ItemDB.ability_definition(id)
+	if definition == null:
+		return
+	_last_ability_field_sequence = event_sequence
+	var world: Node = DamageHit.game_world_of(self)
+	if world == null:
+		world = get_parent()
+	if world == null:
+		return
+	var owns := not multiplayer.has_multiplayer_peer() or multiplayer.is_server()
+	CrawlerFieldVolume.create(
+		world, self, id, at, stats, definition.tint, owns)
+	play_ability_animation(
+		definition.animation,
+		float(stats.get("animation_duration", CrawlerRules.FIELD_ANIMATION)))
+
+
+@rpc("any_peer", "call_remote", "reliable")
 func _request_ability_wall(request_sequence: int, id: String) -> void:
 	if not multiplayer.is_server():
 		return
@@ -8362,7 +9905,7 @@ func _reject_ability_wall(request_sequence: int) -> void:
 func _apply_ability_wall(event_sequence: int, request_sequence: int,
 		construct_id: int, id: String, at: Transform3D, size: Vector3,
 		duration: float, fade_duration: float, tint: Color,
-		variant: int) -> void:
+		variant: int, extras: Dictionary = {}) -> void:
 	if event_sequence <= _last_ability_wall_sequence or construct_id <= 0 \
 			or not at.is_finite() or not size.is_finite() \
 			or not is_finite(duration) or not is_finite(fade_duration):
@@ -8378,7 +9921,15 @@ func _apply_ability_wall(event_sequence: int, request_sequence: int,
 	world.spawn_ability_barrier_local(
 		construct_id, peer_id, at, size,
 		clampf(duration, 0.2, 30.0),
-		clampf(fade_duration, 0.0, clampf(duration, 0.2, 30.0)), tint)
+		clampf(fade_duration, 0.0, clampf(duration, 0.2, 30.0)), tint,
+		0.52, extras)
+	if bool(extras.get("house", false)) \
+			and float(extras.get("project_speed", 0.0)) > 0.001:
+		var along: Variant = extras.get("project_along", Vector3.ZERO)
+		if along is Vector3 and (along as Vector3).is_finite():
+			apply_construct_carry(
+				(along as Vector3).normalized()
+				* float(extras.get("project_speed", 0.0)))
 	var clip := definition.hover_animation \
 		if (variant & 2) != 0 and not definition.hover_animation.is_empty() \
 		else definition.animation
@@ -8387,6 +9938,74 @@ func _apply_ability_wall(event_sequence: int, request_sequence: int,
 	if peer_id == multiplayer.get_unique_id() \
 			and request_sequence == _ability_wall_result_sequence:
 		_ability_wall_result = ProjectileRequestState.ACCEPTED
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _request_hero_punch(id: String, variant: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != peer_id:
+		return
+	_publish_hero_punch(id, variant, crawler_ability_overlay(id))
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_hero_punch(event_sequence: int, id: String, variant: int,
+		overlay: Dictionary = {}) -> void:
+	if event_sequence <= _last_hero_punch_sequence:
+		return
+	var definition := ItemDB.ability_definition(id)
+	if definition == null:
+		return
+	_last_hero_punch_sequence = event_sequence
+	var from_left := (variant & 1) != 0
+	var from_hover := (variant & 2) != 0
+	var clip := definition.animation
+	if from_hover and from_left \
+			and not definition.alternate_hover_animation.is_empty():
+		clip = definition.alternate_hover_animation
+	elif from_hover and not definition.hover_animation.is_empty():
+		clip = definition.hover_animation
+	elif from_left and not definition.alternate_animation.is_empty():
+		clip = definition.alternate_animation
+	play_ability_animation(clip,
+		float(overlay.get("animation_duration",
+			definition.stats.get("animation_duration", 0.32))))
+	if not _is_host_authority():
+		return
+	var stats := definition.stats.duplicate(true)
+	stats.merge(overlay, true)
+	var from := hand_point(from_left)
+	var along := aim_direction(from)
+	if along.length_squared() < 0.001:
+		along = -global_basis.z
+	along = along.normalized()
+	var reach := maxf(float(stats.get("range", 3.5)), 0.5) * crawler_range_scale()
+	var radius := maxf(float(stats.get("radius", 1.15)), 0.2)
+	var damage := maxf(float(stats.get("damage", 0.0)), 0.0)
+	if CrawlerRules.active():
+		damage *= crawler_damage_scale()
+	var knockback := maxf(float(stats.get("knockback", 0.0)), 0.0)
+	if CrawlerRules.active():
+		knockback *= crawler_knockback_scale()
+	var prey := CrawlerHoming.lock(self, from, along, stats)
+	if prey != null:
+		along = CrawlerHoming.aim(from, along, stats, self)
+	var at := from + along * minf(reach, maxf(radius + 0.35, 0.8))
+	if prey != null:
+		var dest := CrawlerHoming.combat_at(prey)
+		if from.distance_to(dest) <= reach + radius:
+			at = dest
+	for slide: float in CrawlerMulti.punch_offsets(CrawlerMulti.shots(stats)):
+		var hit := DamageHit.impact(at + along * slide, radius, damage)
+		hit.ability_id = id
+		if knockback > 0.0:
+			hit.world_impulse = along * knockback
+		CrawlerElements.stamp(hit, self, id, stats)
+		deal_damage(hit)
+	CrawlerBubbles.emit_blast(self, id, at, maxf(radius, 0.8))
+	CrawlerLingers.emit_blast(self, id, at, maxf(radius, 0.8))
 
 
 @rpc("any_peer", "call_remote", "reliable")
@@ -8410,11 +10029,38 @@ func _reject_ability_delayed_blast(request_sequence: int) -> void:
 		_delayed_blast_result = ProjectileRequestState.REJECTED
 
 
+func publish_impact_cast(guest_id: String, from: Vector3, along: Vector3,
+		overlay: Dictionary = {}) -> void:
+	if not _is_host_authority():
+		return
+	if guest_id.is_empty() or not from.is_finite() or not along.is_finite() \
+			or along.length_squared() < 0.000001:
+		return
+	_host_impact_cast_sequence += 1
+	if _has_listeners():
+		_apply_impact_cast.rpc(
+			_host_impact_cast_sequence, guest_id, from, along, overlay)
+	else:
+		_apply_impact_cast(
+			_host_impact_cast_sequence, guest_id, from, along, overlay)
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_impact_cast(event_sequence: int, guest_id: String,
+		from: Vector3, along: Vector3, overlay: Dictionary = {}) -> void:
+	if event_sequence <= _last_impact_cast_sequence \
+			or not from.is_finite() or not along.is_finite() \
+			or along.length_squared() < 0.000001:
+		return
+	_last_impact_cast_sequence = event_sequence
+	CrawlerImpactCast.play(self, guest_id, from, along, overlay)
+
+
 @rpc("authority", "call_local", "reliable")
 func _apply_ability_delayed_blast(event_sequence: int,
 		request_sequence: int, id: String, from: Vector3,
 		at: Vector3, normal: Vector3, warning: float,
-		variant: int) -> void:
+		variant: int, overlay: Dictionary = {}) -> void:
 	if event_sequence <= _last_delayed_blast_sequence \
 			or not from.is_finite() or not at.is_finite() \
 			or not normal.is_finite() or not is_finite(warning):
@@ -8428,10 +10074,17 @@ func _apply_ability_delayed_blast(event_sequence: int,
 	if world == null:
 		return
 	var eyes := eye_points()
-	laser_beams().aim(eyes[0], eyes[1], at, definition.tint)
+	var mid: Vector3 = (eyes[0] + eyes[1]) * 0.5
+	var along := at - mid
+	eyes = CrawlerReach.shift_pair(eyes[0], eyes[1], along, overlay)
+	var width := maxf(float(overlay.get("beam_width", 1.0)), 0.35)
+	var wobble := maxf(float(overlay.get("wobble", 0.0)), 0.0)
+	laser_beams().aim(
+		eyes[0], eyes[1], at, definition.tint, width, wobble,
+		LaserBeams.FOLLOW_EYES, CrawlerReach.far_cast(overlay))
 	AbilityDelayedBlast.create(
 		world, self, definition, from, at, normal,
-		clampf(warning, 0.1, 5.0), _is_host_authority())
+		clampf(warning, 0.1, 5.0), _is_host_authority(), overlay)
 	var clip := definition.hover_animation \
 		if (variant & 2) != 0 and not definition.hover_animation.is_empty() \
 		else definition.animation
@@ -8572,6 +10225,7 @@ func _apply_juke_state(event_sequence: int, along: Vector3,
 	_juke_left = clampf(duration, 0.01, 1.0)
 	_juke_cooldown_left = clampf(cooldown, _juke_left, 5.0)
 	_juke_ghost_acc = 0.0
+	_juke_struck.clear()
 	_spawn_juke_afterimage()
 
 
@@ -8619,6 +10273,9 @@ func _apply_outgoing_feedback(event_sequence: int,
 	if peer_id != multiplayer.get_unique_id() or _combat_feedback == null:
 		return
 	var event := DamageNumberEvent.from_wire(wire)
+	if event.kind != DamageNumberEvent.Kind.DAMAGE:
+		_combat_feedback.world_float(event)
+		return
 	_combat_feedback.outgoing_damage(
 		event.amount, event.world_position, event.target_peer, event.critical,
 		event.structure, event.merge_key, event.killed)
@@ -8676,6 +10333,18 @@ func _sender_owns_this_player() -> bool:
 	return sender == 0 or sender == peer_id
 
 
+@rpc("authority", "call_remote", "reliable")
+func _apply_warp(at_transform: Transform3D, carried := Vector3.ZERO) -> void:
+	if not at_transform.origin.is_finite():
+		return
+	velocity = carried if carried.is_finite() else Vector3.ZERO
+	if _stance == Stance.FLY:
+		_flight_velocity = velocity
+	global_transform = at_transform
+	reset_physics_interpolation()
+	reset_network_state(at_transform)
+
+
 @rpc("authority", "call_remote", "unreliable_ordered")
 func _apply_state(next_transform: Transform3D, next_velocity: Vector3, look_pitch: float, stance: int) -> void:
 	var local_owner := peer_id == multiplayer.get_unique_id()
@@ -8701,3 +10370,16 @@ func _apply_state(next_transform: Transform3D, next_velocity: Vector3, look_pitc
 	_target_pitch = clampf(look_pitch, -1.48, 1.48)
 	_extrapolated = 0.0
 	_apply_stance(next_stance)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _sync_overdrive(left: float, boost: float, body_scale: float) -> void:
+	_overdrive_left = maxf(left, 0.0)
+	_overdrive_boost = maxf(boost, 0.0)
+	_overdrive_body_scale = body_scale if _overdrive_left > 0.0 else 1.0
+	if _overdrive_left <= 0.0:
+		_overdrive_card_uid = ""
+		_overdrive_mods.clear()
+	_apply_overdrive_visual()
+	if peer_id == multiplayer.get_unique_id():
+		_refresh_crawler_ability_stats()

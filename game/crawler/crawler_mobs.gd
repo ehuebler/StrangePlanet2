@@ -7,9 +7,11 @@ extends RefCounted
 ## A patch calls the kinds whose [code]patches[/code] token matches it.
 ## [code]*[/code] is the fallback roster for unnamed tiles.
 ## [code]Tide Margin 4:near[/code] / [code]:far[/code] split the start pad.
+## Demon tokens pin Gloam, Vesper, and Threnody to the castle and office
+## tiles; a token also covers a named child such as [code]Long Shore 4 Keep[/code].
 
 const PATH := "res://assets/runtime/crawler/mobs.csv"
-const FIELD_ORDER: PackedStringArray = ["ranger", "rammer", "rhino", "rift_hulk"]
+const FIELD_ORDER: PackedStringArray = ["ranger", "rammer", "rhino", "rift_hulk", "gloam", "vesper", "threnody", "gruk", "nix", "vex"]
 
 static var _rows: Array[Dictionary] = []
 static var _by_key: Dictionary = {}
@@ -92,7 +94,8 @@ static func kinds_for(patch_name: String, from_start := -1.0) -> PackedStringArr
 		if called.has(kind):
 			out.append(kind)
 	for kind: String in FIELD_ORDER:
-		if kind == "rift_hulk" or not called.has(kind) or out.has(kind):
+		if kind == "rift_hulk" or CrawlerRules.is_goblin_kind(kind) \
+				or not called.has(kind) or out.has(kind):
 			continue
 		out.append(kind)
 	return out
@@ -118,7 +121,7 @@ static func _kind_called_by(kind: String, patch: String, band: String) -> bool:
 				continue
 			var bits := token.split(":")
 			var name := bits[0]
-			if name != patch:
+			if name != patch and not patch.begins_with(name + " "):
 				continue
 			named = true
 			var need := bits[1] if bits.size() > 1 else "any"

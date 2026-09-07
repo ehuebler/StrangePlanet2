@@ -86,12 +86,54 @@ func start_single_player(game_mode := "story", duels_mode := "") -> void:
 		"duels_mode": (
 			sanitize_duels_mode(duels_mode) if selected_mode == "duels" else ""),
 	}
-	if selected_mode == "crawler":
+	if CrawlerRules.uses_mode(selected_mode):
 		CrawlerKit.clear_session()
 		CrawlerProgress.clear_session()
+		CrawlerRules.clear_sandbox_cheats()
+		CrawlerRules.apply_sandbox_defaults()
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	players[1] = _sanitize_player_metadata(_local_look_metadata(1))
 	_set_status(SessionState.STARTING, "Starting single-player game...")
+	_open_world()
+
+
+func start_saved_game(payload: Dictionary) -> void:
+	if payload.is_empty():
+		return
+	_reset_session(false)
+	is_single_player = true
+	is_host = true
+	local_player_name = saved_player_name()
+	var session: Dictionary = {}
+	var held: Variant = payload.get("session", {})
+	if held is Dictionary:
+		session = held
+	var selected_mode := sanitize_game_mode(str(session.get("mode", "crawler")))
+	session_options = {
+		"name": "Single Player",
+		"max_players": 1,
+		"port": 0,
+		"mode": selected_mode,
+		"duels_mode": (
+			sanitize_duels_mode(str(session.get("duels_mode", "")))
+			if selected_mode == "duels" else ""),
+	}
+	for key: String in [
+		"crawler_cities",
+		CrawlerRules.CHEAT_MOBS,
+		CrawlerRules.CHEAT_INVINCIBLE,
+		CrawlerRules.CHEAT_FAST,
+		CrawlerRules.CHEAT_GOLD,
+	]:
+		if session.has(key):
+			session_options[key] = session[key]
+	GameSave.apply_run_payloads(payload)
+	GameSave.queue_pending(payload)
+	if CrawlerRules.uses_mode(selected_mode):
+		CrawlerRules.apply_sandbox_defaults()
+	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+	players[1] = _sanitize_player_metadata(_local_look_metadata(1))
+	_set_status(SessionState.STARTING, "Loading saved game...")
 	_open_world()
 
 
@@ -109,13 +151,13 @@ func host_game(options: Dictionary) -> void:
 	session_options["name"] = _clean_lobby_name(str(options.get("name", "%s's game" % local_player_name)))
 	session_options["visibility"] = str(options.get("visibility", "public"))
 	session_options["code"] = str(options.get("code", "")).strip_edges()
-	session_options["mode"] = sanitize_game_mode(str(options.get("mode", "story")))
-	session_options["duels_mode"] = (
-		sanitize_duels_mode(str(options.get("duels_mode", "battle")))
-		if session_options["mode"] == "duels" else "")
-	if session_options["mode"] == "crawler":
+	session_options["mode"] = "crawler"
+	session_options["duels_mode"] = ""
+	if CrawlerRules.uses_mode(str(session_options["mode"])):
 		CrawlerKit.clear_session()
 		CrawlerProgress.clear_session()
+		CrawlerRules.clear_sandbox_cheats()
+		CrawlerRules.apply_sandbox_defaults()
 	if not TextModerationScript.is_allowed(local_player_name) or not TextModerationScript.is_allowed(session_options["name"]):
 		_fail("Player and lobby names must use appropriate language.")
 		return
@@ -199,6 +241,25 @@ func start_hosted_game() -> void:
 	_begin_network_game.rpc()
 
 
+func start_hosted_game_from_save() -> void:
+	if not is_host or state != SessionState.LOBBY:
+		return
+	var payload := GameSave.read()
+	if payload.is_empty():
+		start_hosted_game()
+		return
+	SteamLobby.set_joinable(false)
+	_begin_network_game_from_save.rpc(payload)
+
+
+@rpc("authority", "call_local", "reliable")
+func _begin_network_game_from_save(payload: Dictionary) -> void:
+	if not payload.is_empty():
+		GameSave.apply_run_payloads(payload)
+		GameSave.queue_pending(payload)
+	_open_world()
+
+
 func kick_player(peer_id: int) -> void:
 	if not is_host or peer_id <= 1 or not players.has(peer_id):
 		return
@@ -279,13 +340,13 @@ func _host_enet_test(options: Dictionary) -> void:
 	session_options["max_players"] = max_players
 	session_options["name"] = _clean_lobby_name(str(
 		options.get("name", "Local Test Server")))
-	session_options["mode"] = sanitize_game_mode(str(options.get("mode", "story")))
-	session_options["duels_mode"] = (
-		sanitize_duels_mode(str(options.get("duels_mode", "battle")))
-		if session_options["mode"] == "duels" else "")
-	if session_options["mode"] == "crawler":
+	session_options["mode"] = "crawler"
+	session_options["duels_mode"] = ""
+	if CrawlerRules.uses_mode(str(session_options["mode"])):
 		CrawlerKit.clear_session()
 		CrawlerProgress.clear_session()
+		CrawlerRules.clear_sandbox_cheats()
+		CrawlerRules.apply_sandbox_defaults()
 
 	_enet_peer = ENetMultiplayerPeer.new()
 	var error := _enet_peer.create_server(port, max_players)
@@ -591,7 +652,7 @@ func _lobby_metadata() -> Dictionary:
 ## deliberately absent: clients prove they know it while registering and never
 ## receive the host's copy back.
 func _shared_session_options() -> Dictionary:
-	return {
+	var payload := {
 		"name": str(session_options.get("name", "Game")),
 		"map": str(session_options.get("map", "world")),
 		"mode": str(session_options.get("mode", "story")),
@@ -600,6 +661,16 @@ func _shared_session_options() -> Dictionary:
 		"visibility": str(session_options.get("visibility", "public")),
 		"crawler_cities": session_options.get("crawler_cities", []),
 	}
+	if str(payload["mode"]) == CrawlerRules.SANDBOX_ID:
+		payload[CrawlerRules.CHEAT_MOBS] = bool(session_options.get(
+			CrawlerRules.CHEAT_MOBS, false))
+		payload[CrawlerRules.CHEAT_INVINCIBLE] = bool(session_options.get(
+			CrawlerRules.CHEAT_INVINCIBLE, true))
+		payload[CrawlerRules.CHEAT_FAST] = bool(session_options.get(
+			CrawlerRules.CHEAT_FAST, true))
+		payload[CrawlerRules.CHEAT_GOLD] = bool(session_options.get(
+			CrawlerRules.CHEAT_GOLD, false))
+	return payload
 
 
 func sanitize_game_mode(value: String) -> String:

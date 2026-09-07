@@ -74,6 +74,10 @@ const BODIES := {
 		"apparel": [
 			"c3_hair",
 			"crawler_gale_hat", "crawler_ward_hat", "crawler_luck_hat",
+			"crawler_kit_hat", "crawler_missile_hat", "crawler_mine_hat",
+			"crawler_vampire_hat", "crawler_phase_hat", "crawler_ordinance_hat",
+			"crawler_rubber_hat", "crawler_learned_hat", "crawler_juke_hat",
+			"crawler_plain_cape", "crawler_fool_cape",
 			"c3_party_hat", "c3_bunny_ears", "c3_top_hat", "c3_crown", "c3_beanie",
 			"c3_cowboy_hat", "c3_propeller_cap", "c3_flower_crown", "c3_antlers",
 			"c3_halo", "c3_wizard_hat", "c3_sombrero", "c3_newsboy_cap", "c3_helmet",
@@ -263,7 +267,11 @@ static func apparel_ids(id: String) -> PackedStringArray:
 
 ## True when this garment was authored for this body's skeleton.
 static func apparel_fits(body_id: String, item_id: String) -> bool:
-	return item_id in apparel_ids(body_id)
+	var wardrobe := apparel_ids(body_id)
+	if wardrobe.has(item_id):
+		return true
+	var model := ItemDB.model_of(item_id)
+	return model != item_id and wardrobe.has(model)
 
 
 ## Hats every new save owns without a gem spend. Extra catalogue hats are

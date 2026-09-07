@@ -31,10 +31,6 @@ const RESPAWN_CLEARANCE := 0.35
 const RESPAWN_SPACING := 14.0
 ## Metres above the nearest city's pad when holding Respawn in the Tab menu.
 const CITY_RESPAWN_CLEARANCE := 96.0
-## Shoulder-to-shoulder separation at the orbital start used by an online
-## sandbox. Wide enough that two flight capsules cannot begin intersecting, but
-## close enough that the party enters the world as one visible group.
-const ONLINE_SANDBOX_SPAWN_SPACING := 4.0
 
 @onready var spawn_points: Node3D = $SpawnPoints
 @onready var celestial_cycle: CelestialCycle = $CelestialCycle
@@ -57,6 +53,8 @@ var _home_screen: HomeScreen
 var _session_open := false
 var _spawn_override := Transform3D.IDENTITY
 var _has_spawn_override := false
+var _force_spawn_override := false
+var _restore_payload: Dictionary = {}
 ## Look the home screen was showing when New Game was pressed. Wins over the
 ## roster metadata for the local peer so the body that starts is the one that
 ## was on screen, not a stale settings read.
@@ -68,13 +66,12 @@ var _flora_confirm_left := 0.0
 ## Host-only respawn counter per player peer id, so a late or duplicated
 ## respawn packet cannot put an already-living body back at the colony.
 var _respawn_sequence: Dictionary = {}
-## Stable host-assigned formation slot per online sandbox player. Peer ids from
-## Steam and ENet are identities, not roster indices; modulo-ing one by the
-## number of authored markers can put two different peers on the same marker.
-var _sandbox_spawn_slots: Dictionary = {}
 var _crawler_city_queue: Array = []
 var _crawler_city_gift_id := 0
 var _crawler_city_gift_claimed := false
+var _peer_spawns: Dictionary = {}
+var _duel_active := false
+var _duel_returns: Dictionary = {}
 
 
 func _ready() -> void:
@@ -114,11 +111,41 @@ func _exit_tree() -> void:
 	_pickup_nodes.clear()
 	_ability_constructs.clear()
 	_respawn_sequence.clear()
-	_sandbox_spawn_slots.clear()
 
 
 func local_player() -> OnlinePlayer:
 	return _spawned_players.get(multiplayer.get_unique_id()) as OnlinePlayer
+
+
+func session_is_open() -> bool:
+	return _session_open
+
+
+func next_pickup_id() -> int:
+	return _next_pickup_id
+
+
+func next_ability_construct_id() -> int:
+	return _next_ability_construct_id
+
+
+func city_gift_id() -> int:
+	return _crawler_city_gift_id
+
+
+func city_gift_claimed() -> bool:
+	return _crawler_city_gift_claimed
+
+
+func duel_active() -> bool:
+	return _duel_active
+
+
+func duel_snapshot() -> Dictionary:
+	return {
+		"active": _duel_active,
+		"returns": _duel_returns.duplicate(true),
+	}
 
 
 func planet() -> Planet:
@@ -138,7 +165,7 @@ func allocate_ability_construct_id() -> int:
 func spawn_ability_barrier_local(construct_id: int, owner_peer: int,
 		at: Transform3D, size: Vector3, duration: float,
 		fade_duration: float, tint: Color,
-		initial_alpha := 0.52) -> AbilityBarrier:
+		initial_alpha := 0.52, extras: Dictionary = {}) -> AbilityBarrier:
 	if construct_id <= 0:
 		return null
 	var existing := _ability_constructs.get(construct_id) as AbilityBarrier
@@ -146,7 +173,7 @@ func spawn_ability_barrier_local(construct_id: int, owner_peer: int,
 		return existing
 	var barrier := AbilityBarrier.create(
 		self, construct_id, owner_peer, at, size,
-		duration, fade_duration, tint, initial_alpha)
+		duration, fade_duration, tint, initial_alpha, extras)
 	if barrier == null:
 		return null
 	_ability_constructs[construct_id] = barrier
@@ -192,6 +219,7 @@ func ability_construct_snapshot() -> Array:
 			"fade_duration": barrier.fade_duration(),
 			"tint": barrier.tint(),
 			"alpha": barrier.current_alpha(),
+			"extras": barrier.extras(),
 		})
 	return snapshot
 
@@ -201,15 +229,22 @@ func apply_ability_construct_snapshot(snapshot: Array) -> void:
 		if not entry_variant is Dictionary:
 			continue
 		var entry := entry_variant as Dictionary
+		var extras: Dictionary = {}
+		var held: Variant = entry.get("extras", {})
+		if held is Dictionary:
+			extras = held
+		var size_raw: Variant = GameSave.unpack(entry.get("size", Vector3(8.0, 4.0, 0.35)))
+		var tint_raw: Variant = GameSave.unpack(entry.get("tint", Color(0.27, 0.69, 1.0)))
 		spawn_ability_barrier_local(
 			int(entry.get("construct_id", 0)),
 			int(entry.get("owner_peer", 0)),
-			entry.get("transform", Transform3D.IDENTITY),
-			entry.get("size", Vector3(8.0, 4.0, 0.35)),
+			GameSave.unpack_transform(entry.get("transform", {})),
+			size_raw if size_raw is Vector3 else Vector3(8.0, 4.0, 0.35),
 			float(entry.get("remaining", 0.0)),
 			float(entry.get("fade_duration", 0.0)),
-			entry.get("tint", Color(0.27, 0.69, 1.0)),
-			float(entry.get("alpha", 0.52)))
+			tint_raw if tint_raw is Color else Color(0.27, 0.69, 1.0),
+			float(entry.get("alpha", 0.52)),
+			extras)
 
 
 func active_ability_wall_count() -> int:
@@ -285,8 +320,6 @@ func scar_snapshot() -> Array:
 
 
 func apply_scar_snapshot(wire: Array) -> void:
-	if wire.is_empty():
-		return
 	var world_planet := planet()
 	if world_planet == null or world_planet.shape == null:
 		return
@@ -321,7 +354,14 @@ func flora_snapshot() -> Dictionary:
 
 func apply_flora_snapshot(state: Dictionary) -> void:
 	for path: String in state:
-		_apply_flora_breaks(path, state[path])
+		var raw: Variant = state[path]
+		var keys := PackedInt32Array()
+		if raw is PackedInt32Array:
+			keys = raw
+		elif raw is Array:
+			for item: Variant in raw:
+				keys.append(int(item))
+		_apply_flora_breaks(path, keys)
 
 
 # --- Colony respawn ---------------------------------------------------------
@@ -436,6 +476,7 @@ func _ensure_crawler_ring(tries := 0) -> void:
 		_ensure_crawler_start_site()
 		_apply_crawler_site_progress()
 		_ensure_crawler_city_gift()
+		_ensure_later_crawler_cities(tries)
 		return
 	var overlay := _land_patches()
 	if overlay == null or not overlay.ensure_ready():
@@ -469,6 +510,96 @@ func _ensure_crawler_ring(tries := 0) -> void:
 	_ensure_crawler_start_site()
 	_apply_crawler_site_progress()
 	_ensure_crawler_city_gift()
+	_ensure_later_crawler_cities(tries)
+
+
+func _ensure_later_crawler_cities(tries := 0) -> void:
+	if not CrawlerRules.active():
+		return
+	if get_node_or_null("CrawlerCrescentRing") != null \
+			and get_node_or_null("CrawlerLeeRing") != null:
+		return
+	var overlay := _land_patches()
+	if overlay == null or not overlay.ensure_ready():
+		if tries < 8:
+			call_deferred(&"_ensure_later_crawler_cities", tries + 1)
+		return
+	var first := get_node_or_null("CrawlerCityRing") as CrawlerCityRing
+	if first == null:
+		if tries < 8:
+			call_deferred(&"_ensure_later_crawler_cities", tries + 1)
+		return
+	var city_dir := first.world_up()
+	if city_dir.length_squared() < 0.0001:
+		city_dir = CrawlerRules.city_direction()
+	var tower_id := overlay.patch_id_named(CrawlerRules.TOWER_PATCH)
+	var castle_id := overlay.patch_id_named(CrawlerRules.CASTLE_PATCH)
+	if tower_id < 0 or castle_id < 0:
+		if tries < 8:
+			call_deferred(&"_ensure_later_crawler_cities", tries + 1)
+		return
+	var heading := CrawlerRules.city_pair_heading(
+		city_dir,
+		overlay.flat_direction_for_patch(tower_id),
+		overlay.flat_direction_for_patch(castle_id)
+	)
+	var radius := _crawler_planet_radius()
+	_place_later_crawler_city(
+		"CrawlerCrescentRing",
+		CrawlerRules.slide_direction(
+			city_dir, heading, CrawlerRules.CITY_OUTPOST_METRES, radius),
+		CrawlerRules.CITY_CRESCENT_SITE_ID,
+		CrawlerRules.CITY_CRESCENT_TITLE,
+		CrawlerRules.CRESCENT_VILLAGE
+	)
+	_place_later_crawler_city(
+		"CrawlerLeeRing",
+		CrawlerRules.slide_direction(
+			city_dir, heading, -CrawlerRules.CITY_OUTPOST_METRES, radius),
+		CrawlerRules.CITY_LEE_SITE_ID,
+		CrawlerRules.CITY_LEE_TITLE,
+		""
+	)
+
+
+func _place_later_crawler_city(
+		node_name: String,
+		direction: Vector3,
+		next_site: String,
+		next_title: String,
+		next_model: String
+	) -> void:
+	if get_node_or_null(node_name) != null:
+		return
+	var overlay := _land_patches()
+	if overlay == null:
+		return
+	var at := overlay.surface_transform_for_direction(direction, 0.35)
+	if at.origin.length_squared() < 1.0:
+		return
+	var patch_id := overlay.patch_id_at(at.origin)
+	var ring = load("res://game/crawler/crawler_city_ring.gd").new()
+	ring.name = node_name
+	ring.configure(patch_id, at, next_site, next_title, next_model, next_site)
+	add_child(ring)
+	_record_crawler_city(next_site)
+
+
+func _record_crawler_city(key: Variant) -> void:
+	var listed: Array = []
+	var held: Variant = NetworkManager.session_options.get("crawler_cities", [])
+	if held is Array:
+		listed = (held as Array).duplicate()
+	if not listed.has(key):
+		listed.append(key)
+	NetworkManager.session_options["crawler_cities"] = listed
+
+
+func _crawler_planet_radius() -> float:
+	var host := planet()
+	if host != null and host.shape != null:
+		return maxf(host.shape.radius, 1.0)
+	return 8000.0
 
 
 func _place_next_crawler_city() -> void:
@@ -619,6 +750,36 @@ func _crawler_start_transform() -> Transform3D:
 	return overlay.high_surface_transform_for_patch(patch_id, 1.35)
 
 
+func _crawler_pad_transform(peer_id: int) -> Transform3D:
+	_ensure_crawler_spawn_pad()
+	var pad := _crawler_spawn_pad()
+	var peers: Array = NetworkManager.players.keys() if NetworkManager != null else []
+	peers.sort()
+	var index := peers.find(peer_id)
+	if index < 0:
+		index = maxi(peer_id - 1, 0)
+	var count := maxi(peers.size(), 1)
+	if pad != null:
+		var seated := pad.player_spawn_transform_for(index, count)
+		if seated.origin.length_squared() > 1.0:
+			return seated
+	var base := _crawler_start_transform()
+	if count <= 1:
+		return base
+	var up := base.basis.y
+	if up.length_squared() < 0.0001:
+		up = Vector3.UP
+	up = up.normalized()
+	var right := up.cross(Vector3.FORWARD)
+	if right.length_squared() < 0.0001:
+		right = up.cross(Vector3.RIGHT)
+	right = right.normalized()
+	var forward := up.cross(right).normalized()
+	var angle := TAU * float(posmod(index, count)) / float(count)
+	base.origin += (right * cos(angle) + forward * sin(angle)) * 2.4
+	return base
+
+
 func _crawler_spawn_pad() -> CrawlerSpawnPad:
 	var existing := get_node_or_null("CrawlerSpawnPad") as CrawlerSpawnPad
 	if existing != null:
@@ -663,13 +824,13 @@ func _ensure_crawler_spawn_pad(tries := 0) -> void:
 func _park_crawler_players() -> void:
 	if not CrawlerRules.active():
 		return
-	var at := _crawler_start_transform()
-	if at.origin.length_squared() < 1.0:
-		return
 	_sync_crawler_twilight()
 	for player_variant: Variant in _spawned_players.values():
 		var player := player_variant as OnlinePlayer
 		if not is_instance_valid(player):
+			continue
+		var at := _crawler_pad_transform(player.peer_id)
+		if at.origin.length_squared() < 1.0:
 			continue
 		player.global_transform = at
 		player.reset_physics_interpolation()
@@ -698,6 +859,27 @@ func _ensure_crawler_horde() -> void:
 	var horde := CrawlerHorde.new()
 	horde.name = "CrawlerHorde"
 	add_child(horde)
+
+
+func _ensure_crawler_statues(tries := 0) -> void:
+	if not CrawlerRules.active():
+		return
+	var host := planet()
+	var statues := (
+		host.get_node_or_null("CrawlerStatues") as CrawlerStatues
+		if host != null else get_node_or_null("CrawlerStatues") as CrawlerStatues
+	)
+	if statues == null:
+		statues = CrawlerStatues.new()
+		statues.name = "CrawlerStatues"
+		if host != null:
+			host.add_child(statues)
+		else:
+			add_child(statues)
+	if statues.ensure_placed():
+		return
+	if tries < 12:
+		call_deferred(&"_ensure_crawler_statues", tries + 1)
 
 
 func _nearest_city(from: Vector3) -> PatchCity:
@@ -857,6 +1039,14 @@ func pickup_snapshots() -> Array:
 				"transform": record.get("transform", Transform3D.IDENTITY),
 			})
 			continue
+		if kind == "crawler_hat":
+			snapshots.append({
+				"pickup_id": pickup_id,
+				"kind": "crawler_hat",
+				"item_id": str(record.get("item_id", "")),
+				"transform": record.get("transform", Transform3D.IDENTITY),
+			})
+			continue
 		snapshots.append({
 			"pickup_id": pickup_id,
 			"item_id": str(record.get("item_id", "")),
@@ -868,9 +1058,10 @@ func pickup_snapshots() -> Array:
 ## Where the local player will be put when a session opens, overriding the spawn
 ## markers. The home screen uses it to start the player exactly where the
 ## character it has been showing was standing.
-func override_local_spawn(at_transform: Transform3D) -> void:
+func override_local_spawn(at_transform: Transform3D, force := false) -> void:
 	_spawn_override = at_transform
 	_has_spawn_override = true
+	_force_spawn_override = force
 
 
 func override_local_look(look: Dictionary) -> void:
@@ -890,6 +1081,10 @@ func _open_home_screen() -> void:
 
 func _begin_session() -> void:
 	if _session_open:
+		return
+	var restore := GameSave.take_pending()
+	if not restore.is_empty():
+		_begin_saved_session(restore)
 		return
 	_session_open = true
 	LagTracker.note("session", "world session opened  host=%s" % multiplayer.is_server())
@@ -914,6 +1109,481 @@ func _begin_session() -> void:
 	if CrawlerRules.active():
 		call_deferred(&"_seed_crawler_cities", 0)
 		call_deferred(&"_ensure_crawler_horde")
+		call_deferred(&"_ensure_crawler_statues", 0)
+
+
+func _begin_saved_session(payload: Dictionary) -> void:
+	_session_open = true
+	_restore_payload = payload
+	LagTracker.note("session", "world session restored from disk")
+	_prepare_saved_spawns(payload)
+	var look: Variant = payload.get("look", {})
+	if look is Dictionary and not (look as Dictionary).is_empty():
+		override_local_look(look)
+	var world_state: Dictionary = payload.get("world", {})
+	if celestial_cycle != null:
+		celestial_cycle.set_day_index(int(world_state.get("day_index", 0)))
+		var phase := float(world_state.get("phase", -1.0))
+		if phase >= 0.0:
+			celestial_cycle.set_phase(phase)
+	_crawler_city_gift_claimed = true
+	if multiplayer.is_server():
+		for peer_id in NetworkManager.players:
+			_spawn_player(
+				int(peer_id),
+				NetworkManager.get_player_metadata(int(peer_id)),
+				_spawn_transform(int(peer_id)),
+				not CrawlerRules.active()
+			)
+		_restore_roster(payload)
+	if CrawlerRules.active():
+		call_deferred(&"_seed_crawler_cities", 0)
+		call_deferred(&"_ensure_crawler_horde")
+		call_deferred(&"_ensure_crawler_statues", 0)
+	call_deferred(&"_finish_saved_world", 0)
+
+
+func _finish_saved_world(tries := 0) -> void:
+	if _restore_payload.is_empty():
+		return
+	if CrawlerRules.active() and get_node_or_null("CrawlerCityRing") == null \
+			and tries < 12:
+		call_deferred(&"_finish_saved_world", tries + 1)
+		return
+	apply_saved_world(_restore_payload)
+	_restore_payload = {}
+
+
+func apply_disk_save(payload: Dictionary, broadcast := true) -> bool:
+	if payload.is_empty() or not _session_open:
+		return false
+	GameSave.apply_run_payloads(payload)
+	var session: Variant = payload.get("session", {})
+	if session is Dictionary:
+		for key: Variant in session:
+			NetworkManager.session_options[str(key)] = (session as Dictionary)[key]
+	_prepare_saved_spawns(payload)
+	var player := local_player()
+	if player != null:
+		var look: Variant = payload.get("look", {})
+		if look is Dictionary and not (look as Dictionary).is_empty():
+			CharacterDB.save_look(look)
+			player.apply_look(look)
+	_restore_roster(payload)
+	apply_saved_world(payload)
+	if broadcast and multiplayer.is_server() and not NetworkManager.is_single_player:
+		_apply_remote_save.rpc(payload)
+	return true
+
+
+@rpc("authority", "call_remote", "reliable")
+func _apply_remote_save(payload: Dictionary) -> void:
+	apply_disk_save(payload, false)
+
+
+func apply_saved_world(payload: Dictionary) -> void:
+	var world_state: Variant = payload.get("world", {})
+	if typeof(world_state) != TYPE_DICTIONARY:
+		return
+	var state := world_state as Dictionary
+	if celestial_cycle != null:
+		celestial_cycle.set_day_index(int(state.get("day_index", celestial_cycle.day_index())))
+		var phase := float(state.get("phase", -1.0))
+		if phase >= 0.0:
+			celestial_cycle.set_phase(phase)
+	_clear_live_pickups()
+	var pickups: Variant = state.get("pickups", [])
+	if pickups is Array:
+		for pickup_variant: Variant in pickups:
+			if pickup_variant is Dictionary:
+				_restore_saved_pickup(pickup_variant)
+	apply_scar_snapshot(state.get("scars", []) as Array if state.get("scars", []) is Array else [])
+	var flora: Variant = state.get("flora", {})
+	if flora is Dictionary:
+		apply_flora_snapshot(flora)
+	var boss: Variant = state.get("bigfoot", {})
+	if boss is Dictionary:
+		apply_bigfoot_snapshot(boss)
+	_clear_ability_constructs()
+	var constructs: Variant = state.get("constructs", [])
+	if constructs is Array:
+		apply_ability_construct_snapshot(constructs)
+	var horde: Variant = state.get("horde", {})
+	if horde is Dictionary:
+		apply_horde_snapshot(horde)
+	_next_pickup_id = maxi(int(state.get("next_pickup_id", _next_pickup_id)), _next_pickup_id)
+	_next_ability_construct_id = maxi(
+		int(state.get("next_construct_id", _next_ability_construct_id)),
+		_next_ability_construct_id)
+	_crawler_city_gift_id = int(state.get("city_gift_id", _crawler_city_gift_id))
+	_crawler_city_gift_claimed = bool(state.get("city_gift_claimed", _crawler_city_gift_claimed))
+	var duel: Variant = state.get("duel", {})
+	if duel is Dictionary:
+		_apply_duel_snapshot(duel)
+	else:
+		_duel_active = false
+		_duel_returns.clear()
+
+
+func _apply_saved_player(player: OnlinePlayer, player_state: Variant) -> void:
+	if player == null or typeof(player_state) != TYPE_DICTIONARY:
+		return
+	var state := player_state as Dictionary
+	var xf := GameSave.unpack_transform(state.get("transform", {}))
+	if xf.origin.length_squared() > 0.01:
+		player.global_transform = xf
+	if state.has("pitch"):
+		player.set_look_pitch(float(state.get("pitch", 0.0)))
+	var combat: Variant = state.get("combat", {})
+	if combat is Dictionary and not (combat as Dictionary).is_empty():
+		player.apply_combat_snapshot(combat)
+	if state.has("worn"):
+		var worn := PackedStringArray()
+		var worn_raw: Variant = state.get("worn", [])
+		if worn_raw is PackedStringArray:
+			worn = worn_raw
+		elif worn_raw is Array:
+			for item: Variant in worn_raw:
+				worn.append(str(item))
+		player.apply_worn(worn)
+	if state.has("held"):
+		player.apply_held(str(state.get("held", "")))
+
+
+func player_roster_snapshot() -> Array:
+	var roster: Array = []
+	var ids: Array = _spawned_players.keys()
+	ids.sort()
+	for id_variant: Variant in ids:
+		var peer_id := int(id_variant)
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		if player.crawler_progress != null:
+			player.crawler_progress.remember()
+		if player.crawler_kit != null:
+			player.crawler_kit.remember()
+		var meta := NetworkManager.get_player_metadata(peer_id)
+		roster.append({
+			"peer_id": peer_id,
+			"steam_id": int(meta.get("steam_id", 0)),
+			"name": str(meta.get("name", player.display_name)),
+			"transform": player.global_transform,
+			"pitch": player.look_pitch(),
+			"combat": player.combat_snapshot(),
+			"worn": player.worn_items(),
+			"held": player.held_item(),
+			"body": player.body_id(),
+			"progress": player.crawler_progress.to_dict() if player.crawler_progress != null else {},
+			"kit": player.crawler_kit.to_dict() if player.crawler_kit != null else {},
+		})
+	return roster
+
+
+func _prepare_saved_spawns(payload: Dictionary) -> void:
+	_peer_spawns.clear()
+	if NetworkManager == null:
+		return
+	for peer_variant: Variant in NetworkManager.players.keys():
+		var peer_id := int(peer_variant)
+		var meta := NetworkManager.get_player_metadata(peer_id)
+		var entry := GameSave.match_roster(payload, peer_id, meta)
+		if not entry.is_empty():
+			var xf := GameSave.unpack_transform(entry.get("transform", {}))
+			if xf.origin.length_squared() > 0.01:
+				_peer_spawns[peer_id] = xf
+				if peer_id == multiplayer.get_unique_id():
+					override_local_spawn(xf, true)
+				continue
+		_peer_spawns[peer_id] = _crawler_pad_transform(peer_id)
+
+
+func _restore_roster(payload: Dictionary) -> void:
+	var coop := GameSave.is_coop_save(payload)
+	for id_variant: Variant in _spawned_players.keys():
+		var peer_id := int(id_variant)
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		var entry := GameSave.match_roster(
+			payload, peer_id, NetworkManager.get_player_metadata(peer_id))
+		if entry.is_empty():
+			player.global_transform = _crawler_pad_transform(peer_id)
+			player.reset_physics_interpolation()
+			player.reset_network_state(player.global_transform)
+			if not coop:
+				_seed_guest_crawler(player)
+			continue
+		_apply_saved_roster_player(player, entry)
+
+
+func _apply_saved_roster_player(player: OnlinePlayer, entry: Dictionary) -> void:
+	var progress: Variant = entry.get("progress", {})
+	if player.crawler_progress != null and progress is Dictionary \
+			and not (progress as Dictionary).is_empty():
+		player.crawler_progress.from_dict(progress)
+		player.crawler_progress.remember()
+		player.refresh_crawler_look()
+		CrawlerSites.apply_progress(player.crawler_progress, get_tree())
+	var kit: Variant = entry.get("kit", {})
+	if player.crawler_kit != null and kit is Dictionary \
+			and not (kit as Dictionary).is_empty():
+		player.crawler_kit.from_dict(kit)
+		player.crawler_kit.remember()
+		player.sync_crawler_ability_bar()
+	_apply_saved_player(player, entry)
+
+
+func _seed_guest_crawler(player: OnlinePlayer) -> void:
+	if player.crawler_progress != null:
+		player.crawler_progress.from_dict({})
+		player.crawler_progress.remember()
+		player.refresh_crawler_look()
+	if player.crawler_kit != null:
+		player.crawler_kit.seed_starter()
+		player.crawler_kit.remember()
+		player.sync_crawler_ability_bar()
+
+
+func request_start_duel() -> void:
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_request_start_duel.rpc_id(1)
+		return
+	_start_city_duel()
+
+
+@rpc("any_peer", "reliable")
+func _request_start_duel() -> void:
+	if multiplayer.is_server():
+		_start_city_duel()
+
+
+func request_end_duel() -> void:
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_request_end_duel.rpc_id(1)
+		return
+	_end_city_duel()
+
+
+@rpc("any_peer", "reliable")
+func _request_end_duel() -> void:
+	if multiplayer.is_server():
+		_end_city_duel()
+
+
+func request_duel_respawn() -> void:
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_request_duel_respawn.rpc_id(1)
+		return
+	_duel_respawn_peer(multiplayer.get_unique_id())
+
+
+@rpc("any_peer", "reliable")
+func _request_duel_respawn() -> void:
+	if multiplayer.is_server():
+		_duel_respawn_peer(multiplayer.get_remote_sender_id())
+
+
+func _start_city_duel() -> void:
+	if _duel_active or not CrawlerRules.coop():
+		return
+	if NetworkManager == null or NetworkManager.players.size() < 2:
+		return
+	_duel_active = true
+	_duel_returns.clear()
+	var ids: Array = _spawned_players.keys()
+	ids.sort()
+	var centre := _duel_centre_transform()
+	var count := maxi(ids.size(), 1)
+	var returns := {}
+	var poses := {}
+	var index := 0
+	for id_variant: Variant in ids:
+		var peer_id := int(id_variant)
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		returns[str(peer_id)] = player.global_transform
+		poses[str(peer_id)] = _ring_offset(centre, index, count, 6.0)
+		index += 1
+	_duel_returns = returns
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_duel_start.rpc(returns, poses)
+	else:
+		_apply_duel_start(returns, poses)
+
+
+func _end_city_duel() -> void:
+	if not _duel_active:
+		return
+	var returns := _duel_returns.duplicate(true)
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_duel_end.rpc(returns)
+	else:
+		_apply_duel_end(returns)
+
+
+func _duel_respawn_peer(peer_id: int) -> void:
+	if not _duel_active or peer_id <= 0:
+		return
+	var player := _spawned_players.get(peer_id) as OnlinePlayer
+	if not is_instance_valid(player):
+		return
+	var at := player.global_transform
+	var ids: Array = _spawned_players.keys()
+	ids.sort()
+	var index := ids.find(peer_id)
+	if index < 0:
+		index = 0
+	at = _ring_offset(_duel_centre_transform(), index, maxi(ids.size(), 1), 6.0)
+	var sequence := int(_respawn_sequence.get(peer_id, 0)) + 1
+	_respawn_sequence[peer_id] = sequence
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_colony_respawn.rpc(peer_id, at, sequence)
+	else:
+		_apply_colony_respawn(peer_id, at, sequence)
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_duel_start(returns: Dictionary, poses: Dictionary) -> void:
+	_duel_active = true
+	_duel_returns = returns.duplicate(true)
+	var horde := get_node_or_null("CrawlerHorde")
+	if horde != null and horde.has_method(&"clear_wild"):
+		horde.call(&"clear_wild")
+	for id_variant: Variant in _spawned_players.keys():
+		var peer_id := int(id_variant)
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		var at := GameSave.unpack_transform(poses.get(str(peer_id), {}))
+		if at.origin.length_squared() < 0.01:
+			continue
+		if player.is_dead():
+			player.respawn_at(at)
+		else:
+			player.global_transform = at
+			player.reset_physics_interpolation()
+			player.reset_network_state(at)
+		if player.has_method(&"apply_heal"):
+			player.apply_heal(player.maximum_health())
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_duel_end(returns: Dictionary) -> void:
+	_duel_active = false
+	for id_variant: Variant in _spawned_players.keys():
+		var peer_id := int(id_variant)
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		var at := GameSave.unpack_transform(returns.get(str(peer_id), {}))
+		if at.origin.length_squared() < 0.01:
+			continue
+		if player.is_dead():
+			player.respawn_at(at)
+		else:
+			player.global_transform = at
+			player.reset_physics_interpolation()
+			player.reset_network_state(at)
+	_duel_returns.clear()
+
+
+func _apply_duel_snapshot(wire: Dictionary) -> void:
+	_duel_active = bool(wire.get("active", false))
+	var held: Variant = wire.get("returns", {})
+	_duel_returns = held.duplicate(true) if held is Dictionary else {}
+
+
+func _duel_centre_transform() -> Transform3D:
+	var from := Vector3.ZERO
+	var local := local_player()
+	if local != null:
+		from = local.global_position
+	var best := Transform3D()
+	var best_d := INF
+	if is_inside_tree():
+		for node in get_tree().get_nodes_in_group(PatchCity.PAD_GROUP):
+			var city := node as Node3D
+			if city == null:
+				continue
+			var d := city.global_position.distance_squared_to(from) if from.length_squared() > 0.0001 \
+				else 0.0
+			if d < best_d:
+				best_d = d
+				best = city.global_transform
+				var up := best.basis.y
+				if up.length_squared() < 0.0001:
+					up = Vector3.UP
+				best.origin += up.normalized() * 2.0
+	if best.origin.length_squared() > 1.0:
+		return best
+	return _crawler_start_transform()
+
+
+func _ring_offset(centre: Transform3D, index: int, count: int, radius: float) -> Transform3D:
+	var at := centre
+	var n := maxi(count, 1)
+	if n <= 1:
+		return at
+	var up := at.basis.y
+	if up.length_squared() < 0.0001:
+		up = Vector3.UP
+	up = up.normalized()
+	var right := up.cross(Vector3.FORWARD)
+	if right.length_squared() < 0.0001:
+		right = up.cross(Vector3.RIGHT)
+	right = right.normalized()
+	var forward := up.cross(right).normalized()
+	var angle := TAU * float(posmod(index, n)) / float(n)
+	var along := (right * cos(angle) + forward * sin(angle))
+	at.origin += along * radius
+	if along.length_squared() > 0.0001:
+		at.basis = Basis.looking_at(-along, up)
+	return at
+
+
+func _restore_saved_pickup(pickup: Dictionary) -> void:
+	var pickup_id := int(pickup.get("pickup_id", 0))
+	if pickup_id <= 0:
+		return
+	var at: Transform3D = GameSave.unpack_transform(pickup.get("transform", {}))
+	if str(pickup.get("kind", "")) == "crawler" or pickup.has("payload"):
+		_spawn_crawler_pickup_local(pickup_id, pickup.get("payload", {}), at)
+		return
+	if str(pickup.get("kind", "")) == "crawler_hat":
+		_spawn_crawler_hat_pickup_local(pickup_id, str(pickup.get("item_id", "")), at)
+		return
+	_spawn_pickup_local(pickup_id, str(pickup.get("item_id", "")), at)
+
+
+func _clear_live_pickups() -> void:
+	var ids: Array = _pickups.keys()
+	for id_variant: Variant in ids:
+		_despawn_pickup_local(int(id_variant))
+
+
+func _clear_ability_constructs() -> void:
+	var ids: Array = _ability_constructs.keys()
+	for id_variant: Variant in ids:
+		_apply_ability_construct_despawn(int(id_variant))
+
+
+func horde_snapshot() -> Dictionary:
+	var horde := get_node_or_null("CrawlerHorde")
+	if horde != null and horde.has_method(&"horde_snapshot"):
+		var held: Variant = horde.call(&"horde_snapshot")
+		return held as Dictionary if held is Dictionary else {}
+	return {}
+
+
+func apply_horde_snapshot(wire: Dictionary) -> void:
+	if wire.is_empty():
+		return
+	_ensure_crawler_horde()
+	var horde := get_node_or_null("CrawlerHorde")
+	if horde != null and horde.has_method(&"apply_horde_snapshot"):
+		horde.call(&"apply_horde_snapshot", wire)
 
 
 ## What being in a menu costs. Escape used to raise a pause card of the world's
@@ -1082,7 +1752,7 @@ func request_crawler_pickup(pickup_id: int, peer_id: int) -> void:
 	if not is_instance_valid(player):
 		return
 	if multiplayer.is_server():
-		_server_crawler_pickup(local_id, pickup_id, player.inventory_generation())
+		_dispatch_crawler_pickup(local_id, pickup_id, player.inventory_generation())
 		return
 	player.sync_loadout_to_server()
 	_request_crawler_pickup_from_client.rpc_id(
@@ -1097,7 +1767,7 @@ func _request_crawler_pickup_from_client(pickup_id: int, generation: int) -> voi
 	if NetworkManager.state != NetworkManager.SessionState.IN_GAME \
 			or not NetworkManager.is_peer_registered(sender):
 		return
-	_server_crawler_pickup(sender, pickup_id, generation)
+	_dispatch_crawler_pickup(sender, pickup_id, generation)
 
 
 func _server_crawler_drop(
@@ -1151,7 +1821,8 @@ func _server_crawler_pickup(peer_id: int, pickup_id: int, generation: int) -> bo
 	var at_transform: Transform3D = record.get(
 		"transform", Transform3D.IDENTITY)
 	if payload.is_empty() \
-			or player.global_position.distance_to(at_transform.origin) \
+			or player.global_position.distance_to(
+				_pickup_world_origin(pickup_id, at_transform.origin)) \
 				> PICKUP_MAX_DISTANCE:
 		return false
 	record["claimed"] = true
@@ -1176,6 +1847,14 @@ func _server_crawler_pickup(peer_id: int, pickup_id: int, generation: int) -> bo
 	return true
 
 
+func spawn_displaced_crawler_card(player: OnlinePlayer, payload: Dictionary) -> int:
+	if player == null or payload.is_empty():
+		return 0
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		return 0
+	return _server_crawler_spawn(player, payload)
+
+
 func _server_crawler_spawn(player: OnlinePlayer, payload: Dictionary) -> int:
 	var pickup_id := _next_pickup_id
 	_next_pickup_id += 1
@@ -1190,6 +1869,174 @@ func _server_crawler_spawn(player: OnlinePlayer, payload: Dictionary) -> int:
 	if multiplayer.has_multiplayer_peer():
 		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform)
 	return pickup_id
+
+
+func spawn_crawler_kill_loot(drops: Array, at: Vector3) -> PackedInt32Array:
+	var ids := PackedInt32Array()
+	if not at.is_finite() or drops.is_empty():
+		return ids
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		return ids
+	var index := 0
+	for drop_variant: Variant in drops:
+		if not drop_variant is Dictionary:
+			continue
+		var drop: Dictionary = drop_variant
+		var kind := str(drop.get("kind", ""))
+		var pose := _loot_drop_transform(at, index)
+		index += 1
+		if kind == CrawlerLoot.KIND_HAT:
+			var hat_id := str(drop.get("id", ""))
+			if CrawlerProgress.is_city_hat(hat_id):
+				ids.append(_server_crawler_hat_spawn(hat_id, pose))
+			continue
+		var payload := CrawlerLoot.card_payload(drop)
+		if not payload.is_empty():
+			ids.append(_server_crawler_loot_spawn(payload, pose))
+	return ids
+
+
+func _dispatch_crawler_pickup(peer_id: int, pickup_id: int, generation: int) -> bool:
+	var record: Dictionary = _pickups.get(pickup_id, {})
+	if str(record.get("kind", "")) == "crawler_hat":
+		return _server_crawler_hat_pickup(peer_id, pickup_id, generation)
+	return _server_crawler_pickup(peer_id, pickup_id, generation)
+
+
+func _server_crawler_loot_spawn(payload: Dictionary, at_transform: Transform3D) -> int:
+	if payload.is_empty():
+		return 0
+	var pickup_id := _next_pickup_id
+	_next_pickup_id += 1
+	_pickups[pickup_id] = {
+		"kind": "crawler",
+		"payload": payload,
+		"transform": at_transform,
+		"claimed": false,
+	}
+	_spawn_crawler_pickup_local(pickup_id, payload, at_transform)
+	if multiplayer.has_multiplayer_peer():
+		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform)
+	return pickup_id
+
+
+func _server_crawler_hat_spawn(item_id: String, at_transform: Transform3D) -> int:
+	if not CrawlerProgress.is_city_hat(item_id):
+		return 0
+	var pickup_id := _next_pickup_id
+	_next_pickup_id += 1
+	_pickups[pickup_id] = {
+		"kind": "crawler_hat",
+		"item_id": item_id,
+		"transform": at_transform,
+		"claimed": false,
+	}
+	_spawn_crawler_hat_pickup_local(pickup_id, item_id, at_transform)
+	if multiplayer.has_multiplayer_peer():
+		_spawn_crawler_hat_pickup.rpc(pickup_id, item_id, at_transform)
+	return pickup_id
+
+
+func _server_crawler_hat_pickup(peer_id: int, pickup_id: int, generation: int) -> bool:
+	if not multiplayer.is_server():
+		return false
+	var player := _spawned_players.get(peer_id) as OnlinePlayer
+	var record: Dictionary = _pickups.get(pickup_id, {})
+	if not is_instance_valid(player) or player.crawler_progress == null \
+			or not player.authoritative_inventory_ready() \
+			or generation != player.inventory_generation() or record.is_empty() \
+			or bool(record.get("claimed", false)) \
+			or str(record.get("kind", "")) != "crawler_hat":
+		return false
+	var item_id := str(record.get("item_id", ""))
+	var at_transform: Transform3D = record.get(
+		"transform", Transform3D.IDENTITY)
+	if not CrawlerProgress.is_city_hat(item_id) \
+			or player.global_position.distance_to(
+				_pickup_world_origin(pickup_id, at_transform.origin)) \
+				> PICKUP_MAX_DISTANCE:
+		return false
+	record["claimed"] = true
+	_pickups[pickup_id] = record
+	var uid := player.crawler_progress.grant_hat(item_id)
+	if uid.is_empty():
+		record["claimed"] = false
+		_pickups[pickup_id] = record
+		return false
+	player.refresh_crawler_look()
+	var next_generation := player.advance_inventory_generation()
+	if peer_id != multiplayer.get_unique_id():
+		_grant_crawler_hat.rpc_id(peer_id, pickup_id, item_id, next_generation)
+	_despawn_pickup_local(pickup_id)
+	if multiplayer.has_multiplayer_peer():
+		_despawn_pickup.rpc(pickup_id)
+	return true
+
+
+func _pickup_world_origin(pickup_id: int, fallback: Vector3) -> Vector3:
+	var node := _pickup_nodes.get(pickup_id) as Node3D
+	if node != null and is_instance_valid(node):
+		return node.global_position
+	return fallback
+
+
+func _loot_drop_transform(at: Vector3, index: int) -> Transform3D:
+	var up := at.normalized() if at.length_squared() > 0.01 else Vector3.UP
+	var east := up.cross(Vector3.RIGHT if absf(up.y) > 0.9 else Vector3.UP)
+	if east.length_squared() < 0.0001:
+		east = Vector3.RIGHT
+	east = east.normalized()
+	var north := up.cross(east).normalized()
+	var angle := TAU * (float(index) * 0.37 + 0.18)
+	var span := 0.45 + 0.18 * float(index)
+	var origin := at + (east * cos(angle) + north * sin(angle)) * span + up * 0.12
+	return Transform3D(_upright_basis(north, up), origin)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _spawn_crawler_hat_pickup(
+		pickup_id: int,
+		item_id: String,
+		at_transform: Transform3D
+	) -> void:
+	_spawn_crawler_hat_pickup_local(pickup_id, item_id, at_transform)
+
+
+func _spawn_crawler_hat_pickup_local(
+		pickup_id: int,
+		item_id: String,
+		at_transform: Transform3D
+	) -> void:
+	if pickup_id <= 0 or not CrawlerProgress.is_city_hat(item_id):
+		return
+	var existing := _pickup_nodes.get(pickup_id) as Node
+	if is_instance_valid(existing):
+		return
+	_pickups[pickup_id] = {
+		"kind": "crawler_hat",
+		"item_id": item_id,
+		"transform": at_transform,
+		"claimed": false,
+	}
+	var dropped := DroppedCrawlerHat.new()
+	dropped.configure(pickup_id, item_id)
+	add_child(dropped, true)
+	dropped.global_transform = at_transform
+	dropped.reset_physics_interpolation()
+	_pickup_nodes[pickup_id] = dropped
+
+
+@rpc("authority", "call_remote", "reliable")
+func _grant_crawler_hat(
+		_pickup_id: int,
+		item_id: String,
+		generation: int
+	) -> void:
+	var player := local_player()
+	if is_instance_valid(player) and player.crawler_progress != null:
+		player.crawler_progress.grant_hat(item_id)
+		player.refresh_crawler_look()
+		player._inventory_generation = generation
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -1308,7 +2155,8 @@ func _server_pickup(peer_id: int, pickup_id: int, generation: int) -> bool:
 	var at_transform: Transform3D = record.get(
 		"transform", Transform3D.IDENTITY)
 	if not _is_physical_item(item_id) \
-			or player.global_position.distance_to(at_transform.origin) \
+			or player.global_position.distance_to(
+				_pickup_world_origin(pickup_id, at_transform.origin)) \
 				> PICKUP_MAX_DISTANCE \
 			or player.backpack_slot_for(item_id) < 0:
 		return false
@@ -1578,7 +2426,6 @@ func _despawn_player(peer_id: int) -> void:
 	var player := _spawned_players.get(peer_id) as OnlinePlayer
 	_spawned_players.erase(peer_id)
 	_respawn_sequence.erase(peer_id)
-	_sandbox_spawn_slots.erase(peer_id)
 	if is_instance_valid(player):
 		LagTracker.note("spawn", "despawn player %d" % peer_id)
 		player.queue_free()
@@ -1671,6 +2518,12 @@ func _receive_world_state(
 				pickup.get("payload", {}),
 				pickup.get("transform", Transform3D.IDENTITY))
 			continue
+		if str(pickup.get("kind", "")) == "crawler_hat":
+			_spawn_crawler_hat_pickup_local(
+				pickup_id,
+				str(pickup.get("item_id", "")),
+				pickup.get("transform", Transform3D.IDENTITY))
+			continue
 		_spawn_pickup_local(
 			pickup_id,
 			str(pickup.get("item_id", "")),
@@ -1678,12 +2531,15 @@ func _receive_world_state(
 
 
 func _spawn_transform(peer_id: int) -> Transform3D:
+	if _peer_spawns.has(peer_id):
+		return _peer_spawns[peer_id]
+	if _has_spawn_override and _force_spawn_override \
+			and peer_id == multiplayer.get_unique_id():
+		return _spawn_override
 	if CrawlerRules.active():
-		var crawler := _crawler_start_transform()
+		var crawler := _crawler_pad_transform(peer_id)
 		if crawler.origin.length_squared() > 1.0:
 			return crawler
-	if _is_online_sandbox():
-		return _online_sandbox_spawn_transform(peer_id)
 	if _has_spawn_override and peer_id == multiplayer.get_unique_id():
 		return _spawn_override
 	var points := spawn_points.get_children()
@@ -1691,70 +2547,6 @@ func _spawn_transform(peer_id: int) -> Transform3D:
 		return Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0))
 	var index := posmod(peer_id - 1, points.size())
 	return (points[index] as Node3D).global_transform
-
-
-func _is_online_sandbox() -> bool:
-	return NetworkManager.state == NetworkManager.SessionState.IN_GAME \
-		and not NetworkManager.is_single_player \
-		and str(NetworkManager.session_options.get("mode", "")) == "sandbox"
-
-
-## A compact line across the first orbital marker's view plane. Slots alternate
-## right and left of the host (0, +1, -1, +2, -2...) so adding somebody never
-## moves a player who has already spawned.
-func _online_sandbox_spawn_transform(peer_id: int) -> Transform3D:
-	var anchor := _sandbox_spawn_anchor()
-	var centre_node := get_node_or_null("Planet") as Node3D
-	var centre := centre_node.global_position if centre_node != null \
-		else anchor.origin - anchor.basis.z
-	var anchor_basis := _planet_facing_basis(
-		anchor.origin, centre, anchor.basis.y, -anchor.basis.z)
-	var slot := _sandbox_spawn_slot(peer_id)
-	var lane := ceili(float(slot) * 0.5)
-	var side := 1.0 if slot % 2 == 1 else -1.0
-	var origin := anchor.origin + anchor_basis.x \
-		* (float(lane) * side * ONLINE_SANDBOX_SPAWN_SPACING)
-	var basis := _planet_facing_basis(
-		origin, centre, anchor_basis.y, -anchor_basis.z)
-	return Transform3D(basis, origin)
-
-
-func _sandbox_spawn_anchor() -> Transform3D:
-	if _has_spawn_override:
-		return _spawn_override
-	var points := spawn_points.get_children()
-	if not points.is_empty() and points[0] is Node3D:
-		return (points[0] as Node3D).global_transform
-	return Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0))
-
-
-func _sandbox_spawn_slot(peer_id: int) -> int:
-	if _sandbox_spawn_slots.has(peer_id):
-		return int(_sandbox_spawn_slots[peer_id])
-	var slot := 0
-	var occupied := _sandbox_spawn_slots.values()
-	while occupied.has(slot):
-		slot += 1
-	_sandbox_spawn_slots[peer_id] = slot
-	return slot
-
-
-## Keeps the body's -Z aimed at the planet while retaining a stable visual up
-## across the formation. The fallbacks also keep a stripped test world useful
-## when its anchor happens to sit at the nominal centre.
-func _planet_facing_basis(origin: Vector3, centre: Vector3, up_hint: Vector3,
-		forward_fallback: Vector3) -> Basis:
-	var forward := centre - origin
-	if forward.length_squared() < 0.0001:
-		forward = forward_fallback
-	if forward.length_squared() < 0.0001:
-		forward = Vector3.FORWARD
-	forward = forward.normalized()
-	up_hint -= forward * up_hint.dot(forward)
-	if up_hint.length_squared() < 0.0001:
-		var hint := Vector3.UP if absf(forward.y) < 0.9 else Vector3.RIGHT
-		up_hint = hint - forward * hint.dot(forward)
-	return _upright_basis(forward, up_hint.normalized())
 
 
 func bigfoot_snapshot() -> Dictionary:

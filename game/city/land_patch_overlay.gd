@@ -13,6 +13,9 @@ const CrawlerCityRingScript := preload("res://game/crawler/crawler_city_ring.gd"
 ## Typical territory width, metres. About a twelfth of the first cut, so
 ## ten to fifteen of these fit in one of those larger cells.
 @export var target_span := 1300.0
+## Named overlay cells inside each territory. Half the first cut, so the
+## tilde map reads as neighbourhoods without moving cities or spawn tables.
+@export var cell_span := 650.0
 ## Keep-out around each Giant Mountain landmark, metres of surface arc.
 @export var mountain_clearance := 1000.0
 ## Ribbon half-width, metres. A painted line on the ground, not a road.
@@ -58,11 +61,12 @@ func render_live_city(patch_id: int) -> bool:
 	var planet := get_parent() as Planet
 	if planet == null or planet.shape == null:
 		return false
+	var bake_id := _city_key(patch_id)
 	var held := _city_at(patch_id)
 	if held != null:
-		_cities.erase(patch_id)
+		_cities.erase(bake_id)
 		held.free()
-	LagTracker.note("city", "E generate start patch %d" % patch_id)
+	LagTracker.note("city", "E generate start patch %d" % bake_id)
 	var started := Time.get_ticks_msec()
 	var generator := PatchCityGenerator.new()
 	var plan := generator.generate(planet.shape, partition, patch_id)
@@ -73,7 +77,7 @@ func render_live_city(patch_id: int) -> bool:
 	var city := PatchCity.new()
 	city.apply(plan, planet.shape)
 	add_child(city)
-	_cities[patch_id] = city
+	_cities[bake_id] = city
 	print("patch_city: %s — %d districts, loop %d pts"
 		% [plan.patch_name, plan.districts.size(), plan.loop.size()])
 	var ok := _finish_live_city(city, planet)
@@ -88,11 +92,12 @@ func render_yard_city(patch_id: int) -> bool:
 	var planet := get_parent() as Planet
 	if planet == null or planet.shape == null:
 		return false
+	var bake_id := _city_key(patch_id)
 	var held := _city_at(patch_id)
 	if held != null:
-		_cities.erase(patch_id)
+		_cities.erase(bake_id)
 		held.free()
-	LagTracker.note("city", "Q yard generate start patch %d" % patch_id)
+	LagTracker.note("city", "Q yard generate start patch %d" % bake_id)
 	var started := Time.get_ticks_msec()
 	var generator := PatchCityGenerator.new()
 	var plan := generator.generate(planet.shape, partition, patch_id)
@@ -103,7 +108,7 @@ func render_yard_city(patch_id: int) -> bool:
 	var city := YardCity.new()
 	city.apply(plan, planet.shape)
 	add_child(city)
-	_cities[patch_id] = city
+	_cities[bake_id] = city
 	print("yard_city: %s — %d districts, loop %d pts"
 		% [plan.patch_name, plan.districts.size(), plan.loop.size()])
 	var ok := _finish_live_city(city, planet)
@@ -118,24 +123,25 @@ func place_baked_city(patch_id: int, refresh_maps := true) -> bool:
 	var planet := get_parent() as Planet
 	if planet == null or planet.shape == null:
 		return false
-	var patch_name := partition.patches[patch_id].name
-	if not STORE.has_phase(patch_id, PatchCity.PHASE_PAINTED, patch_name):
+	var bake_id := _city_key(patch_id)
+	var patch_name := _bake_name(patch_id)
+	if not STORE.has_phase(bake_id, PatchCity.PHASE_PAINTED, patch_name):
 		return false
 	var held := _city_at(patch_id)
 	if held != null:
 		if held.phase >= PatchCity.PHASE_PAINTED and held.from_bake:
 			return false
-		_cities.erase(patch_id)
+		_cities.erase(bake_id)
 		held.free()
 	LagTracker.note("city", "J place baked start %s" % patch_name)
 	var started := Time.get_ticks_msec()
 	var baked := STORE.instantiate_phase(
-		patch_id, PatchCity.PHASE_PAINTED, planet.shape, patch_name,
+		bake_id, PatchCity.PHASE_PAINTED, planet.shape, patch_name,
 		STORE.LAYOUT_FIRST_PLANET, planet)
 	if baked == null:
 		return false
 	baked.from_bake = true
-	_cities[patch_id] = baked
+	_cities[bake_id] = baked
 	baked.clear_flora()
 	print("patch_city: placed baked %s — %d places  %d ms"
 		% [baked.plan.patch_name, baked.places.size(),
@@ -152,7 +158,7 @@ func has_baked_city(patch_id: int) -> bool:
 	if patch_id < 0 or patch_id >= partition.patches.size():
 		return false
 	return STORE.has_phase(
-		patch_id, PatchCity.PHASE_PAINTED, partition.patches[patch_id].name)
+		_city_key(patch_id), PatchCity.PHASE_PAINTED, _bake_name(patch_id))
 
 
 func ensure_ready() -> bool:
@@ -230,7 +236,12 @@ func place_all_baked_cities() -> int:
 	var placed := 0
 	var skipped := 0
 	LagTracker.note("city", "K place all baked start")
+	var seen: Dictionary = {}
 	for patch in partition.patches:
+		var key := _city_key(patch.id)
+		if seen.has(key):
+			continue
+		seen[key] = true
 		if not has_baked_city(patch.id):
 			continue
 		if place_baked_city(patch.id, false):
@@ -293,11 +304,14 @@ func patch_id_named(wanted: String) -> int:
 	var clean := wanted.strip_edges().to_lower()
 	if clean.is_empty() or not ensure_ready():
 		return -1
+	var prefix := -1
 	for patch in partition.patches:
 		var name := patch.name.strip_edges().to_lower()
-		if name == clean or name.begins_with(clean):
+		if name == clean:
 			return patch.id
-	return -1
+		if prefix < 0 and name.begins_with(clean):
+			prefix = patch.id
+	return prefix
 
 
 func patch_named(wanted: String):
@@ -645,7 +659,7 @@ func _monument_pad_ok(
 	if direction.length_squared() < 0.25:
 		return false
 	var up := direction.normalized()
-	if cut.owner_at(up) != patch_id:
+	if not cut.belongs_to(up, patch_id):
 		return false
 	var elev := shape.elevation(up, spacing)
 	if elev < 8.0:
@@ -784,12 +798,29 @@ func ensure_crawler_waypoints() -> void:
 			city.ensure_crawler_waypoint()
 
 
+func _city_key(patch_id: int) -> int:
+	var tid := partition.territory_id_of(patch_id)
+	return tid if tid >= 0 else patch_id
+
+
+func _bake_name(patch_id: int) -> String:
+	var named := partition.recipe_name_of(patch_id)
+	if not named.is_empty():
+		return named
+	if patch_id >= 0 and patch_id < partition.patches.size():
+		return partition.patches[patch_id].name
+	return ""
+
+
 func _city_at(patch_id: int) -> PatchCity:
-	if not _cities.has(patch_id):
-		return null
-	var held: Variant = _cities[patch_id]
+	var key := _city_key(patch_id)
+	if not _cities.has(key):
+		if not _cities.has(patch_id):
+			return null
+		key = patch_id
+	var held: Variant = _cities[key]
 	if not is_instance_valid(held):
-		_cities.erase(patch_id)
+		_cities.erase(key)
 		return null
 	return held as PatchCity
 
@@ -853,16 +884,18 @@ func _rebuild() -> void:
 				mountains.append(landmark.direction.normalized())
 	_flat_dirs.clear()
 	_high_dirs.clear()
-	partition.bake(planet.shape, mountains, mountain_clearance, target_span)
+	partition.bake(
+		planet.shape, mountains, mountain_clearance, target_span, cell_span)
 	_build_borders(planet)
 	_build_labels(planet)
 	_baked = true
 	visible = _enabled
 	if is_instance_valid(_borders):
 		_borders.visible = _enabled
-	print("land_patches: %d territories, %.0f km² buildable, %d border edges"
+	print("land_patches: %d cells in %d territories, %.0f km² buildable, %d border edges"
 		% [
 			partition.patches.size(),
+			partition.territories.size(),
 			partition.buildable_area / 1_000_000.0,
 			partition.border_edge_count(),
 		])
@@ -1031,20 +1064,20 @@ func _build_labels(planet: Planet) -> void:
 	for patch in partition.patches:
 		var up := patch.direction.normalized()
 		var at := shape.surface_point(up)
-		var height := clampf(patch.span * 0.14, 48.0, 220.0)
+		var height := clampf(patch.span * 0.11, 28.0, 120.0)
 		var label := Label3D.new()
 		label.text = patch.name.to_upper()
 		label.font = FONT
-		label.font_size = 42
-		label.pixel_size = height / 42.0
+		label.font_size = 28
+		label.pixel_size = height / 28.0
 		label.modulate = PALETTE.accent
-		label.outline_size = 12
+		label.outline_size = 8
 		label.outline_modulate = PALETTE.ink
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		label.no_depth_test = false
 		label.shaded = false
 		label.double_sided = false
 		label.visible = false
-		label.position = at + up * (height * 0.35 + 24.0)
+		label.position = at + up * (height * 0.32 + 16.0)
 		add_child(label)
 		_labels.append(label)

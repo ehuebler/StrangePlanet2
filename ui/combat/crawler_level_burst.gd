@@ -1,8 +1,8 @@
 class_name CrawlerLevelBurst
 extends Control
 
-## Top-of-HUD sting after a crawler level-up. The world stays live until this
-## finishes, then the spend menu opens.
+## Top-of-HUD sting after a crawler level-up. The world stays live; stats are
+## claimed automatically before this plays.
 
 signal finished
 
@@ -46,6 +46,7 @@ func _ready() -> void:
 	_title.add_theme_color_override(&"font_outline_color", RED)
 	_title.add_theme_constant_override(&"outline_size", 10)
 	add_child(_title)
+	CrtType.watch(self, true)
 	_drive_title()
 
 

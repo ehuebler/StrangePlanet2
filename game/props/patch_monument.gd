@@ -46,17 +46,20 @@ static func find_id(monument_id: String) -> PatchMonument:
 	return null
 
 
-static func enable_waypoint(monument_id: String) -> void:
+static func enable_waypoint(monument_id: String, announce := true) -> void:
 	var site := find_id(monument_id)
 	if site == null:
 		return
+	var first := not site.waypoint
 	site.waypoint = true
 	if not site.is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP):
 		site.add_to_group(CrawlerRules.CITY_WAYPOINT_GROUP)
+	if first and announce:
+		CrawlerSites.announce_unlock(site)
 
 
 static func apply_owned_quests(progress: CrawlerProgress) -> void:
 	if progress == null:
 		return
 	for quest_id: String in progress.owned_quests:
-		enable_waypoint(quest_id)
+		enable_waypoint(quest_id, false)

@@ -60,6 +60,18 @@ func ability_in(index: int) -> Ability:
 	return _abilities[index]
 
 
+func refresh_crawler_stats() -> void:
+	if player == null or player.crawler_kit == null:
+		return
+	for index in _abilities.size():
+		var ability := _abilities[index]
+		if ability == null:
+			continue
+		var card := player.crawler_kit.equipped_card(index)
+		if card != null:
+			ability.apply_crawler(card)
+
+
 func _on_slots_changed() -> void:
 	_rebuild()
 

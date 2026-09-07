@@ -7,6 +7,12 @@ extends Node
 
 const PLAYER := preload("res://game/player/player.tscn")
 const CITY_RING := preload("res://game/crawler/crawler_city_ring.gd")
+const GLOAM := preload("res://game/crawler/crawler_gloam.gd")
+const VESPER := preload("res://game/crawler/crawler_vesper.gd")
+const THRENODY := preload("res://game/crawler/crawler_threnody.gd")
+const DEMON_BODY := preload("res://game/crawler/crawler_demon_body.gd")
+const DEMON_COLUMN := preload("res://game/crawler/crawler_demon_column.gd")
+const MOB_SENSE := preload("res://game/crawler/crawler_mob_sense.gd")
 
 var _failures := 0
 var _player: OnlinePlayer
@@ -37,9 +43,72 @@ class _BlastDummy extends Node3D:
 		return false
 
 
+class _MissileDummy extends Node3D:
+	var taken := 0.0
+
+	func _ready() -> void:
+		add_to_group(CrawlerMob.GROUP)
+		add_to_group(DamageHit.COMBATANT_GROUP)
+
+	func apply_damage(hit: DamageHit) -> float:
+		var amount := float(hit.amount) if hit != null else 0.0
+		taken += amount
+		return amount
+
+	func combat_position() -> Vector3:
+		return global_position
+
+	func combat_radius() -> float:
+		return 0.55
+
+	func combat_faction() -> int:
+		return DamageHit.Faction.ENEMY
+
+	func is_alive() -> bool:
+		return true
+
+	func is_dead() -> bool:
+		return false
+
+	func is_charmed() -> bool:
+		return false
+
+
 class _StartPadWorld extends GameWorld:
 	func _crawler_start_transform() -> Transform3D:
 		return Transform3D(Basis.IDENTITY, Vector3(10.0, 20.0, 30.0))
+
+
+class _HuntDummy extends Node3D:
+	var taken := 0.0
+	var look := Vector3.FORWARD
+	var speed := 0.0
+
+	func apply_damage(hit: DamageHit) -> float:
+		var amount := float(hit.amount) if hit != null else 0.0
+		taken += amount
+		return amount
+
+	func combat_position() -> Vector3:
+		return global_position
+
+	func combat_radius() -> float:
+		return 0.4
+
+	func combat_peer_id() -> int:
+		return 1
+
+	func combat_faction() -> int:
+		return DamageHit.Faction.PLAYER
+
+	func is_dead() -> bool:
+		return false
+
+	func look_direction() -> Vector3:
+		return look
+
+	func flight_speed() -> float:
+		return speed
 
 
 func _ready() -> void:
@@ -74,6 +143,10 @@ func _ready() -> void:
 	_check_starfire_city_gift()
 	_check_heal_and_flash()
 	_check_horde_roster()
+	_check_mob_sense()
+	_check_mob_director()
+	await _check_demons()
+	await _check_goblins()
 	await _check_idle_roam()
 	await _check_enemy_presence()
 	await _check_crawler_bursts()
@@ -83,13 +156,26 @@ func _ready() -> void:
 	await _check_level_burst()
 	await _check_achievement_burst()
 	await _check_city_store()
+	await _check_reststop()
+	await _check_game_menu_items()
 	await _check_crawler_death()
 	await _check_monument_collision()
 	_check_building_foundation()
 	_check_building_flora()
 	await _check_monument_quests()
 	await _check_tilde_city_waypoint()
+	await _check_waypoint_reveal()
 	await _check_entering_sites()
+	await _check_crawler_statues()
+	_check_roar_shockwaves()
+	_check_fields()
+	_check_linger()
+	_check_elemental_mods()
+	_check_multi_shot()
+	_check_reach()
+	_check_bounce()
+	_check_impact_cast()
+	_check_homing()
 
 	_player.queue_free()
 	await get_tree().process_frame
@@ -180,6 +266,16 @@ func _check_wild_rules() -> void:
 		"the office tower sits on Far Beacon 4")
 	_expect(CrawlerRules.CASTLE_PATCH == "Long Shore 4",
 		"the castle sits on Long Shore 4")
+	_expect(not CrawlerRules.WILD_KINDS.has("gruk")
+			and not CrawlerRules.WILD_KINDS.has("nix")
+			and not CrawlerRules.WILD_KINDS.has("vex")
+			and not CrawlerRules.WILD_KINDS.has("gloam")
+			and not CrawlerRules.WILD_KINDS.has("vesper")
+			and not CrawlerRules.WILD_KINDS.has("threnody"),
+		"goblins and demons are not part of the roaming field pack")
+	_expect(not CrawlerMobs.kinds_for("Long Shore 4").has("gruk")
+			and not CrawlerMobs.kinds_for("Salt Prairie").has("vex"),
+		"field patches do not roll goblins")
 	_expect(not CrawlerRules.reserved_patch("Salt Prairie"),
 		"ordinary patches can hold monsters")
 	_expect(is_inf(LandPatchOverlay.spawn_slope_score(2.0, 2.0, 4.0)),
@@ -376,6 +472,20 @@ func _check_wild_rules() -> void:
 	_expect(CrawlerRules.spawn_lead_range(80.0).x
 			> CrawlerRules.spawn_ring_range().y,
 		"the extra pack sits farther out than the ring")
+	_expect(CrawlerRules.spawn_preview_range(80.0).x
+			> CrawlerRules.spawn_lead_range(80.0).y,
+		"preview homes sit past the live lead pack")
+	_expect(CrawlerRules.spawn_preview_range(80.0).y
+			< CrawlerRules.WILD_STREAM_OUT,
+		"preview homes stay inside stream-out")
+	_expect(CrawlerRules.spawn_stream_range(80.0).y
+			> CrawlerRules.spawn_lead_range(80.0).y
+			and CrawlerRules.spawn_stream_range(0.0)
+				== CrawlerRules.spawn_lead_range(0.0),
+		"fast travel uses the longer preview corridor")
+	_expect(CrawlerRules.spawn_ready_count(80.0)
+			> CrawlerRules.spawn_ready_count(0.0),
+		"fast travel stocks more precomputed homes")
 	var ring_a := CrawlerRules.spawn_ring_point(
 		Vector3.ZERO, Vector3.UP, 0.0, 100.0)
 	var ring_b := CrawlerRules.spawn_ring_point(
@@ -521,9 +631,15 @@ func _check_safe_box() -> void:
 		"safe box does not cover the open field")
 	_player.global_position = Vector3.ZERO
 	_expect(_player.in_crawler_safe_zone(), "player standing in the box is safe")
+	_expect(_player.can_edit_crawler_mods(), "safe boxes allow remoding")
+	_expect(_has_safe_zone_row(_player), "safe boxes show the Safe Zone buff")
+	_expect(_safe_zone_chip_visible(_player),
+		"the Safe Zone chip sits on the combat HUD")
 	_expect(not _player.can_attack(), "abilities are blocked inside the box")
 	_player.global_position = Vector3(80.0, 0.0, 0.0)
 	_expect(not _player.in_crawler_safe_zone(), "leaving the volume ends the shelter")
+	_expect(not _player.can_edit_crawler_mods(), "the field locks ability mods")
+	_expect(not _has_safe_zone_row(_player), "the buff leaves with the box")
 	_expect(_player.can_attack(), "abilities return outside the box")
 	var left := [false]
 	box.player_departed.connect(func() -> void: left[0] = true)
@@ -563,6 +679,21 @@ func _check_city_ring() -> void:
 		"E does not open a menu outside the city")
 	_player.global_position = Vector3.ZERO
 	_expect(_player.in_crawler_city(), "standing in the ring is being in the city")
+	_expect(_player.can_edit_crawler_mods(), "cities allow remoding")
+	_expect(_has_safe_zone_row(_player), "cities show the Safe Zone buff")
+	_expect(_safe_zone_chip_visible(_player),
+		"the city Safe Zone chip sits on the combat HUD")
+	var page := CrawlerHeroPage.new()
+	page.configure(_player)
+	add_child(page)
+	await get_tree().process_frame
+	page.refresh()
+	var eyes := page.find_child("CrawlerAbilityTile_0", true, false) as CrawlerAbilityTile
+	_expect(eyes != null and not eyes.mod_slots().is_empty()
+			and eyes.mod_slots()[0].draggable
+			and eyes.mod_slots()[0].accepts_drops,
+		"cities unlock ability mod slots")
+	page.queue_free()
 	_expect(_player.can_attack(), "the ring does not lock abilities")
 	_press_interact(_player)
 	await get_tree().process_frame
@@ -669,7 +800,492 @@ func _check_horde_roster() -> void:
 		"a nearby kill delays the next spawn-in")
 	_player.global_position = Vector3.ZERO
 	_player.velocity = Vector3.ZERO
+	var owner := _player.get_instance_id()
+	_player.velocity = Vector3(80.0, 0.0, 0.0)
+	horde._ready_homes.clear()
+	horde._ready_homes.append({"at": Vector3(-200.0, 0.0, 0.0), "owner": owner})
+	var missed := horde._take_ready_home(_player, null, false)
+	_expect(not missed.is_finite(), "homes behind travel are not used")
+	horde._ready_homes.clear()
+	horde._ready_homes.append({"at": Vector3(320.0, 0.0, 0.0), "owner": owner})
+	var taken := horde._take_ready_home(_player, null, false)
+	_expect(taken.is_equal_approx(Vector3(320.0, 0.0, 0.0))
+			and horde._ready_homes.is_empty(),
+		"ahead fill uses a precomputed home")
+	_player.velocity = Vector3.ZERO
 	horde.queue_free()
+
+
+func _check_mob_sense() -> void:
+	MOB_SENSE.invalidate()
+	MOB_SENSE.begin_frame(get_tree())
+	_expect(MOB_SENSE.players().has(_player),
+		"the targeting board caches the live player once a frame")
+	var horde := CrawlerHorde.new()
+	add_child(horde)
+	var ranger := horde.spawn_test_mob("ranger", Vector3(8.0, 12.0, 0.0), false)
+	MOB_SENSE.invalidate()
+	_expect(ranger.call("_nearest_player") == _player,
+		"a ranger still finds the player through the shared board")
+	_expect(MOB_SENSE.charmed_count() == 0
+			and ranger.call("_nearest_charmed_mob") == null,
+		"an empty charm list skips the O(n) bait scan")
+	_expect(is_equal_approx(MOB_SENSE.field_slow(ranger, ranger.global_position), 1.0),
+		"no fields means no extra group walk for slow")
+	_expect(CrawlerRules.patch_recipe(CrawlerRules.START_PATCH)["kinds"].has("ranger"),
+		"targeting cache does not change the field roster")
+	var ids: PackedStringArray = PackedStringArray()
+	for channel: Dictionary in LagTracker.channels():
+		ids.append(String(channel["id"]))
+	_expect(ids.has("mobs") and ids.has("mob_ai"),
+		"the lag log charts crawler count and targeting time")
+	var box := CrawlerSafeBox.new()
+	box.configure(99, Transform3D.IDENTITY)
+	add_child(box)
+	MOB_SENSE.invalidate()
+	MOB_SENSE.begin_frame(get_tree())
+	box.free()
+	ranger.call("_keep_out_of_safe_zones")
+	_expect(is_equal_approx(MOB_SENSE.field_slow(ranger, ranger.global_position), 1.0)
+			and ranger.call("_nearest_player") == _player,
+		"a freed keep-out zone does not crash targeting")
+	horde.queue_free()
+
+
+func _check_mob_director() -> void:
+	_expect(CrawlerRules.mob_lod(20.0) == CrawlerRules.MOB_LOD_HOT
+			and CrawlerRules.mob_lod(100.0) == CrawlerRules.MOB_LOD_WARM
+			and CrawlerRules.mob_lod(200.0) == CrawlerRules.MOB_LOD_COLD,
+		"mobs drop from unique AI to a cheap coast as they get farther")
+	_expect(CrawlerRules.MOB_SPAWN_BUILD < CrawlerHorde.SPAWN_PER_FRAME
+			and CrawlerRules.MOB_THINK_BUDGET > 0
+			and CrawlerRules.MOB_ATTACK_BUDGET > 0,
+		"the horde drips instantiates and caps unique thinks")
+	MOB_SENSE.invalidate()
+	MOB_SENSE.begin_frame(get_tree())
+	var thinks := 0
+	for _step in CrawlerRules.MOB_THINK_BUDGET + 4:
+		if MOB_SENSE.take_think(null, true):
+			thinks += 1
+	_expect(thinks == CrawlerRules.MOB_THINK_BUDGET,
+		"a physics frame only runs a budget of unique attack planners")
+	MOB_SENSE.invalidate()
+	MOB_SENSE.begin_frame(get_tree())
+	var shots := 0
+	for _step in CrawlerRules.MOB_ATTACK_BUDGET + 3:
+		if MOB_SENSE.take_attack("ranger"):
+			shots += 1
+	_expect(shots == CrawlerRules.MOB_ATTACK_BUDGET,
+		"a physics frame only starts a few new attacks")
+	var horde := CrawlerHorde.new()
+	add_child(horde)
+	_player.global_position = Vector3.ZERO
+	var near := horde.spawn_test_mob("ranger", Vector3(8.0, 4.0, 0.0), true)
+	var far := horde.spawn_test_mob("ranger", Vector3(240.0, 4.0, 0.0), false)
+	MOB_SENSE.invalidate()
+	MOB_SENSE.begin_frame(get_tree())
+	_expect(MOB_SENSE.lod_of(near) == CrawlerRules.MOB_LOD_HOT
+			and MOB_SENSE.lod_of(far) == CrawlerRules.MOB_LOD_COLD,
+		"the director keeps nearby unique AI and sleeps the far field")
+	_expect(horde.queued_spawn_count() == 0, "test spawns are immediate")
+	var queued := horde._enqueue_wild(
+		"ranger", Vector3(80.0, 8.0, 0.0), 1, -1, 1.0)
+	_expect(queued == 1 and horde.queued_spawn_count() == 1
+			and horde.wild_live_count() == 2,
+		"field fill queues a home instead of instantiating it this frame")
+	horde._drain_builds()
+	_expect(horde.queued_spawn_count() == 0 and horde.wild_live_count() == 3,
+		"the horde drips queued homes across later frames")
+	horde.queue_free()
+
+
+func _check_demons() -> void:
+	CrawlerMobs.reload()
+	_expect(not CrawlerMobs.kinds_for(CrawlerRules.START_PATCH).has("gloam")
+			and not CrawlerMobs.kinds_for(CrawlerRules.START_PATCH).has("vesper")
+			and not CrawlerMobs.kinds_for(CrawlerRules.START_PATCH).has("threnody"),
+		"the start pad fields no demons")
+	_expect(not CrawlerMobs.kinds_for(
+				CrawlerRules.START_PATCH, CrawlerRules.START_NEAR_RANGE + 1.0)
+			.has("vesper")
+			and not CrawlerMobs.kinds_for(
+				CrawlerRules.START_PATCH, CrawlerRules.START_NEAR_RANGE + 1.0)
+			.has("gloam")
+			and not CrawlerMobs.kinds_for(
+				CrawlerRules.START_PATCH, CrawlerRules.START_NEAR_RANGE + 1.0)
+			.has("threnody"),
+		"demons stay off the start tile even farther from the pad")
+	_expect(not CrawlerMobs.kinds_for(CrawlerRules.CITY_PATCH).has("gloam")
+			and not CrawlerMobs.kinds_for(CrawlerRules.CITY_PATCH).has("vesper")
+			and not CrawlerMobs.kinds_for(CrawlerRules.CITY_PATCH).has("threnody")
+			and not CrawlerMobs.kinds_for("Salt Prairie").has("threnody")
+			and not CrawlerMobs.kinds_for("Salt Prairie").has("gloam"),
+		"the first city and later field tiles do not call demons")
+	_expect(CrawlerMobs.kinds_for(CrawlerRules.CASTLE_PATCH).has("gloam")
+			and CrawlerMobs.kinds_for(CrawlerRules.CASTLE_PATCH).has("vesper")
+			and CrawlerMobs.kinds_for(CrawlerRules.CASTLE_PATCH).has("threnody")
+			and CrawlerMobs.kinds_for(CrawlerRules.TOWER_PATCH).has("gloam")
+			and CrawlerMobs.kinds_for(CrawlerRules.TOWER_PATCH).has("vesper")
+			and CrawlerMobs.kinds_for(CrawlerRules.TOWER_PATCH).has("threnody")
+			and CrawlerMobs.kinds_for("Long Shore 4 Keep").has("vesper"),
+		"demons field on the castle and office grounds")
+	_expect(CrawlerRules.demon_grounds(CrawlerRules.CASTLE_PATCH)
+			and CrawlerRules.demon_grounds(CrawlerRules.TOWER_PATCH)
+			and CrawlerRules.demon_grounds("Far Beacon 4 Plaza")
+			and not CrawlerRules.demon_grounds(CrawlerRules.START_PATCH)
+			and not CrawlerRules.demon_grounds(CrawlerRules.CITY_PATCH)
+			and CrawlerRules.opening_route_patch("Tide Margin 2")
+			and CrawlerRules.opening_route_patch(CrawlerRules.CITY_PATCH)
+			and not CrawlerRules.can_field_demons(CrawlerRules.START_PATCH)
+			and not CrawlerRules.can_field_demons(CrawlerRules.CITY_PATCH)
+			and not CrawlerRules.can_field_demons("Salt Prairie")
+			and CrawlerRules.can_field_demons(CrawlerRules.CASTLE_PATCH)
+			and CrawlerRules.can_field_demons(CrawlerRules.TOWER_PATCH)
+			and CrawlerRules.DEMON_SITE_RANGE > PatchMonuments.KEEP_OUT,
+		"demons wait until past the first city, then hug the buildings")
+	_expect(CrawlerRules.kind_cap("threnody", 1) == 1
+			and CrawlerRules.kind_cap("threnody", 4) == 1,
+		"only one Threnody can live on a tile")
+	_expect(CrawlerRules.spawn_weight("gloam") > CrawlerRules.spawn_weight("vesper")
+			and CrawlerRules.spawn_weight("vesper") > CrawlerRules.spawn_weight("threnody"),
+		"Gloam flocks are the common roll")
+	_expect(CrawlerMobs.number("gloam", 3, "health", 0.0)
+			> CrawlerMobs.number("gloam", 1, "health", 0.0)
+			and CrawlerMobs.number("vesper", 3, "damage", 0.0)
+			> CrawlerMobs.number("vesper", 1, "damage", 0.0)
+			and CrawlerMobs.number("threnody", 3, "damage", 0.0)
+			> CrawlerMobs.number("threnody", 1, "damage", 0.0),
+		"demon stats scale with level")
+	_expect(CrawlerMobs.attack_mode("gloam", 1) == "bite"
+			and CrawlerMobs.attack_mode("vesper", 1) == "beam"
+			and CrawlerMobs.attack_mode("threnody", 1) == "column",
+		"each demon has its own attack")
+	_expect(CrawlerMobs.attack_mode("ranger", 1) == "standoff",
+		"rangers still lob from a standoff, not a beam")
+
+	var horde := CrawlerHorde.new()
+	add_child(horde)
+	horde.set_process(false)
+	horde.set("_start_origin", Vector3.ZERO)
+	var at_pad: String = horde.call(
+		"_pick_kind", Vector3.ZERO, CrawlerRules.START_PATCH, 0.0, 1)
+	_expect(not CrawlerRules.patch_recipe(CrawlerRules.START_PATCH, 0.0)["kinds"].has("vesper")
+			and not CrawlerRules.patch_recipe(CrawlerRules.START_PATCH, 0.0)["kinds"].has("gloam")
+			and not CrawlerRules.GOBLIN_KINDS.has(at_pad)
+			and (at_pad == "" or CrawlerRules.START_NEAR_KINDS.has(at_pad)),
+		"while the player is on the pad, homes 90m out still roll the near roster")
+	_expect(not CrawlerRules.patch_recipe(
+				CrawlerRules.START_PATCH, CrawlerRules.SPAWN_MIN)["kinds"].has("vesper")
+			and not CrawlerRules.patch_recipe(
+				CrawlerRules.START_PATCH, CrawlerRules.SPAWN_MIN)["kinds"].has("gloam")
+			and not CrawlerRules.field_kinds(
+				CrawlerRules.START_PATCH, CrawlerRules.SPAWN_MIN, Vector3.ZERO)
+			.has("vesper"),
+		"a home-distance check still cannot unlock demons at the pad")
+	var at_castle: String = horde.call(
+		"_pick_kind", Vector3.ZERO, CrawlerRules.CASTLE_PATCH, 400.0, 1)
+	_expect(CrawlerRules.field_kinds(CrawlerRules.CASTLE_PATCH).has("vesper")
+			and CrawlerRules.field_kinds(CrawlerRules.TOWER_PATCH).has("threnody")
+			and (at_castle == "" or CrawlerRules.field_kinds(
+				CrawlerRules.CASTLE_PATCH).has(at_castle)),
+		"castle grounds can roll the demon roster")
+	var castle_mark := PatchMonument.new()
+	castle_mark.monument_id = CrawlerProgress.QUEST_CASTLE
+	add_child(castle_mark)
+	castle_mark.global_position = Vector3(0.0, 0.0, 0.0)
+	_expect(CrawlerRules.near_demon_site(Vector3(120.0, 0.0, 0.0))
+			and not CrawlerRules.near_demon_site(
+				Vector3(CrawlerRules.DEMON_SITE_RANGE + 40.0, 0.0, 0.0))
+			and CrawlerRules.can_field_demons(
+				CrawlerRules.CASTLE_PATCH, Vector3(80.0, 0.0, 0.0))
+			and not CrawlerRules.can_field_demons(
+				CrawlerRules.CASTLE_PATCH,
+				Vector3(CrawlerRules.DEMON_SITE_RANGE + 40.0, 0.0, 0.0))
+			and not CrawlerRules.field_kinds(
+				CrawlerRules.CASTLE_PATCH, -1.0,
+				Vector3(CrawlerRules.DEMON_SITE_RANGE + 40.0, 0.0, 0.0))
+			.has("vesper"),
+		"the castle tile only fields demons beside the keep")
+	castle_mark.queue_free()
+	var gloam := horde.spawn_test_mob("gloam", Vector3(0.0, 2.0, 0.0), false, 1)
+	_expect(gloam != null and gloam.wild_kind() == "gloam" and not gloam.flies(),
+		"Gloam spawns on the ground")
+	var vesper := horde.spawn_test_mob("vesper", Vector3(8.0, 16.0, 0.0), false, 1)
+	_expect(vesper != null and vesper.wild_kind() == "vesper" and vesper.flies(),
+		"Vesper spawns flying")
+	var threnody := horde.spawn_test_mob("threnody", Vector3(-8.0, 22.0, 0.0), false, 1)
+	_expect(threnody != null and threnody.wild_kind() == "threnody",
+		"the horde can spawn a Threnody")
+	_expect(threnody.combat_radius() > vesper.combat_radius()
+			and vesper.combat_radius() > gloam.combat_radius(),
+		"Threnody is the massive demon")
+	_expect(threnody.find_child("CursedAura", true, false) != null,
+		"Threnody has a cursed aura")
+	gloam.set_physics_process(false)
+	vesper.set_physics_process(false)
+	threnody.set_physics_process(false)
+	await get_tree().process_frame
+
+	var prey := _HuntDummy.new()
+	add_child(prey)
+	prey.global_position = gloam.combat_position()
+	gloam.call("_bite", prey)
+	_expect(prey.taken > 0.0, "Gloam bite damages a close target")
+	var bite_clip := gloam.current_clip()
+	_expect(bite_clip == CrawlerMob.CLIP_ATTACK or bite_clip == DEMON_BODY.CLIP_FLY,
+		"Gloam plays a bite or fly clip")
+
+	prey.taken = 0.0
+	prey.global_position = gloam.global_position + Vector3(20.0, 0.0, 0.0)
+	prey.speed = 0.0
+	gloam.call("_chase_ground", prey, 0.16)
+	_expect(gloam.flies(), "Gloam takes off when the player pulls away")
+	_expect(gloam.current_clip() == DEMON_BODY.CLIP_FLY,
+		"an airborne Gloam uses the fly clip")
+	gloam.call("_chase_air", prey, 0.16)
+	_expect(prey.taken == 0.0, "Gloam never bites while flying")
+
+	var lander: CrawlerMob = GLOAM.new()
+	lander.configure("land", Transform3D(Basis(), Vector3(0.0, 6.0, 12.0)), 1, true)
+	add_child(lander)
+	lander.set_physics_process(false)
+	await get_tree().process_frame
+	lander.call("_takeoff")
+	var perch := _HuntDummy.new()
+	add_child(perch)
+	perch.global_position = Vector3(0.0, 2.0, 0.0)
+	perch.look = Vector3(0.0, 0.0, 1.0)
+	var perch_at: Vector3 = lander.call("_land_perch", perch)
+	_expect(perch_at.distance_to(perch.global_position)
+			>= CrawlerRules.GLOAM_LAND_GAP * 0.7,
+		"the landing perch stays a few metres out")
+	lander.global_position = perch_at
+	lander.call("_land")
+	_expect(not lander.flies(), "Gloam lands at a flank perch, not in the player's lap")
+
+	var mark := _HuntDummy.new()
+	add_child(mark)
+	mark.global_position = vesper.global_position + Vector3(0.0, 0.0, 24.0)
+	vesper.call("_try_charge", mark)
+	_expect(bool(vesper.call("aiming")) and (vesper.call("locked_aim") as Vector3).is_finite(),
+		"Vesper locks a beam the moment it starts charging")
+	var locked: Vector3 = vesper.call("locked_aim")
+	mark.global_position += Vector3(8.0, 0.0, 0.0)
+	vesper.call("_draw_beam", 0.2)
+	_expect(vesper.get_node("VesperBeam").visible, "the telegraph line is visible while charging")
+	var thin := float(vesper.call("charge_share"))
+	vesper.set("_aim_left", float(vesper.get("_aim_left")) * 0.25)
+	_expect(float(vesper.call("charge_share")) > thin, "the telegraph grows as the beam powers up")
+	_expect((vesper.call("locked_aim") as Vector3).is_equal_approx(locked),
+		"the beam stays locked where it began charging")
+	vesper.set("_aim_left", 0.0)
+	vesper.call("_hold_aim", mark, vesper.global_position, 0.02)
+	_expect(mark.taken > 0.0, "the finished beam deals damage")
+	_expect(not bool(vesper.call("aiming")), "the telegraph clears after the shot")
+
+	var loop_a: Vector3 = threnody.call("infinity_point", PI * 0.5)
+	var loop_b: Vector3 = threnody.call("infinity_point", PI * 1.5)
+	_expect(loop_a.distance_to(threnody.hang_origin) > 10.0
+			and (loop_a - threnody.hang_origin).dot(loop_b - threnody.hang_origin) < 0.0,
+		"Threnody patrols an infinity loop around its hang")
+	var looker := _HuntDummy.new()
+	add_child(looker)
+	looker.global_position = Vector3(40.0, 8.0, 40.0)
+	looker.look = Vector3(0.0, 0.0, -1.0)
+	var station: Vector3 = threnody.call("hold_station", looker)
+	var along := station - looker.global_position
+	_expect(along.normalized().dot(looker.look) > 0.7
+			and station.distance_to(looker.global_position)
+			>= CrawlerRules.VESPER_STANDOFF_MAX,
+		"Threnody holds far, top-middle of the look")
+
+	var rival: CrawlerMob = THRENODY.new()
+	rival.configure("rival", Transform3D(Basis(), Vector3(12.0, 22.0, 4.0)), 1, false)
+	add_child(rival)
+	rival.set_physics_process(false)
+	await get_tree().process_frame
+	threnody.chase = true
+	_player.global_position = rival.global_position
+	_expect(not rival.tick_agro(_player, 0.16),
+		"a second Threnody will not engage")
+	threnody.chase = false
+
+	var before := _player.health()
+	_player.global_position = Vector3(70.0, 4.0, 0.0)
+	var column: Node = DEMON_COLUMN.place(
+		self, threnody, _player.global_position,
+		7.5, 20.0, 6.0, 28.0)
+	_expect(column != null and bool(column.call("contains", _player.combat_position(), 0.4)),
+		"a cursed column stands where Threnody places it")
+	if column != null:
+		column.call("tick_now")
+		_expect(_player.health() < before
+				and _player.statuses.has(CombatStatuses.SHOCK),
+			"the column damages and shocks the player")
+		column.queue_free()
+
+	prey.queue_free()
+	perch.queue_free()
+	mark.queue_free()
+	looker.queue_free()
+	lander.queue_free()
+	rival.queue_free()
+	horde.queue_free()
+	_player.statuses.clear(CombatStatuses.SHOCK)
+	_player.stats.set_health(_player.maximum_health())
+	_player.global_position = Vector3.ZERO
+	_player.velocity = Vector3.ZERO
+	await get_tree().process_frame
+
+
+func _check_goblins() -> void:
+	CrawlerMobs.reload()
+	_expect(CrawlerRules.is_goblin_kind("gruk")
+			and CrawlerRules.is_goblin_kind("nix")
+			and CrawlerRules.is_goblin_kind("vex"),
+		"Gruk, Nix, and Vex are the castle goblins")
+	_expect(not CrawlerRules.flies("gruk")
+			and not CrawlerRules.flies("nix")
+			and not CrawlerRules.flies("vex"),
+		"goblins cannot fly")
+	_expect(CrawlerMobs.attack_mode("gruk", 1) == "swing"
+			and CrawlerMobs.attack_mode("nix", 1) == "swing"
+			and CrawlerMobs.attack_mode("vex", 1) == "mortar",
+		"Gruk and Nix swing, Vex lobs a mortar")
+	_expect(CrawlerRules.goblin_garrison_reach(0) <= CrawlerRules.GOBLIN_INNER_MAX
+			and CrawlerRules.goblin_garrison_reach(CrawlerRules.GOBLIN_INTERIOR)
+				>= CrawlerRules.GOBLIN_OUTER_MIN
+			and CrawlerRules.goblin_garrison_reach(CrawlerRules.GOBLIN_GARRISON - 1)
+				<= CrawlerRules.GOBLIN_OUTER_MAX + 0.01,
+		"preset pads pack the courtyard and the grounds")
+	var kinds := {}
+	for index in CrawlerRules.GOBLIN_GARRISON:
+		kinds[CrawlerRules.goblin_garrison_kind(index)] = true
+	_expect(kinds.has("gruk") and kinds.has("nix") and kinds.has("vex"),
+		"the castle horde mixes all three goblins")
+
+	var horde := CrawlerHorde.new()
+	add_child(horde)
+	horde.set_process(false)
+	_player.global_position = Vector3.ZERO
+	_player.velocity = Vector3.ZERO
+
+	var site := PatchMonument.new()
+	site.monument_id = "keepout-test"
+	site.keepout_radius = 24.0
+	add_child(site)
+	site.global_position = Vector3(200.0, 0.0, 0.0)
+	await get_tree().process_frame
+	_expect(PatchMonument.blocks_any(get_tree(), Vector3(200.0, 0.0, 0.0)),
+		"the castle keep-out still blocks new wild homes")
+	_expect(not horde._spawn_point_ok(
+			Vector3(200.0, 0.0, 0.0), _player, null, "ranger"),
+		"wild packs do not spawn on the castle grounds")
+
+	var chaser := horde.spawn_test_mob("ranger", Vector3(205.0, 0.0, 0.0), true)
+	var lurker := horde.spawn_test_mob("ranger", Vector3(208.0, 0.0, 0.0), false)
+	var gruk := horde.spawn_test_mob("gruk", Vector3(202.0, 0.0, 0.0), false)
+	chaser.set_physics_process(false)
+	lurker.set_physics_process(false)
+	gruk.set_physics_process(false)
+	await get_tree().process_frame
+	_expect(gruk != null and gruk.wild_kind() == "gruk" and not gruk.flies()
+			and gruk.is_persistent(),
+		"Gruk is a grounded garrison mob")
+	horde._reap_far_and_idle()
+	_expect(is_instance_valid(chaser) and not chaser.dismissed,
+		"a chasing wild is not dismissed when it follows into the castle")
+	_expect(not is_instance_valid(lurker) or lurker.dismissed,
+		"idle wilds still cannot sit on the castle grounds")
+	_expect(is_instance_valid(gruk) and not gruk.dismissed,
+		"castle goblins are not reaped for living on the grounds")
+
+	var nix := horde.spawn_test_mob("nix", Vector3(0.0, 2.0, 4.0), false)
+	var vex := horde.spawn_test_mob("vex", Vector3(0.0, 2.0, -6.0), false)
+	nix.set_physics_process(false)
+	vex.set_physics_process(false)
+	await get_tree().process_frame
+	_expect(nix.wild_kind() == "nix" and not nix.flies(),
+		"Nix is a grounded melee goblin")
+	_expect(vex.wild_kind() == "vex" and not vex.flies(),
+		"Vex stays on the ground")
+
+	var prey := _HuntDummy.new()
+	add_child(prey)
+	prey.global_position = gruk.combat_position()
+	gruk.call("_swing", prey)
+	_expect(prey.taken > 0.0, "Gruk swing damages a close target")
+	_expect(gruk.current_clip() == CrawlerMob.CLIP_ATTACK,
+		"Gruk plays a swing clip")
+	prey.taken = 0.0
+	prey.global_position = nix.combat_position()
+	nix.call("_swing", prey)
+	_expect(prey.taken > 0.0, "Nix swing damages a close target")
+
+	var orb := CrawlerVexMortar.new()
+	orb.damage = 12.0
+	orb.ball_radius = 0.4
+	orb.hit_radius = 1.2
+	add_child(orb)
+	orb.set_physics_process(false)
+	await get_tree().process_frame
+	var glow := orb._core.material_override as StandardMaterial3D
+	_expect(glow != null and glow.emission.r > 0.7 and glow.emission.g < 0.35
+			and glow.emission.b < 0.35,
+		"Vex mortars glow red")
+	orb.queue_free()
+	prey.add_to_group(&"network_players")
+	prey.global_position = Vector3(40.0, 2.0, 40.0)
+	var ball := CrawlerVexMortar.new()
+	ball.damage = 12.0
+	ball.hit_radius = 1.4
+	_expect(ball.launch_anywhere(
+			self, prey.global_position + Vector3(0.0, 0.3, 0.0),
+			Vector3(0.0, -4.0, 0.0), vex),
+		"Vex can throw a mortar")
+	for _step in 8:
+		await get_tree().physics_frame
+	_expect(prey.taken > 0.0, "the mortar damages a player it lands on")
+	if is_instance_valid(ball):
+		ball.queue_free()
+	prey.remove_from_group(&"network_players")
+
+	var before := horde.garrison_live_count()
+	_expect(horde.spawn_castle_garrison_at(Vector3(0.0, 12.0, 0.0), 12) == 12,
+		"the castle horde uses preset pads")
+	_expect(horde.garrison_live_count() == before + 12,
+		"garrison pads add live goblins")
+	var saw := {}
+	for mob_variant: Variant in horde._mobs.values():
+		var mob := mob_variant as CrawlerMob
+		if mob == null or not mob.is_persistent():
+			continue
+		mob.set_physics_process(false)
+		saw[mob.wild_kind()] = true
+	_expect(saw.has("gruk") and saw.has("nix") and saw.has("vex"),
+		"the seeded horde includes Gruk, Nix, and Vex")
+	var doomed: CrawlerMob
+	for mob_variant: Variant in horde._mobs.values():
+		var mob := mob_variant as CrawlerMob
+		if mob != null and mob.is_persistent() and mob.wild_kind() == "gruk":
+			doomed = mob
+			break
+	_expect(doomed != null, "the horde placed a Gruk")
+	var smash := DamageHit.impact(doomed.combat_position(), 2.0, 9999.0)
+	smash.faction = DamageHit.Faction.PLAYER
+	doomed.apply_damage(smash)
+	await get_tree().process_frame
+	_expect(horde.garrison_live_count() == before + 11,
+		"a killed goblin stays gone")
+	_expect(horde.spawn_castle_garrison_at(Vector3(0.0, 12.0, 0.0), 12) == 0,
+		"the castle horde does not refill")
+
+	prey.queue_free()
+	site.queue_free()
+	horde.queue_free()
+	_player.global_position = Vector3.ZERO
+	_player.velocity = Vector3.ZERO
+	await get_tree().process_frame
 
 
 func _check_idle_roam() -> void:
@@ -686,6 +1302,18 @@ func _check_idle_roam() -> void:
 	_expect(rise >= 16.0, "the eye circle sits well above the perch")
 	ram._tick_ai(0.2)
 	_expect(ram.velocity.length() > 1.0, "deagroed eyes keep circling")
+	ram.global_transform.basis = Basis(
+		Vector3(1.2, 0.18, 0.0),
+		Vector3(0.04, 0.82, 0.12),
+		Vector3(0.08, 0.0, 1.15))
+	ram.velocity = Vector3(6.0, 0.0, 2.4)
+	ram._face_motion(0.16)
+	var faced := ram.global_transform.basis
+	_expect(is_equal_approx(faced.x.length(), 1.0)
+			and is_equal_approx(faced.y.length(), 1.0)
+			and is_equal_approx(faced.z.length(), 1.0)
+			and faced.determinant() > 0.9,
+		"facing motion keeps an orthonormal basis")
 	ram.queue_free()
 
 	var ranger := CrawlerRanger.new()
@@ -911,7 +1539,16 @@ func _check_enemy_presence() -> void:
 	leftover.set_source(ghost)
 	_expect(leftover.source_path.is_empty(),
 		"a shot still in the air does not crash after its ranger dies")
-	ranger.queue_free()
+	var flying := CrawlerRangerShot.new()
+	add_child(flying)
+	flying.set_physics_process(false)
+	flying.shooter = ranger
+	ranger.free()
+	_expect(not bool(flying.call("_shooter_charmed")),
+		"an orb whose ranger already died can still ask charm state")
+	_expect(bool(flying.call("_should_hurt", _player)),
+		"a dead ranger's orb still hunts the player")
+	flying.queue_free()
 	var hulk: CrawlerMob = load("res://game/crawler/crawler_rift_hulk.gd").new()
 	hulk.configure("hulk", Transform3D.IDENTITY, 2, false)
 	add_child(hulk)
@@ -1290,6 +1927,22 @@ func _check_progress() -> void:
 		"the bought hat is owned for this run")
 	_expect(_player.crawler_owned_hats().has(CrawlerProgress.HAT_ID),
 		"only run-bought hats appear in the crawler wardrobe")
+	progress.gold = CrawlerProgress.CAPE_PRICE
+	_expect(progress.buy_cape(), "gold buys the plain cape")
+	_expect(progress.owns_cape(CrawlerProgress.CAPE_ID),
+		"the bought cape is owned for this run")
+	_expect(_player.crawler_owned_capes().has(CrawlerProgress.CAPE_ID),
+		"only run-bought capes appear in the crawler wardrobe")
+	_player.refresh_crawler_look()
+	_expect(Wardrobe.worn_node(_player.character, "cape") != null,
+		"the plain cape attaches to the character")
+	progress.gold += CrawlerProgress.cape_price(CrawlerProgress.CAPE_FOOL)
+	_expect(progress.buy_cape(CrawlerProgress.CAPE_FOOL),
+		"gold buys the fool's teleport cape")
+	_player.refresh_crawler_look()
+	_expect(progress.wearing_fool_cape(), "buying the fool's cape puts it on")
+	progress.note_worn_cape(CrawlerProgress.CAPE_ID)
+	_player.refresh_crawler_look()
 	progress.note_worn(CrawlerProgress.HAT_ID)
 	_player._apply_crawler_progress()
 	_expect(_player.crawler_flight_seconds() > CrawlerRules.FLIGHT_SECONDS,
@@ -1367,6 +2020,17 @@ func _check_progress() -> void:
 				- CrawlerProgress.JUKE_COOLDOWN_PER_RANK),
 		"one juke rank cuts a tenth of a second")
 	progress.unspent += 1
+	var before_dash := _player.juke_distance()
+	_expect(_player.spend_crawler_stat(CrawlerProgress.STAT_JUKE_DISTANCE),
+		"a level point can raise juke distance")
+	_expect(_player.juke_distance() > before_dash,
+		"juke distance ranks send the dash farther")
+	_expect(is_equal_approx(
+			_player.juke_distance(),
+			CrawlerProgress.JUKE_DISTANCE_BASE
+				+ CrawlerProgress.JUKE_DISTANCE_PER_RANK),
+		"one juke distance rank adds eight tenths of a metre")
+	progress.unspent += 1
 	_expect(_player.spend_crawler_stat(CrawlerProgress.STAT_KNOCKBACK),
 		"a level point can raise knockback")
 	_expect(is_equal_approx(
@@ -1380,6 +2044,12 @@ func _check_progress() -> void:
 			_player.crawler_range_scale(),
 			1.0 + CrawlerProgress.RANGE_PER_RANK),
 		"one range rank is twelve percent")
+	progress.unspent += 1
+	_expect(_player.spend_crawler_stat(CrawlerProgress.STAT_CAST),
+		"a level point can raise cast")
+	_expect(is_equal_approx(
+			_player.crawler_cast_trim(), CrawlerProgress.CAST_PER_RANK),
+		"one cast rank trims a tenth of a second")
 	progress.unspent += 1
 	_expect(_player.spend_crawler_stat(CrawlerProgress.STAT_LUCK),
 		"a level point can raise luck")
@@ -1397,6 +2067,66 @@ func _check_progress() -> void:
 	_player.refresh_crawler_look()
 	_expect(is_equal_approx(progress.luck_rank(), 1.0),
 		"taking the fortune cap off returns luck to its ranks")
+	progress.gold += CrawlerProgress.hat_price(CrawlerProgress.HAT_KIT)
+	_expect(progress.buy_hat(CrawlerProgress.HAT_KIT), "gold buys the bench visor")
+	_player.refresh_crawler_look()
+	_expect(progress.wearing_kit_hat(), "buying the visor puts it on")
+	_expect(_player.can_edit_crawler_mods(),
+		"the visor lets you remode in the field")
+	progress.note_worn(CrawlerProgress.HAT_ID)
+	_player.refresh_crawler_look()
+	_expect(not _player.can_edit_crawler_mods(),
+		"taking the visor off locks field mods")
+	progress.gold += CrawlerProgress.hat_price(CrawlerProgress.HAT_MISSILE)
+	_expect(progress.buy_hat(CrawlerProgress.HAT_MISSILE), "gold buys the hex hat")
+	_player.refresh_crawler_look()
+	_expect(progress.wearing_missile_hat(), "buying the hex hat puts it on")
+	_expect(progress.missile_count() == CrawlerRules.MISSILE_HAT_COUNT,
+		"one hex hat looses a few missiles")
+	_expect(progress.hat_description(CrawlerProgress.HAT_MISSILE).contains("homing"),
+		"the hex hat says it seeks the nearest mob")
+	_free_hat_missiles()
+	_clear_stray_crawler_mobs()
+	var prey := _MissileDummy.new()
+	add_child(prey)
+	prey.global_position = _player.combat_position() + Vector3(1.4, 0.0, 0.2)
+	_player._tick_missile_hat(0.02)
+	var first_volley := _hat_missiles()
+	_expect(first_volley.size() == CrawlerRules.MISSILE_HAT_COUNT,
+		"the worn hex hat looses a volley at the nearest mob")
+	_advance_hat_missiles(first_volley, 0.8)
+	_expect(prey.taken > 0.0, "the hex missiles home in and hit that mob")
+	_free_hat_missiles()
+	_player._tick_missile_hat(0.02)
+	_expect(_hat_missiles().is_empty(),
+		"the hex hat waits before the next volley")
+	progress.gold += CrawlerProgress.hat_price(CrawlerProgress.HAT_MISSILE) \
+		+ CrawlerProgress.HAT_MERGE_PRICE
+	_expect(progress.buy_hat(CrawlerProgress.HAT_MISSILE),
+		"the hat stall sells a second hex hat")
+	var hex_copy := progress.worn_hat
+	_expect(progress.merge_hats(CrawlerProgress.HAT_MISSILE, hex_copy),
+		"two hex hats can be stacked")
+	_expect(progress.missile_count() == CrawlerRules.MISSILE_HAT_COUNT
+			+ CrawlerRules.MISSILE_HAT_EXTRA_PER_RANK,
+		"a stacked hex hat looses more missiles")
+	_expect(progress.hat_title(progress.worn_hat).contains("Twin"),
+		"stacking hex hats doubles the name")
+	_expect(progress.hat_description(progress.worn_hat).contains("5"),
+		"the stacked description names the larger volley")
+	_free_hat_missiles()
+	_player._missile_cooldown = 0.0
+	_player._tick_missile_hat(0.02)
+	_expect(_hat_missiles().size() == progress.missile_count(),
+		"the stacked hex hat looses the larger volley")
+	_free_hat_missiles()
+	prey.free()
+	progress.note_worn(CrawlerProgress.HAT_ID)
+	_player.refresh_crawler_look()
+	_player._tick_missile_hat(0.0)
+	_expect(not progress.wearing_missile_hat(),
+		"taking the hex hat off stops the volley")
+	_check_kill_loot(progress)
 	var max_hp := _player.maximum_health()
 	_player.stats.set_health(max_hp * 0.5)
 	var wounded := _player.health()
@@ -1410,6 +2140,73 @@ func _check_progress() -> void:
 		"cities restore health")
 	_expect(not _player.buy_crawler_hat() or progress.owns_hat(CrawlerProgress.HAT_ID),
 		"the shop only sells inside a city")
+	var before_flight := _player.crawler_flight_seconds()
+	progress.gold += CrawlerProgress.HAT_MERGE_PRICE
+	_expect(progress.merge_hats(CrawlerProgress.HAT_ID, CrawlerProgress.HAT_LUCK),
+		"gold fuses the gale cap into the fortune cap's effects")
+	var fused := progress.worn_hat
+	_expect(not fused.is_empty() and not progress.owns_hat(CrawlerProgress.HAT_LUCK),
+		"the merge spends both source hats")
+	_expect(progress.hat_title(fused).contains("Gale")
+			and progress.hat_title(fused).contains("Fortune"),
+		"the fused hat takes a new compound name")
+	_expect(progress.hat_description(fused).contains("Luck")
+			or progress.hat_description(fused).contains("luck"),
+		"the fused description names the fortune effect")
+	_expect(_player.crawler_flight_seconds() >= before_flight,
+		"keeping the gale model keeps the gale flight boost")
+	_expect(progress.luck_rank() >= 1.0 + CrawlerProgress.HAT_LUCK_BONUS,
+		"the fused gale still grants the fortune luck")
+	progress.gold += CrawlerProgress.HAT_PRICE + CrawlerProgress.HAT_MERGE_PRICE
+	_expect(progress.buy_hat(CrawlerProgress.HAT_ID),
+		"the hat stall sells a second gale cap")
+	var gale_copy := progress.worn_hat
+	_expect(gale_copy != fused and progress.owns_hat(fused),
+		"the second gale is a separate owned hat")
+	var stacked_flight := _player.crawler_flight_seconds()
+	_expect(progress.merge_hats(fused, gale_copy),
+		"two gale effects can be stacked into the fused hat")
+	fused = progress.worn_hat
+	_expect(progress.hat_title(fused).contains("Twin"),
+		"stacking the same hat doubles the name")
+	_expect(_player.crawler_flight_seconds() > stacked_flight,
+		"two gale ranks jump flight twice as hard")
+	progress.gold += CrawlerProgress.HAT_MERGE_PRICE
+	_expect(progress.merge_hats(fused, CrawlerProgress.HAT_WARD),
+		"a fused hat can merge again")
+	fused = progress.worn_hat
+	_expect(progress.wearing_ward_hat() and progress.wearing_luck_hat()
+			and progress.wearing_shop_hat(),
+		"chained merges keep every fused effect")
+	_expect(progress.ward_charges() == 1, "one ward rank still takes one hit")
+	_player.refresh_crawler_look()
+	_expect(_player.ward_active(), "the fused halo still raises a bubble")
+	_expect(not progress.merge_hats(fused, fused),
+		"a hat cannot merge with itself")
+	progress.gold = 0
+	_expect(not progress.merge_hats(fused, CrawlerProgress.HAT_KIT),
+		"a dry purse cannot fuse hats")
+	for item_id: String in [
+		CrawlerProgress.HAT_MINE, CrawlerProgress.HAT_VAMPIRE,
+		CrawlerProgress.HAT_PHASE, CrawlerProgress.HAT_ORDINANCE,
+		CrawlerProgress.HAT_RUBBER, CrawlerProgress.HAT_LEARNED,
+		CrawlerProgress.HAT_JUKE,
+	]:
+		progress.gold += CrawlerProgress.hat_price(item_id)
+		_expect(progress.buy_hat(item_id), "gold buys %s" % ItemDB.title(item_id))
+		_player.refresh_crawler_look()
+	_expect(progress.wearing_juke_hat(), "buying the last new hat puts it on")
+	progress.note_worn(CrawlerProgress.HAT_LEARNED)
+	_player.refresh_crawler_look()
+	_expect(_player.abilities.size() == CrawlerRules.ABILITY_SLOTS_MAX,
+		"the learned cap opens a fourth ability slot in the field")
+	progress.note_worn(CrawlerProgress.HAT_MINE)
+	_player.refresh_crawler_look()
+	_free_hat_mines()
+	_player._mine_cooldown = 0.0
+	_player._tick_mine_hat(0.02)
+	_expect(_hat_mines().size() == 1, "the worn trail cap drops a mine")
+	_free_hat_mines()
 
 
 func _check_level_burst() -> void:
@@ -1419,7 +2216,9 @@ func _check_level_burst() -> void:
 	if hud == null:
 		return
 	_expect(BURST.HOLD >= 0.8 and BURST.HOLD <= 1.8,
-		"level-up holds briefly before the pause")
+		"level-up holds briefly without pausing")
+	_player.crawler_progress.ranks[CrawlerProgress.STAT_DAMAGE] = 0.0
+	_player.crawler_progress.ranks[CrawlerProgress.STAT_DODGE] = 0.0
 	_player.crawler_progress.unspent += 1
 	_player.crawler_progress.force_level_offers([
 		CrawlerProgress.make_offer(
@@ -1437,8 +2236,15 @@ func _check_level_burst() -> void:
 	var burst := hud.get_node_or_null("CrawlerLevelBurst")
 	_expect(burst != null, "killing enough XP plays a Level Up burst")
 	_expect(hud.get_node_or_null("CrawlerLevelMenu") == null,
-		"the spend menu waits for the burst")
+		"level-up no longer opens a spend menu")
 	_expect(not _player._menu_open, "the game stays live during the burst")
+	_expect(_player.crawler_progress.unspent == 0, "level-up spends itself")
+	_expect(is_equal_approx(_player.crawler_progress.rank_of(CrawlerProgress.STAT_DAMAGE),
+			CrawlerProgress.rarity_amount(CrawlerProgress.RARITY_LEGENDARY)),
+		"level-up takes the highest rarity")
+	_expect(is_equal_approx(_player.crawler_progress.rank_of(CrawlerProgress.STAT_DODGE),
+			CrawlerProgress.rarity_amount(CrawlerProgress.RARITY_RARE)),
+		"level-up also takes a second stat")
 	var title := hud.find_child("LevelUpTitle", true, false) as Label
 	_expect(title != null and title.text == "Level Up",
 		"the burst shows Level Up at the top of the HUD")
@@ -1449,42 +2255,10 @@ func _check_level_burst() -> void:
 		burst._process(BURST.HOLD)
 	await get_tree().process_frame
 	_expect(hud.get_node_or_null("CrawlerLevelBurst") == null,
-		"the burst leaves once the menu is due")
-	_expect(hud.get_node_or_null("CrawlerLevelMenu") != null,
-		"the spend menu opens after the burst")
-	_expect(_player._menu_open, "the game pauses when the menu opens")
-	var menu := hud.get_node_or_null("CrawlerLevelMenu") as CrawlerLevelMenu
-	_expect(menu != null and menu.HOLD_SECONDS > 0.06 and menu.HOLD_SECONDS <= 0.20,
-		"level-up tiles spend on a short hold")
-	if menu != null:
-		var hint := menu.find_child("SpendHint", true, false) as Label
-		_expect(hint != null and hint.text.contains("HOLD"),
-			"the spend menu tells the player to hold")
-		var reroll := menu.find_child("RerollOffers", true, false) as Button
-		_expect(reroll != null and reroll.text.contains("g"),
-			"the spend menu offers a gold reroll")
-		var press := InputEventMouseButton.new()
-		press.pressed = true
-		press.button_index = MOUSE_BUTTON_LEFT
-		menu._on_tile_input(press, CrawlerProgress.STAT_HEALTH)
-		_expect(_player.crawler_progress.unspent == 1,
-			"pressing a tile does not spend the point")
-		menu._process(0.08)
-		var fill := menu.find_child("SpendFill", true, false) as ColorRect
-		_expect(menu.hold_progress() > 0.0 and fill != null and fill.visible,
-			"holding a tile fills a bar on that tile")
-		_expect(_player.crawler_progress.unspent == 1,
-			"a short hold does not spend yet")
-		menu._process(menu.HOLD_SECONDS)
-	await get_tree().process_frame
-	_expect(_player.crawler_progress.unspent == 0,
-		"holding a tile through the bar spends the point")
-	menu = hud.get_node_or_null("CrawlerLevelMenu") as CrawlerLevelMenu
-	if menu != null:
-		menu.queue_free()
-	if _player._menu_open:
-		_player.close_menu()
-	await get_tree().process_frame
+		"the burst leaves on its own")
+	_expect(hud.get_node_or_null("CrawlerLevelMenu") == null,
+		"no spend menu appears after the burst")
+	_expect(not _player._menu_open, "level-up does not pause the run")
 
 
 func _check_achievement_burst() -> void:
@@ -1504,11 +2278,16 @@ func _check_achievement_burst() -> void:
 		"the burst titles the unlock Achievement Complete")
 	_expect(detail != null and detail.text == '"Kill 10 mobs"',
 		"the burst names Kill 10 mobs in quotes")
+	var rewards := hud.find_child("AchievementCompleteRewards", true, false) as Label
+	_expect(rewards != null and rewards.visible and rewards.text.contains("50 XP"),
+		"the burst shows the instant global XP")
+	_expect(rewards != null and not rewards.text.contains("5 Gems"),
+		"the burst hides claimable gem rewards")
 	if burst is Control:
 		_expect(not (burst as Control).clip_contents,
 			"the achievement explosion is not boxed by a HUD rectangle")
 	if burst != null:
-		burst._process(BURST.HOLD)
+		burst._process(BURST.REWARD_HOLD)
 	await get_tree().process_frame
 	_expect(hud.get_node_or_null("AchievementBurst") == null,
 		"the achievement burst leaves after its hold")
@@ -1516,14 +2295,34 @@ func _check_achievement_burst() -> void:
 
 func _check_city_store() -> void:
 	var stock := CrawlerProgress.shop_stock()
-	_expect(stock.has("big") and stock.has("wobble"),
+	_expect(stock.has("big") and stock.has("wobble") and stock.has("bubble")
+			and stock.has("clip") and stock.has("endless")
+			and stock.has("toxic") and stock.has("shock")
+			and stock.has("charm") and stock.has("ice")
+			and stock.has("bounce")
+			and stock.has("impact_cast")
+			and stock.has("homing"),
 		"the city stock sells mods")
 	_expect(not stock.has("starfire") and not stock.has("laser_eyes"),
 		"the mod stall does not sell abilities")
 	var abilities := CrawlerProgress.ability_stock()
-	_expect(abilities.has("laser_eyes") and abilities.has("starfire")
-			and abilities.has("meteor_punch"),
-		"the ability stall sells laser eyes, meteor punch, and starfire")
+	_expect(not abilities.has("grapple") and not abilities.has("lasso"),
+		"the crawler stall keeps grapple and lasso off the floor")
+	_expect(abilities.has("laser_eyes") and abilities.has("kame")
+			and abilities.has("nausicaa")
+			and abilities.has("lightning")
+			and abilities.has("starfire")
+			and abilities.has("meteor_punch")
+			and abilities.has("hero_punch")
+			and abilities.has("nuke")
+			and abilities.has("mini_nuke")
+			and abilities.has("wall")
+			and abilities.has("roar")
+			and abilities.has("toxic_blast")
+			and abilities.has("charming_aura")
+			and abilities.has("freeze_blast")
+			and abilities.has("overdrive"),
+		"the ability stall sells the beam family, wall, the punches, the starters, the four roar blasts, and overdrive")
 	_expect(CrawlerProgress.upgrade_price(1) > CrawlerProgress.upgrade_price(0),
 		"each upgrade rank costs more")
 	var kit := _player.crawler_kit
@@ -1582,6 +2381,26 @@ func _check_city_store() -> void:
 	var luck_hat := menu.find_child("HatTile_crawler_luck_hat", true, false) as Control
 	_expect(luck_hat != null and luck_hat.visible,
 		"the hat stall also sells the fortune cap")
+	var kit_hat := menu.find_child("HatTile_crawler_kit_hat", true, false) as Control
+	_expect(kit_hat != null and kit_hat.visible,
+		"the hat stall also sells the bench visor")
+	var hex_hat := menu.find_child("HatTile_crawler_missile_hat", true, false) as Control
+	_expect(hex_hat != null and hex_hat.visible,
+		"the hat stall also sells the hex hat")
+	_expect(menu.find_child("HatTile_crawler_mine_hat", true, false) != null,
+		"the hat stall also sells the trail cap")
+	_expect(menu.find_child("HatTile_crawler_vampire_hat", true, false) != null,
+		"the hat stall also sells the vampire horns")
+	_expect(menu.find_child("HatTile_crawler_phase_hat", true, false) != null,
+		"the hat stall also sells the phase helm")
+	_expect(menu.find_child("HatTile_crawler_ordinance_hat", true, false) != null,
+		"the hat stall also sells the ordinance helm")
+	_expect(menu.find_child("HatTile_crawler_rubber_hat", true, false) != null,
+		"the hat stall also sells the rubber beanie")
+	_expect(menu.find_child("HatTile_crawler_learned_hat", true, false) != null,
+		"the hat stall also sells the learned cap")
+	_expect(menu.find_child("HatTile_crawler_juke_hat", true, false) != null,
+		"the hat stall also sells the juke cap")
 	_expect(menu.find_child("LuckTile", true, false) == null,
 		"luck is not for sale in the hat stall")
 	progress.owned_hats = held_hats
@@ -1589,9 +2408,62 @@ func _check_city_store() -> void:
 	menu._clear_list()
 	menu._fill_hats(progress, progress.gold)
 	var sold := menu.find_child("HatActButton", true, false) as Button
-	_expect(sold != null and sold.visible and sold.text == "SOLD",
-		"a bought hat is marked sold")
-	_expect(sold.disabled, "sold hats cannot be taken off in the store")
+	_expect(sold != null and sold.visible and sold.text == "BUY",
+		"owned hats can still be bought again")
+	menu.cycle_tab(1)
+	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.CAPS,
+		"the next tab is Caps for Sale")
+	menu._clear_list()
+	menu._fill_caps_for_sale(progress, progress.gold)
+	var cap_grid := menu.find_child("StoreCapGrid", true, false) as GridContainer
+	_expect(cap_grid != null or menu.find_child("StoreEmpty", true, false) != null,
+		"Caps for Sale lists owned hats or explains the empty stall")
+	if progress.owned_hats.size() >= 2:
+		var first := progress.owned_hats[0]
+		var second := progress.owned_hats[1]
+		var pick_a := menu.find_child("CapAct_%s" % first, true, false) as Button
+		_expect(pick_a != null, "owned hats can be picked for a merge")
+		if pick_a != null:
+			pick_a.pressed.emit()
+		var pick_b := menu.find_child("CapAct_%s" % second, true, false) as Button
+		_expect(pick_b != null, "the second owned hat can be picked")
+		if pick_b != null:
+			pick_b.pressed.emit()
+		var merge_a := menu.find_child("CapMergeKeepA", true, false) as Button
+		_expect(merge_a != null and merge_a.visible,
+			"two picks offer a merge into the first model")
+	menu.cycle_tab(1)
+	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.CAPES,
+		"the next tab is the cape stall")
+	var held_capes := progress.owned_capes.duplicate()
+	var worn_cape := progress.worn_cape
+	progress.owned_capes = PackedStringArray()
+	progress.worn_cape = ""
+	menu._clear_list()
+	menu._fill_capes(progress, CrawlerProgress.CAPE_PRICE)
+	var cape_buy := menu.find_child("CapeActButton", true, false) as Button
+	var cape_icon := menu.find_child("CapeIcon_crawler_plain_cape", true, false) as TextureRect
+	var cape_grid := menu.find_child("StoreCapeGrid", true, false) as GridContainer
+	var cape_tile := menu.find_child("CapeTile_crawler_plain_cape", true, false) as Control
+	_expect(cape_buy != null and cape_buy.visible and cape_buy.text == "BUY",
+		"the cape stall shows a BUY button")
+	_expect(cape_icon != null and cape_icon.visible,
+		"the cape stall shows a plain-cape icon")
+	_expect(cape_grid != null and cape_grid.columns >= 3,
+		"capes sit in a multi-column tile grid")
+	_expect(cape_tile != null and cape_tile.visible,
+		"the cape stall sells the plain white cape")
+	var fool_tile := menu.find_child("CapeTile_crawler_fool_cape", true, false) as Control
+	_expect(fool_tile != null and fool_tile.visible,
+		"the cape stall sells the fool's teleport cape")
+	progress.owned_capes = held_capes
+	progress.worn_cape = worn_cape
+	menu._clear_list()
+	menu._fill_capes(progress, progress.gold)
+	var cape_sold := menu.find_child("CapeActButton", true, false) as Button
+	_expect(cape_sold != null and cape_sold.visible and cape_sold.text == "SOLD",
+		"a bought cape is marked sold")
+	_expect(cape_sold.disabled, "sold capes cannot be taken off in the store")
 	menu.cycle_tab(1)
 	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.CARDS,
 		"the next tab is the mods stall")
@@ -1606,14 +2478,37 @@ func _check_city_store() -> void:
 		"the mods stall sells wobble as a tile")
 	_expect(wobble_icon != null and wobble_icon.texture != null,
 		"mod tiles show the catalogue icon")
-	var wobble_host := menu.find_child("ModHostIcon_wobble", true, false) as TextureRect
-	_expect(wobble_host != null and wobble_host.visible
-			and wobble_host.texture == CrawlerCatalog.texture_for("laser_eyes"),
-		"ability-specific mods show the host ability icon")
+	var wobble_types := menu.find_child("TypeMarks_wobble", true, false) as Control
+	var wobble_beam := wobble_types.find_child("TypeMark_beam", true, false) as TextureRect \
+		if wobble_types != null else null
+	_expect(wobble_types != null and wobble_beam != null and wobble_beam.visible
+			and wobble_beam.texture == CrawlerCatalog.type_icon("beam")
+			and wobble_types.get_child_count() == 1,
+		"ability-specific mods show the matching type icon")
 	_expect(menu.find_child("ModTile_big", true, false) != null,
 		"the mods stall also sells big as a tile")
-	_expect(menu.find_child("ModHostIcon_big", true, false) == null,
-		"generic mods do not show a host ability icon")
+	_expect(menu.find_child("ModTile_bubble", true, false) != null,
+		"the mods stall also sells bubble as a tile")
+	_expect(menu.find_child("ModTile_clip", true, false) != null,
+		"the mods stall also sells clip as a tile")
+	_expect(menu.find_child("ModTile_endless", true, false) != null,
+		"the mods stall also sells endless as a tile")
+	var bubble_types := menu.find_child("TypeMarks_bubble", true, false) as Control
+	_expect(bubble_types != null
+			and bubble_types.find_child("TypeMark_beam", true, false) != null
+			and bubble_types.find_child("TypeMark_shockwave", true, false) != null
+			and bubble_types.find_child("TypeMark_projectile", true, false) != null
+			and bubble_types.find_child("TypeMark_field", true, false) != null,
+		"mods that fit several types show every matching type icon")
+	var clip_types := menu.find_child("TypeMarks_clip", true, false) as Control
+	_expect(clip_types != null
+			and clip_types.find_child("TypeMark_limited", true, false) != null,
+		"limited mods show the limited type icon")
+	_expect(menu.find_child("TypeMarks_big", true, false) == null,
+		"generic mods do not show type icons")
+	_expect(menu.find_child("ModHostIcon_wobble", true, false) == null
+			and menu.find_child("ModHostIcon_big", true, false) == null,
+		"mod tiles no longer overlay a specific host ability icon")
 	menu.cycle_tab(1)
 	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.ABILITIES,
 		"the next tab is the ability stall")
@@ -1626,10 +2521,48 @@ func _check_city_store() -> void:
 		"abilities sit in a multi-column tile grid")
 	_expect(eyes_buy != null and eyes_buy.visible,
 		"the ability stall sells laser eyes")
+	var eyes_types := menu.find_child("TypeMarks_laser_eyes", true, false) as Control
+	var eyes_beam := eyes_types.find_child("TypeMark_beam", true, false) as TextureRect \
+		if eyes_types != null else null
+	_expect(eyes_beam != null and eyes_beam.visible
+			and eyes_beam.texture == CrawlerCatalog.type_icon("beam"),
+		"ability tiles show their type icon")
+	var fus_types := menu.find_child("TypeMarks_fus", true, false) as Control
+	_expect(fus_types != null
+			and fus_types.find_child("TypeMark_projectile", true, false) != null,
+		"projectile abilities show the projectile type icon")
+	_expect(menu.find_child("AbilityTile_lightning", true, false) != null,
+		"the ability stall sells lightning")
+	_expect(menu.find_child("AbilityTile_kame", true, false) != null,
+		"the ability stall sells kame")
+	_expect(menu.find_child("AbilityTile_wall", true, false) != null,
+		"the ability stall sells wall")
 	_expect(star_buy != null and star_buy.visible,
 		"the ability stall sells starfire")
 	_expect(menu.find_child("AbilityTile_meteor_punch", true, false) != null,
 		"the ability stall sells meteor punch")
+	_expect(menu.find_child("AbilityTile_hero_punch", true, false) != null,
+		"the ability stall sells hero punch")
+	_expect(menu.find_child("AbilityTile_nuke", true, false) != null,
+		"the ability stall sells nuke")
+	_expect(menu.find_child("AbilityTile_mini_nuke", true, false) != null,
+		"the ability stall sells mini nuke")
+	_expect(menu.find_child("AbilityTile_fus", true, false) != null,
+		"the ability stall sells fus")
+	_expect(menu.find_child("AbilityTile_roar", true, false) != null
+			and menu.find_child("AbilityTile_toxic_blast", true, false) != null
+			and menu.find_child("AbilityTile_charming_aura", true, false) != null
+			and menu.find_child("AbilityTile_freeze_blast", true, false) != null,
+		"the ability stall sells roar, toxic blast, charming aura, and freeze blast")
+	_expect(menu.find_child("AbilityTile_overdrive", true, false) != null,
+		"the ability stall sells overdrive")
+	_expect(menu.find_child("AbilityTile_healing_field", true, false) != null
+			and menu.find_child("AbilityTile_static_field", true, false) != null,
+		"the ability stall sells healing field")
+	var heal_types := menu.find_child("TypeMarks_healing_field", true, false) as Control
+	_expect(heal_types != null
+			and heal_types.find_child("TypeMark_field", true, false) != null,
+		"healing field shows the field type icon")
 	_expect(menu.find_child("AbilityAct_laser_eyes", true, false) != null
 			and menu.find_child("AbilityAct_starfire", true, false) != null
 			and menu.find_child("AbilityAct_meteor_punch", true, false) != null,
@@ -1656,6 +2589,16 @@ func _check_city_store() -> void:
 		"the loadout draws three abilities and the bag even if empty")
 	_expect(damage != null and damage.visible,
 		"selecting laser eyes lists its damage upgrade")
+	var upgrade_types := menu.find_child("StoreUpgradeTypes", true, false) as Control
+	var upgrade_beam := upgrade_types.find_child("TypeMark_beam", true, false) as TextureRect \
+		if upgrade_types != null else null
+	_expect(upgrade_beam != null and upgrade_beam.visible
+			and upgrade_beam.texture == CrawlerCatalog.type_icon("beam"),
+		"the selected upgrade card shows its type icon")
+	var first_grid := menu.find_child("StoreUpgradeRows", true, false) as Control
+	await get_tree().process_frame
+	_expect(_store_upgrades_fit(detail, first_grid),
+		"laser eye upgrades fit the lower half without overlap")
 	kit.grant(CrawlerCatalog.make_ability("starfire").to_dict())
 	menu._fill_upgrades(progress.gold)
 	var star_tile := menu.find_child("CrawlerAbilityTile_1", true, false) as CrawlerAbilityTile
@@ -1673,14 +2616,21 @@ func _check_city_store() -> void:
 		"starfire lists damage, cooldown, size, range, knockback, and slots")
 	_expect(menu.find_child("UpgradeTile_duration", true, false) == null,
 		"starfire does not sell a firing-time upgrade")
-	var upgrade_grid := menu.find_child("StoreUpgradeRows", true, false) as GridContainer
+	var upgrade_grid := menu.find_child("StoreUpgradeRows", true, false) as Control
 	var damage_tile := menu.find_child("UpgradeTile_damage", true, false) as Control
 	var bag_center := menu.find_child("StoreInventoryCenter", true, false) as Control
-	_expect(upgrade_grid != null and upgrade_grid.columns >= 3,
+	_expect(upgrade_grid != null and int(upgrade_grid.get_meta(&"columns", 0)) >= 3,
 		"upgrades sit in a multi-column tile grid")
-	_expect(damage_tile != null and damage.is_inside_tree()
-			and damage.get_parent() == damage_tile.get_child(0),
+	_expect(menu.find_child("StoreUpgradeScroll", true, false) == null,
+		"upgrade tiles are not in a scroll")
+	damage = menu.find_child("UpgradeAct_damage", true, false) as Button
+	_expect(damage_tile != null and damage != null and damage.is_inside_tree()
+			and damage_tile.is_ancestor_of(damage),
 		"the upgrade button lives inside its tile")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_expect(_store_upgrades_fit(detail, upgrade_grid),
+		"starfire upgrades fit the lower half without overlap")
 	_expect(bag_center != null, "the bag slots are centred under the abilities")
 	var wobble_tile := menu.find_child("CrawlerBag_0", true, false) as RedItemSlot
 	_expect(wobble_tile != null
@@ -1696,12 +2646,74 @@ func _check_city_store() -> void:
 	menu.cycle_tab(1)
 	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.INVENTORY,
 		"the next tab is the city inventory store")
-	menu._clear_list()
+	menu._show_body(false, true, false)
 	menu._fill_inventory()
+	var inv_page := menu.find_child("StoreInventoryPage", true, false) as Control
+	_expect(inv_page != null and inv_page.visible,
+		"inventory shows the city stash")
+	_expect(inv_page.find_child("CrawlerAbilityTile_0", true, false) != null
+			and inv_page.find_child("CrawlerBag_0", true, false) != null,
+		"inventory shows the player loadout on top")
+	_expect(inv_page.find_child("CityAbilityTile_0", true, false) != null
+			and inv_page.find_child("CityBag_0", true, false) != null,
+		"inventory shows a matching city loadout below")
 	var note := menu.find_child("StoreEmpty", true, false) as Label
-	_expect(note != null and note.visible
-			and note.text.contains("other cities"),
-		"the inventory store explains city-to-city ability pickup")
+	_expect(note == null or not note.visible,
+		"inventory is a stash page, not a placeholder")
+	var stashed := false
+	var bar := kit.ability_bar()
+	if bar != null:
+		for index in bar.size():
+			var hosted := kit.equipped_card(index)
+			if hosted == null or hosted.id != "starfire":
+				continue
+			stashed = kit.move_card(
+				CrawlerKit.SOURCE_EQUIP,
+				index,
+				CrawlerKit.SOURCE_CITY_EQUIP,
+				0
+			)
+			break
+	_expect(stashed, "the city stash accepts a moved ability")
+	menu._fill_inventory()
+	var city_tile := inv_page.find_child("CityAbilityTile_0", true, false) as CrawlerAbilityTile
+	_expect(city_tile != null and city_tile.card() != null
+			and city_tile.card().id == "starfire",
+		"the city row holds the stored ability")
+	menu.cycle_tab(1)
+	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.LOCKER,
+		"the next tab is the locker")
+	menu._show_body(false, false, true)
+	menu._fill_locker()
+	var locker_page := menu.find_child("StoreLockerPage", true, false) as CrawlerStoreLockerPage
+	_expect(locker_page != null and locker_page.visible,
+		"locker shows the deposit pane")
+	_expect(locker_page.find_child("CrawlerAbilityTile_0", true, false) != null,
+		"locker shows player abilities")
+	_expect(locker_page.find_child("LockerAbilityTile_0", true, false) != null,
+		"locker has one deposit slot")
+	_expect(locker_page.find_child("CrawlerBag_0", true, false) == null,
+		"locker hides the mod bag")
+	var locker_tile := locker_page.find_child("LockerAbilityTile_0", true, false) \
+		as CrawlerAbilityTile
+	var locked := CrawlerKit.hand_off(
+		kit,
+		CrawlerKit.SOURCE_EQUIP,
+		0,
+		locker_page.locker_kit(),
+		CrawlerKit.SOURCE_EQUIP,
+		0
+	)
+	_expect(locked, "the locker accepts one ability")
+	locker_page.refresh()
+	_expect(locker_tile != null and locker_tile.card() != null
+			and locker_tile.card().id == "laser_eyes",
+		"the locker holds the deposited ability")
+	_expect(kit.equipped_card(0) == null,
+		"depositing in the locker removes it from the loadout")
+	_expect(str(CrawlerMeta.locker_card().get("id", "")) == "laser_eyes",
+		"the locker writes the card to meta")
+	CrawlerMeta.set_locker_card({})
 	menu.cycle_tab(1)
 	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.QUESTS,
 		"the next tab is the quest stall")
@@ -1713,16 +2725,199 @@ func _check_city_store() -> void:
 		"the quest stall sells the castle")
 	menu.cycle_tab(1)
 	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.MARKET,
-		"the last tab is the black market")
+		"the next tab is the black market")
 	menu._clear_list()
 	menu._fill_market()
 	var ticket := menu.find_child("TicketAct", true, false) as Button
 	_expect(ticket != null and ticket.visible and ticket.text == "BUY",
 		"the black market sells respawn tickets")
 	menu.cycle_tab(1)
+	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.RESTSTOP,
+		"the next tab is the reststop")
+	_player.stats.set_health(_player.maximum_health() * 0.4)
+	menu._clear_list()
+	menu._fill_reststop()
+	var rest_hp := menu.find_child("RestAct_health", true, false) as Button
+	_expect(rest_hp != null and rest_hp.visible and rest_hp.text == "FREE",
+		"the first health rest is free")
+	var rest_ammo := menu.find_child("RestAct_ammo", true, false) as Button
+	_expect(rest_ammo != null and rest_ammo.visible,
+		"the reststop sells an ammo refill")
+	var rest_gold := menu.find_child("RestAct_gold", true, false) as Button
+	_expect(rest_gold != null and rest_gold.visible and rest_gold.text == "TAKE"
+			and not rest_gold.disabled,
+		"the reststop can grant 10,000 gold")
+	var rest_stores := menu.find_child("RestAct_stores", true, false) as Button
+	_expect(rest_stores != null and rest_stores.visible
+			and rest_stores.text == "SET" and not rest_stores.disabled,
+		"the reststop can make stores infinite")
+	menu.cycle_tab(1)
+	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.DUALS,
+		"the last tab is Duals")
+	menu._clear_list()
+	menu._fill_duals()
+	var duals := menu.find_child("StoreEmpty", true, false) as Label
+	_expect(duals != null and duals.visible
+			and duals.text.contains("co-op")
+			and duals.text.contains("solo"),
+		"solo Duals explains it is a co-op fight")
+	menu.cycle_tab(1)
 	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.HATS,
 		"tabs wrap back to the hat stall")
 	menu.queue_free()
+
+
+func _check_reststop() -> void:
+	var progress := _player.crawler_progress
+	var kit := _player.crawler_kit
+	_expect(progress != null and kit != null, "the reststop reads the run ledger")
+	if progress == null or kit == null:
+		return
+	progress.rested_health_cities = PackedStringArray()
+	progress.rested_ammo_cities = PackedStringArray()
+	_player.global_position = Vector3(400.0, 0.0, 0.0)
+	_expect(not _player.buy_crawler_rest_health()
+			and not _player.buy_crawler_rest_ammo(),
+		"the reststop only sells inside a city")
+	var ring = CITY_RING.new()
+	ring.configure(7, Transform3D.IDENTITY)
+	add_child(ring)
+	await get_tree().process_frame
+	_player.global_position = Vector3.ZERO
+	_expect(_player.in_crawler_city() and _player.crawler_city_key() == "7",
+		"the reststop keys the first free rest to this city")
+	var max_hp := _player.maximum_health()
+	_player.stats.set_health(max_hp * 0.4)
+	var gold := progress.gold
+	_expect(_player.buy_crawler_rest_health(), "the first health rest is free")
+	_expect(is_equal_approx(_player.health(), max_hp),
+		"a health rest fills vitals")
+	_expect(progress.gold == gold, "the first health rest spends no gold")
+	_expect(progress.rested_health_cities.has("7"),
+		"the first health rest marks this city")
+	_player.stats.set_health(max_hp * 0.4)
+	progress.gold = CrawlerProgress.REST_HEALTH_PRICE
+	_expect(_player.buy_crawler_rest_health(), "later health rests cost gold")
+	_expect(progress.gold == 0, "a paid health rest spends the listed gold")
+	_expect(is_equal_approx(_player.health(), max_hp),
+		"a paid health rest still fills vitals")
+	_player.stats.set_health(max_hp * 0.4)
+	progress.gold = CrawlerProgress.REST_HEALTH_PRICE - 1
+	_expect(not _player.buy_crawler_rest_health(),
+		"a short purse cannot buy another health rest")
+	_expect(_player.health() < max_hp, "an unpaid rest does not heal")
+	ring.patch_id = 8
+	progress.gold = 0
+	_expect(_player.crawler_city_key() == "8", "a new city uses a new rest key")
+	_expect(_player.buy_crawler_rest_health(), "a new city is free again")
+	_expect(is_equal_approx(_player.health(), max_hp)
+			and progress.gold == 0,
+		"the first rest in a new city spends no gold")
+	_expect(kit.shop_grant("nuke"), "the reststop can refill a nuke")
+	var nuke := kit.equipped_card(1)
+	if nuke == null or nuke.id != "nuke":
+		for card: CrawlerCard in kit.owned_cards():
+			if card != null and card.id == "nuke":
+				nuke = card
+				break
+	_expect(nuke != null and nuke.id == "nuke", "a nuke is ready to refill")
+	if nuke != null:
+		kit.sync_ammo(nuke)
+		nuke.extra_stats["ammo"] = 0
+		progress.gold = 0
+		_expect(kit.needs_ammo_refill(), "an empty nuke needs a rest")
+		_expect(_player.buy_crawler_rest_ammo(), "the first ammo rest is free")
+		_expect(kit.ammo_left(nuke) == kit.ammo_max(nuke)
+				and progress.gold == 0
+				and progress.rested_ammo_cities.has("8"),
+			"the first ammo rest fills magazines for free")
+		nuke.extra_stats["ammo"] = 0
+		progress.gold = CrawlerProgress.REST_AMMO_PRICE
+		_expect(_player.buy_crawler_rest_ammo(), "later ammo rests cost gold")
+		_expect(kit.ammo_left(nuke) == kit.ammo_max(nuke)
+				and progress.gold == 0,
+			"a paid ammo rest spends the listed gold")
+		nuke.extra_stats["ammo"] = 0
+		progress.gold = CrawlerProgress.REST_AMMO_PRICE - 1
+		_expect(not _player.buy_crawler_rest_ammo()
+				and kit.ammo_left(nuke) == 0,
+			"a short purse cannot buy another ammo rest")
+	progress.gold = 0
+	_expect(_player.grant_crawler_rest_gold()
+			and progress.gold == CrawlerProgress.REST_GOLD_GRANT,
+		"the reststop can add 10,000 gold")
+	_expect(_player.enable_crawler_unlimited_shops()
+			and progress.shops_unlimited
+			and not progress.uses_limited_shop("8"),
+		"the reststop can keep every stall in stock")
+	var restored := CrawlerProgress.new()
+	restored.from_dict(progress.to_dict())
+	_expect(restored.rested_health_cities.has("7")
+			and restored.rested_health_cities.has("8")
+			and restored.rested_ammo_cities.has("8"),
+		"rested cities persist")
+	_expect(restored.shops_unlimited and restored.gold == progress.gold,
+		"the reststop gold grant and infinite stores persist")
+	progress.set_shops_unlimited(false)
+	progress.gold = 0
+	progress.remember()
+	ring.queue_free()
+	_player.global_position = Vector3(400.0, 0.0, 0.0)
+	await get_tree().process_frame
+
+
+func _check_game_menu_items() -> void:
+	var progress := _player.crawler_progress
+	_expect(progress != null, "Items tab reads the run ledger")
+	if progress == null:
+		return
+	var held := progress.respawn_tickets
+	progress.respawn_tickets = 2
+	if _player.hotbar != null:
+		_player.hotbar.set_item(0, "sword")
+	var menu := GameMenu.new()
+	menu.configure(_player)
+	add_child(menu)
+	await get_tree().process_frame
+	var items_tab := menu.find_child("TabItems", true, false) as Button
+	_expect(items_tab != null and items_tab.text == "ITEMS",
+		"the tab menu has an Items tab")
+	menu.show_tab(GameMenu.Tab.ITEMS)
+	await get_tree().process_frame
+	_expect(menu.current_tab() == GameMenu.Tab.ITEMS,
+		"Items opens as its own page")
+	var page := menu.find_child("RedCataloguePage", true, false) as RedCataloguePage
+	_expect(page != null, "Items uses the catalogue page")
+	_expect(menu.find_child("Filter_weapon", true, false) == null,
+		"Items has no Weapons filter")
+	var ticket := menu.find_child(
+		"OwnedItem_00_crawler_respawn_ticket", true, false) as RedItemSlot
+	_expect(ticket != null and ticket.visible
+			and ticket.item_id() == CrawlerProgress.TICKET_ID
+			and ticket.badge == "2",
+		"Items lists held respawn tickets")
+	var listed: PackedStringArray = PackedStringArray()
+	if page != null:
+		var grid := page.find_child("OwnedItemGrid", true, false)
+		if grid != null:
+			for child: Node in grid.get_children():
+				if child is RedItemSlot:
+					var slot := child as RedItemSlot
+					if not slot.item_id().is_empty():
+						listed.append(slot.item_id())
+	_expect(not listed.has("sword"),
+		"Items does not list leftover swords")
+	var equip := menu.find_child("EquipAction", true, false) as HoldActionButton
+	var drop := menu.find_child("DropAction", true, false) as Button
+	_expect(equip != null and equip.disabled,
+		"a ticket cannot be equipped")
+	_expect(drop != null and drop.disabled,
+		"a ticket cannot be dropped")
+	progress.respawn_tickets = held
+	if _player.hotbar != null:
+		_player.hotbar.set_item(0, "")
+	menu.queue_free()
+	await get_tree().process_frame
 
 
 func _check_crawler_death() -> void:
@@ -1751,6 +2946,51 @@ func _check_crawler_death() -> void:
 	_expect(screen.summary_text().contains("killed")
 			and screen.summary_text().contains("gem"),
 		"game over lists the run")
+	screen.finish_recap()
+	var recap := screen.recap()
+	_expect(not recap.is_empty() and int(recap.get("score", {}).get("total", 0)) > 0,
+		"game over pays global XP for the expedition")
+	var xp_bar := screen.find_child("RunXpBar", true, false) as ProgressBar
+	var xp_label := screen.find_child("RunXpLabel", true, false) as Label
+	_expect(xp_bar != null and xp_label != null and xp_label.text.contains("LV"),
+		"game over fills a global XP bar")
+	_expect(_death_home_is_on_plate(screen),
+		"game over keeps HOME on the plate")
+	var squeeze := DeathScreen.new()
+	squeeze.size = Vector2(1280.0, 640.0)
+	add_child(squeeze)
+	squeeze.present_crawler(
+		"Killed by Rhino: Meteor Strike",
+		"23 MOBS KILLED\n1 SITE DISCOVERED\nTIDE MARGIN\n54 GEMS EARNED",
+		false,
+		{
+			"achievements": [
+				{"id": "kills", "title": "KILL 10 MOBS", "rewards": PackedStringArray(["50 XP"])},
+				{"id": "rank", "title": "RECRUIT", "rewards": PackedStringArray(["10 GEMS"])},
+			],
+			"score": {
+				"total": 375,
+				"lines": PackedStringArray([
+					"215 FROM EXPEDITION XP",
+					"45 FROM SITES DISCOVERED",
+					"115 FROM MOBS KILLED",
+				]),
+			},
+			"levels": [
+				{"level": 3, "title": "", "title_changed": false},
+				{"level": 4, "title": "", "title_changed": false},
+				{"level": 5, "title": "Recruit", "title_changed": true},
+			],
+			"before": {"xp": 110.0},
+			"after": {"xp": 485.0},
+		})
+	await get_tree().process_frame
+	squeeze._fit_plate()
+	_expect(_death_home_is_on_plate(squeeze),
+		"a tall recap still keeps HOME on the plate")
+	_expect(squeeze.find_child("RunLevel_5", true, false) != null,
+		"levelled titles stay in the recap")
+	squeeze.queue_free()
 	var homes := [0]
 	screen.home_requested.connect(func() -> void: homes[0] += 1)
 	screen._process(DeathScreen.ARM_DELAY + 0.1)
@@ -1791,6 +3031,99 @@ func _check_monument_collision() -> void:
 			"%s glowing fixtures cast real night light" % path.get_file())
 		site.queue_free()
 	hosts.queue_free()
+
+
+func _check_village_folk(ring: Node, place := "Neon Fjord") -> void:
+	for kind: String in ["Luma", "Mochi", "Ember", "Cosmo", "Sunny"]:
+		_expect(
+			ResourceLoader.exists(
+				"res://assets/runtime/characters/sproutlings/%s.glb" % kind),
+			"%s lives in the meep pack" % kind)
+	var folk := ring.find_child("VillageFolk", true, false)
+	_expect(folk != null, "%s seats meep inhabitants" % place)
+	if folk == null:
+		return
+	var wanderers := 0
+	var keepers := 0
+	var hidden := 0
+	var bodied := 0
+	var kinds := {}
+	var shop_titles := {}
+	for node: Node in ring.find_children("*", "Node3D", true, false):
+		if not node.has_meta(&"sproutling_role"):
+			continue
+		var role := str(node.get_meta(&"sproutling_role"))
+		var kind := str(node.get_meta(&"sproutling_variant"))
+		var title := str(node.get_meta(&"sproutling_name"))
+		kinds[kind] = true
+		if node.find_child("Model", true, false) != null:
+			bodied += 1
+		if role == "wander":
+			wanderers += 1
+		elif role == "shop":
+			keepers += 1
+			if not title.is_empty():
+				shop_titles[title] = true
+			var tag := node.find_child("SproutlingName", true, false) as Label3D
+			_expect(tag != null and tag.text == title.to_upper(),
+				"%s stands behind a counter with a name" % title)
+		elif role == "hidden":
+			hidden += 1
+			var tag := node.find_child("SproutlingName", true, false) as Label3D
+			_expect(title == "Moss" and tag != null and tag.text == "MOSS",
+				"the off-path local is named Moss")
+			var here := node as Node3D
+			_expect(Vector2(here.position.x, here.position.z).length() > 20.0,
+				"Moss stands away from the plaza")
+	_expect(wanderers >= 15 and wanderers <= 20,
+		"about 15-20 meeps wander the village paths")
+	_expect(keepers >= 5, "shop counters have stationed keepers")
+	_expect(hidden == 1, "one meep stands off the beaten path")
+	_expect(kinds.size() >= 5, "every meep variant lives in town")
+	_expect(bodied >= wanderers + keepers + hidden,
+		"meeps wear their onion bodies")
+	_expect(shop_titles.has("Brim") and shop_titles.has("Map"),
+		"hat and quest counters have named keepers")
+	var village := ring.get_node_or_null("Village") as Node3D
+	var path_ok := 0
+	if village != null:
+		var marks: Array[Vector3] = []
+		for child: Node in village.get_children():
+			if not child is Node3D:
+				continue
+			var label := str(child.name)
+			if label.begins_with("Streetlight_") \
+					or label.begins_with("Plaza_Bench_") \
+					or label.begins_with("Lane_Bench_"):
+				marks.append((child as Node3D).position)
+		for node: Node in ring.find_children("*", "Node3D", true, false):
+			if not node.has_meta(&"sproutling_role"):
+				continue
+			if str(node.get_meta(&"sproutling_role")) != "wander":
+				continue
+			var here := node as Node3D
+			for mark: Vector3 in marks:
+				if Vector2(here.position.x - mark.x, here.position.z - mark.z) \
+						.length() <= 4.5:
+					path_ok += 1
+					break
+	_expect(path_ok == wanderers, "wanderers spawn on the village paths")
+
+
+func _check_stall_signs(ring: Node, place := "Neon Fjord") -> void:
+	if ring == null or _player == null or _player.crawler_progress == null:
+		return
+	var city := str(ring.city_key()) if ring.has_method("city_key") else "city"
+	var signed := _player.crawler_progress.signed_shops_for(city)
+	var found := 0
+	for shop_id: String in signed:
+		if ring.find_child("StallSign_%s" % shop_id, true, false) != null:
+			found += 1
+	_expect(found >= 1, "%s floats icons over open stalls" % place)
+	_expect(ring.find_child("StallSign_reststop", true, false) == null,
+		"%s does not sign the rest stop" % place)
+	_expect(ring.find_child("StallSign_locker", true, false) == null,
+		"%s does not sign the lockers" % place)
 
 
 func _night_lights_on(node: Node) -> int:
@@ -1984,6 +3317,115 @@ func _check_tilde_city_waypoint() -> void:
 	pad.queue_free()
 
 
+func _check_waypoint_reveal() -> void:
+	if ResourceLoader.exists(CrawlerSpawnPad.MODEL):
+		var packed_pad := load(CrawlerSpawnPad.MODEL) as PackedScene
+		if packed_pad != null:
+			var pad := CrawlerSpawnPad.new()
+			pad.force_model = true
+			add_child(pad)
+			await get_tree().process_frame
+			var seated := pad.player_spawn_transform()
+			var panel := pad.control_panel_point()
+			_expect(panel.is_finite(), "Relay 07 has a computer control panel")
+			if panel.is_finite():
+				var up := seated.basis.y.normalized()
+				var toward := panel - seated.origin
+				toward -= up * toward.dot(up)
+				var forward := -seated.basis.z
+				forward -= up * forward.dot(up)
+				_expect(toward.length_squared() > 0.0001
+						and forward.length_squared() > 0.0001
+						and forward.normalized().dot(toward.normalized()) > 0.85,
+					"spawn faces the teleporter control panel")
+			pad.queue_free()
+			await get_tree().process_frame
+	var layer := _player.find_child("Waypoints", true, false) as WaypointLayer
+	_expect(layer != null, "waypoint reveal uses the HUD layer")
+	if layer == null:
+		return
+	_player._waypoints_wanted = false
+	_player._apply_tilde_overlay()
+	var mark := Landmark.new()
+	mark.title = "Reveal Test"
+	mark.waypoint = true
+	mark.position = Vector3(400.0, 0.0, 0.0)
+	add_child(mark)
+	mark.add_to_group(CrawlerRules.CITY_WAYPOINT_GROUP)
+	await get_tree().process_frame
+	_player.global_position = Vector3.ZERO
+	_player.global_basis = Basis.IDENTITY
+	_player.reveal_waypoint(mark)
+	_expect(_player.is_revealing_waypoint(), "a new waypoint starts the reveal")
+	_expect(not _player._waypoints_wanted, "the reveal does not open tilde")
+	_tick_waypoint_reveal(1.1)
+	_expect(layer.visible and layer.is_revealing(),
+		"the unlock blinks in outside tilde")
+	_expect(layer.drawn(0.0).has("Reveal Test"),
+		"the new waypoint is named during the blink")
+	_expect(layer.pulse_amount() > 0.0, "the blink carries a radar pulse")
+	_expect(_player.look_direction().dot(Vector3.RIGHT) > 0.55,
+		"player and camera turn to face the new waypoint")
+	_tick_waypoint_reveal(3.0)
+	_expect(not _player.is_revealing_waypoint(), "the reveal ends")
+	_expect(not layer.visible or layer.drawn(0.0).is_empty(),
+		"the mark fades after the pulse")
+	_expect(not _player._waypoints_wanted, "tilde stays closed after the fade")
+	_player._waypoints_wanted = true
+	_player._apply_tilde_overlay()
+	layer._process(0.016)
+	_expect(layer.enabled and layer.drawn(0.0).has("Reveal Test"),
+		"tilde shows the unlocked waypoint after the fade")
+	_player._waypoints_wanted = false
+	_player._apply_tilde_overlay()
+	var city := CrawlerSite.new()
+	city.site_id = CrawlerRules.CITY_SITE_ID
+	city.title = CrawlerRules.CITY_SITE_TITLE
+	city.enter_radius = 40.0
+	city.position = Vector3(0.0, 0.0, 500.0)
+	add_child(city)
+	await get_tree().process_frame
+	_player.defer_camera = false
+	_player.visible = true
+	_player._opening_reveal_done = false
+	_player._revealed_waypoints.erase("site:%s" % CrawlerRules.CITY_SITE_ID)
+	_player._revealed_waypoints.erase("title:%s" % CrawlerRules.CITY_SITE_TITLE)
+	_player._try_opening_waypoint_reveal()
+	_expect(city.waypoint and city.is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP),
+		"the opening waypoint unlocks just after spawn")
+	_expect(_player.is_revealing_waypoint()
+			and _player._opening_reveal_done,
+		"spawn turns the player toward Neon Fjord")
+	_tick_waypoint_reveal(4.0)
+	var later := CrawlerSite.new()
+	later.site_id = "later_beacon"
+	later.title = "Later Beacon"
+	later.enter_radius = 40.0
+	later.waypoint = false
+	later.position = Vector3(-500.0, 0.0, 0.0)
+	add_child(later)
+	await get_tree().process_frame
+	later.unlock_waypoint()
+	_expect(_player.is_revealing_waypoint(),
+		"a distant unlock turns the player again")
+	_tick_waypoint_reveal(4.0)
+	_player.defer_camera = true
+	mark.queue_free()
+	city.queue_free()
+	later.queue_free()
+
+
+func _tick_waypoint_reveal(seconds: float) -> void:
+	var layer := _player.find_child("Waypoints", true, false) as WaypointLayer
+	var left := seconds
+	while left > 0.0:
+		var step := minf(left, 0.05)
+		left -= step
+		_player._tick_waypoint_reveal(step)
+		if layer != null:
+			layer._process(step)
+
+
 func _check_entering_sites() -> void:
 	var progress := _player.crawler_progress
 	_expect(progress != null, "entering notes use the run ledger")
@@ -2035,17 +3477,22 @@ func _check_entering_sites() -> void:
 	_expect(CrawlerSites.poll(_player).is_empty(),
 		"coming back to the same site does not repeat the note")
 	_player.global_position = Vector3(200.0, 0.0, 0.0)
+	var city_gems := 0 if _player.journal.is_done("first_city") \
+		else JournalDB.auto_gems_of("first_city")
 	_expect(CrawlerSites.poll(_player) == CrawlerRules.CITY_SITE_TITLE,
 		"the village shows Entering Neon Fjord")
 	_expect(hud != null and hud.entering_bonus() == "+%d gems" % site_gems,
 		"a new village also shows +gems")
 	_expect(village.waypoint, "walking into the village lights its waypoint")
+	_expect(_player.journal.is_done("first_city")
+			and CrawlerMeta.sandbox_unlocked(),
+		"the first city unlocks sandbox")
 	_player.global_position = Vector3.ZERO
 	_expect(CrawlerSites.poll(_player) == CrawlerRules.START_SITE_TITLE,
 		"a later site lets the first place announce again")
 	_expect(hud != null and hud.entering_bonus().is_empty(),
 		"a known site does not show another gem bonus")
-	_expect(CrawlerMeta.gems() == gems_before + site_gems * 2
+	_expect(CrawlerMeta.gems() == gems_before + site_gems * 2 + city_gems
 			and progress.gems_earned == earned_before + site_gems * 2,
 		"revisiting a known site does not pay again")
 	_player.global_position = Vector3(400.0, 0.0, 0.0)
@@ -2075,15 +3522,52 @@ func _check_entering_sites() -> void:
 				"the first city seats Neon Fjord")
 			_expect(ring.find_child("CityWall", true, false) == null,
 				"the village replaces the stand-in walls")
-			_expect(_monument_has_trimesh(ring),
+			_expect(_monument_has_trimesh(ring)
+					or _ring_has_blocking_collision(ring),
 				"the village keeps walkable collision")
-			_expect(not _named_collision_enabled(ring, "meadow"),
-				"the meadow dirt volume does not shove walkers")
-			_expect(_named_mesh_visible(ring, "meadow |"),
-				"the painted meadow stays")
+			_expect(ring.find_child("LIGHT_SOURCE", true, false) != null
+					or _named_mesh_visible(ring, "streetlight"),
+				"the village keeps its streetlamps")
+			_expect(ring.find_child("INTERACT_HATS", true, false) != null
+					or _named_mesh_visible(ring, "01_Hats"),
+				"the village still has shop sites")
 			_expect(_night_lights_on(ring) > 0,
 				"village neon and lamps cast real night light")
+			_check_village_folk(ring)
+			ring.refresh_stall_signs()
+			await get_tree().process_frame
+			_check_stall_signs(ring)
 			ring.queue_free()
+			await get_tree().process_frame
+	if ResourceLoader.exists(CrawlerRules.CRESCENT_VILLAGE):
+		var packed_crescent := load(CrawlerRules.CRESCENT_VILLAGE) as PackedScene
+		if packed_crescent != null:
+			var crescent = CITY_RING.new()
+			crescent.force_village = true
+			crescent.configure(
+				-1,
+				Transform3D.IDENTITY,
+				CrawlerRules.CITY_CRESCENT_SITE_ID,
+				CrawlerRules.CITY_CRESCENT_TITLE,
+				CrawlerRules.CRESCENT_VILLAGE,
+				CrawlerRules.CITY_CRESCENT_SITE_ID
+			)
+			add_child(crescent)
+			await get_tree().process_frame
+			_expect(crescent.get_node_or_null("Village") != null,
+				"Crescent Market seats village 02")
+			_expect(crescent.find_child("INTERACT_HATS", true, false) != null
+					or _named_mesh_visible(crescent, "01_Hats"),
+				"Crescent Market keeps the shop sites")
+			var crescent_mark := crescent.get_node_or_null("CrawlerWaypoint") as CrawlerSite
+			_expect(crescent_mark != null and not crescent_mark.waypoint
+					and crescent_mark.title == CrawlerRules.CITY_CRESCENT_TITLE,
+				"Crescent Market waits until you enter Neon Fjord")
+			_check_village_folk(crescent, "Crescent Market")
+			crescent.refresh_stall_signs()
+			await get_tree().process_frame
+			_check_stall_signs(crescent, "Crescent Market")
+			crescent.queue_free()
 			await get_tree().process_frame
 	if ResourceLoader.exists(CrawlerSpawnPad.MODEL):
 		var packed_pad := load(CrawlerSpawnPad.MODEL) as PackedScene
@@ -2101,6 +3585,577 @@ func _check_entering_sites() -> void:
 				"the teleporter's glowing fixtures cast real night light")
 			pad.queue_free()
 			await get_tree().process_frame
+
+
+func _check_crawler_statues() -> void:
+	var progress := _player.crawler_progress
+	_expect(progress != null, "statues read the run ledger")
+	if progress == null:
+		return
+	for kind: String in CrawlerStatue.KINDS:
+		_expect(FileAccess.file_exists(String(CrawlerStatue.PORTRAIT[kind])),
+			"%s still has its statue painting" % kind)
+	_expect(CrawlerStatue.pool_for(CrawlerStatue.KIND_WINGS)
+			== PackedStringArray([
+				CrawlerProgress.STAT_FLIGHT, CrawlerProgress.STAT_DEXTERITY,
+			]),
+		"the wing statue offers flight or speed")
+	_expect(CrawlerStatue.pool_for(CrawlerStatue.KIND_STRENGTH)
+			== PackedStringArray([
+				CrawlerProgress.STAT_DAMAGE, CrawlerProgress.STAT_DEFENSE,
+			]),
+		"the strength statue offers damage or defense")
+	var wealth := CrawlerStatue.pool_for(CrawlerStatue.KIND_WEALTH)
+	_expect(wealth.has(CrawlerProgress.STAT_GOLD)
+			and wealth.has(CrawlerProgress.STAT_XP)
+			and wealth.has(CrawlerProgress.STAT_GEMS)
+			and wealth.size() == 3,
+		"the wealth statue raises gem, gold, or XP gain")
+	var misc := CrawlerStatue.pool_for(CrawlerStatue.KIND_MISC)
+	_expect(misc.has(CrawlerProgress.STAT_LUCK)
+			and misc.has(CrawlerProgress.STAT_DODGE)
+			and misc.has(CrawlerProgress.STAT_JUKE_DISTANCE)
+			and misc.has(CrawlerProgress.STAT_CAST)
+			and not misc.has(CrawlerProgress.STAT_GOLD)
+			and not misc.has(CrawlerProgress.STAT_XP)
+			and not misc.has(CrawlerProgress.STAT_GEMS)
+			and not misc.has(CrawlerProgress.STAT_FLIGHT)
+			and not misc.has(CrawlerProgress.STAT_DAMAGE)
+			and not misc.has(CrawlerProgress.STAT_HEALTH),
+		"the curious statue rolls the leftover motion and luck stats")
+	_expect(CrawlerStatue.pool_for(CrawlerStatue.KIND_HEALTH).has(CrawlerStatue.HEAL_ID)
+			and CrawlerStatue.pool_for(CrawlerStatue.KIND_HEALTH).has(
+				CrawlerProgress.STAT_HEALTH),
+		"the health statue can raise max HP or heal")
+	var unspent := progress.unspent
+	var before_damage := progress.rank_of(CrawlerProgress.STAT_DAMAGE)
+	_expect(progress.grant_boost(CrawlerProgress.STAT_DAMAGE,
+			CrawlerProgress.rarity_amount(CrawlerProgress.RARITY_RARE)),
+		"a statue can grant a rare damage rank")
+	_expect(is_equal_approx(
+			progress.rank_of(CrawlerProgress.STAT_DAMAGE),
+			before_damage + CrawlerProgress.rarity_amount(
+				CrawlerProgress.RARITY_RARE))
+			and progress.unspent == unspent,
+		"a statue boost does not spend a level point")
+	_player.stats.set_health(12.0)
+	_expect(CrawlerStatue.apply_blessing(_player, {
+			"id": CrawlerStatue.HEAL_ID,
+			"rarity": 0,
+			"amount": 0.0,
+		}),
+		"the health statue can mend the body")
+	_expect(is_equal_approx(_player.health(), _player.maximum_health()),
+		"a heal blessing fills the bar")
+	progress.claimed_statues = PackedStringArray()
+	progress.remember()
+	var flight_before := progress.rank_of(CrawlerProgress.STAT_FLIGHT)
+	var dex_before := progress.rank_of(CrawlerProgress.STAT_DEXTERITY)
+	var statue := CrawlerStatue.new()
+	statue.configure(CrawlerStatue.KIND_WINGS)
+	add_child(statue)
+	await get_tree().process_frame
+	_expect(statue.find_child("StatueAura", true, false) != null
+			and statue.find_child("StatueBarFill", true, false) != null
+			and statue.find_child("StatueAuraZone", true, false) != null,
+		"a statue carries an aura sphere and a progress bar")
+	var blessing := statue.tick_presence(CrawlerStatue.FILL_SECONDS, true, _player)
+	_expect(statue.claimed and statue.fill >= 1.0 and not blessing.is_empty(),
+		"standing in the aura until the bar fills spends the statue")
+	_expect(progress.statue_claimed(CrawlerStatue.KIND_WINGS),
+		"the run remembers a spent statue")
+	_expect(
+		progress.rank_of(CrawlerProgress.STAT_FLIGHT) > flight_before
+		or progress.rank_of(CrawlerProgress.STAT_DEXTERITY) > dex_before,
+		"the wing statue raised flight or speed")
+	_expect(statue.tick_presence(CrawlerStatue.FILL_SECONDS, true, _player).is_empty(),
+		"a spent statue does not bless again")
+	var restored := CrawlerProgress.new()
+	restored.from_dict(progress.to_dict())
+	_expect(restored.statue_claimed(CrawlerStatue.KIND_WINGS)
+			and restored.statue_seed != 0,
+		"statue claims and the placement seed persist")
+	_expect(CrawlerStatues.OPENING_COUNT >= 2 and CrawlerStatues.OPENING_COUNT <= 4
+			and CrawlerStatues.MIN_SEPARATION <= 320.0,
+		"statues are spaced for 2-4 finds on the walk to the city")
+	var opening := CrawlerStatues.pick_directions(null, 1)
+	var walk := CrawlerRules.spawn_direction().angle_to(
+			CrawlerRules.city_direction()) * 8000.0
+	_expect(opening.size() == CrawlerStatues.OPENING_COUNT
+			and CrawlerStatues.count_along_opening(opening) == opening.size()
+			and walk > 700.0 and walk < 1300.0
+			and walk / CrawlerStatues.MIN_SEPARATION >= 2.0
+			and walk / CrawlerStatues.MIN_SEPARATION <= 5.5,
+		"three shrines sit on the spawn-to-city walk")
+	var gold_before := progress.rank_of(CrawlerProgress.STAT_GOLD)
+	var xp_before := progress.rank_of(CrawlerProgress.STAT_XP)
+	var gems_before := progress.rank_of(CrawlerProgress.STAT_GEMS)
+	progress.claimed_statues = PackedStringArray()
+	progress.remember()
+	var purse := CrawlerStatue.new()
+	purse.configure(CrawlerStatue.KIND_WEALTH, Vector3.FORWARD, 0)
+	add_child(purse)
+	await get_tree().process_frame
+	var purse_blessing := purse.tick_presence(CrawlerStatue.FILL_SECONDS, true, _player)
+	_expect(purse.claimed and not purse_blessing.is_empty()
+			and progress.statue_claimed(purse.claim_id)
+			and (
+				progress.rank_of(CrawlerProgress.STAT_GOLD) > gold_before
+				or progress.rank_of(CrawlerProgress.STAT_XP) > xp_before
+				or progress.rank_of(CrawlerProgress.STAT_GEMS) > gems_before
+			),
+		"standing at a wealth statue boosts gem, gold, or XP gain")
+	statue.queue_free()
+	purse.queue_free()
+	await get_tree().process_frame
+
+
+func _check_roar_shockwaves() -> void:
+	var poisoned := CrawlerRanger.new()
+	poisoned.configure("toxin", Transform3D(Basis(), Vector3(12.0, 4.0, 0.0)), 1, true)
+	add_child(poisoned)
+	poisoned.set_physics_process(false)
+	var before := poisoned.health()
+	var toxin := DamageHit.impact(poisoned.combat_position(), 2.0, 0.0)
+	toxin.faction = DamageHit.Faction.PLAYER
+	toxin.with_status(CombatStatuses.POISON, 2.0, 10.0)
+	_expect(poisoned.apply_damage(toxin) == 0.0
+			and poisoned.statuses.has(CombatStatuses.POISON),
+		"poison applies without an opening hit")
+	poisoned._tick_statuses(0.5)
+	_expect(poisoned.health() < before and poisoned.is_alive(),
+		"poison deals damage over time")
+
+	var frozen := CrawlerRanger.new()
+	frozen.configure("frost", Transform3D(Basis(), Vector3(16.0, 4.0, 0.0)), 1, true)
+	add_child(frozen)
+	frozen.set_physics_process(false)
+	frozen.velocity = Vector3(8.0, 0.0, 0.0)
+	var frost := DamageHit.impact(frozen.combat_position(), 2.0, 0.0)
+	frost.faction = DamageHit.Faction.PLAYER
+	frost.with_status(CombatStatuses.FREEZE, 2.0)
+	frozen.apply_damage(frost)
+	_expect(frozen.is_frozen(), "freeze locks a mob")
+	frozen._physics_process(0.16)
+	_expect(frozen.velocity.is_zero_approx(), "a frozen mob stops moving")
+
+	var shocked := CrawlerRanger.new()
+	shocked.configure("shock", Transform3D(Basis(), Vector3(18.0, 4.0, 0.0)), 1, true)
+	add_child(shocked)
+	shocked.set_physics_process(false)
+	shocked.velocity = Vector3(8.0, 0.0, 0.0)
+	var jolt := DamageHit.impact(shocked.combat_position(), 2.0, 8.0)
+	jolt.faction = DamageHit.Faction.PLAYER
+	jolt.with_status(CombatStatuses.SHOCK, 2.0)
+	shocked.apply_damage(jolt)
+	_expect(shocked.statuses.has(CombatStatuses.SHOCK)
+			and shocked.is_frozen(),
+		"shock starts by locking a mob")
+	shocked._tick_statuses(CombatStatuses.SHOCK_LOCK + 0.05)
+	_expect(shocked.statuses.has(CombatStatuses.SHOCK)
+			and not shocked.is_frozen(),
+		"shock then lets the mob twitch free")
+	shocked._tick_statuses(CombatStatuses.SHOCK_MOVE + 0.05)
+	_expect(shocked.is_frozen(), "shock locks the mob again")
+
+	var heart := DamageNumberEvent.new()
+	heart.kind = DamageNumberEvent.Kind.CHARM
+	heart.amount = 1.0
+	var toxin_pop := DamageNumberEvent.new()
+	toxin_pop.kind = DamageNumberEvent.Kind.POISON
+	toxin_pop.amount = 5.0
+	var bolt := DamageNumberEvent.new()
+	bolt.kind = DamageNumberEvent.Kind.SHOCK
+	bolt.amount = 1.0
+	_expect(heart.caption() == "♥" and bolt.caption() == "⚡"
+			and toxin_pop.caption() == "5",
+		"charm, shock, and poison each have their own float")
+
+	var first := CrawlerRanger.new()
+	first.configure("bolt_a", Transform3D(Basis(), Vector3(30.0, 4.0, 0.0)), 1, true)
+	var second := CrawlerRanger.new()
+	second.configure("bolt_b", Transform3D(Basis(), Vector3(34.0, 4.0, 0.0)), 1, true)
+	add_child(first)
+	add_child(second)
+	first.set_physics_process(false)
+	second.set_physics_process(false)
+	var chain := Lightning.collect_hops(
+		self, Vector3(28.0, 4.0, 0.0), first.combat_position(), 1, 9.0, 7.0)
+	_expect(chain.size() >= 2,
+		"lightning snaps to a nearby body and hops to a second")
+
+	poisoned.queue_free()
+	frozen.queue_free()
+	shocked.queue_free()
+	first.queue_free()
+	second.queue_free()
+
+	var bait := CrawlerRanger.new()
+	bait.configure("charm_bait", Transform3D(Basis(), Vector3(20.0, 4.0, 0.0)), 1, true)
+	var hunter := CrawlerRanger.new()
+	hunter.configure("charm_hunter", Transform3D(Basis(), Vector3(24.0, 4.0, 0.0)), 1, true)
+	add_child(bait)
+	add_child(hunter)
+	bait.set_physics_process(false)
+	hunter.set_physics_process(false)
+	var charm := DamageHit.impact(bait.combat_position(), 2.0, 0.0)
+	charm.faction = DamageHit.Faction.PLAYER
+	charm.with_status(CombatStatuses.CHARM, 3.0)
+	bait.apply_damage(charm)
+	_expect(bait.is_charmed() and hunter._combat_target() == bait,
+		"other mobs hunt a charmed enemy")
+	var prey := bait._combat_target()
+	_expect(prey is CrawlerMob and prey != bait,
+		"a charmed mob attacks another mob")
+	_expect(bait.outgoing_faction() == DamageHit.Faction.PLAYER,
+		"charmed mobs strike as the player's side")
+	bait.statuses.clear(CombatStatuses.CHARM)
+	bait._tick_statuses(0.0)
+	_expect(not bait.is_charmed() and bait.chase,
+		"charm expiry leaves the mob agroed")
+
+	bait.queue_free()
+	hunter.queue_free()
+
+
+func _check_fields() -> void:
+	var frost_at := Vector3(48.0, 4.0, 0.0)
+	var frost := CrawlerFieldVolume.create(
+		self, _player, "freeze_field", frost_at,
+		CrawlerRules.field_start_stats("freeze_field"),
+		Color(0.45, 0.82, 1.0), true)
+	_expect(frost != null, "freeze field can be placed")
+	if frost != null:
+		frost._age = CrawlerFieldVolume.EXPAND
+		var slow := CrawlerFieldVolume.speed_scale_at(self, frost_at)
+		_expect(slow < 0.4 and slow > 0.05,
+			"freeze field cuts speed of bodies and shots inside")
+		var wash := CrawlerFieldVolume.wash_at(self, frost_at)
+		_expect(wash.a > 0.05, "standing in a field tints the view")
+		var slowed := CrawlerRanger.new()
+		slowed.configure("field_slow", Transform3D(Basis(), frost_at), 1, true)
+		add_child(slowed)
+		slowed.set_physics_process(false)
+		slowed.velocity = Vector3(10.0, 0.0, 0.0)
+		var scale := CrawlerFieldVolume.speed_scale_at(slowed, frost_at)
+		slowed.velocity *= scale
+		_expect(slowed.velocity.length() < 4.0,
+			"a mob inside a freeze field moves slower")
+		slowed.queue_free()
+		frost.queue_free()
+
+	var toxin_at := Vector3(56.0, 4.0, 0.0)
+	var toxin := CrawlerFieldVolume.create(
+		self, _player, "toxic_field", toxin_at,
+		CrawlerRules.field_start_stats("toxic_field"),
+		Color(0.32, 0.92, 0.22), true)
+	var soaked := CrawlerRanger.new()
+	soaked.configure("field_toxin", Transform3D(Basis(), toxin_at), 1, true)
+	add_child(soaked)
+	soaked.set_physics_process(false)
+	if toxin != null:
+		toxin._age = CrawlerFieldVolume.EXPAND
+		toxin._tick_inside()
+		var first := soaked.statuses.strength(CombatStatuses.POISON)
+		toxin._tick_inside()
+		_expect(soaked.statuses.has(CombatStatuses.POISON)
+				and soaked.statuses.strength(CombatStatuses.POISON) > first,
+			"toxic field stacks poison while a mob stays inside")
+		toxin.queue_free()
+	soaked.queue_free()
+
+	var static_at := Vector3(64.0, 4.0, 0.0)
+	var static_field := CrawlerFieldVolume.create(
+		self, _player, "static_field", static_at,
+		CrawlerRules.field_start_stats("static_field"),
+		Color(0.48, 0.84, 1.0), true)
+	var jolted := CrawlerRanger.new()
+	jolted.configure("field_static", Transform3D(Basis(), static_at), 1, true)
+	add_child(jolted)
+	jolted.set_physics_process(false)
+	var before := jolted.health()
+	if static_field != null:
+		static_field._age = CrawlerFieldVolume.EXPAND
+		static_field._tick_inside()
+		_expect(jolted.health() < before
+				and jolted.statuses.has(CombatStatuses.SHOCK),
+			"static field damages and shocks a mob that enters")
+		static_field.queue_free()
+	jolted.queue_free()
+
+	var heal_at := _player.combat_position()
+	var wounded := _player.maximum_health() * 0.45
+	_player.stats.set_health(wounded)
+	var healing := CrawlerFieldVolume.create(
+		self, _player, "healing_field", heal_at,
+		CrawlerRules.field_start_stats("healing_field"),
+		Color(0.54, 0.94, 0.75), true)
+	var bystander := CrawlerRanger.new()
+	bystander.configure("field_heal", Transform3D(Basis(), heal_at), 1, true)
+	add_child(bystander)
+	bystander.set_physics_process(false)
+	var mob_before := bystander.health()
+	if healing != null:
+		healing._age = CrawlerFieldVolume.EXPAND
+		healing._tick_inside()
+		_expect(_player.health() > wounded,
+			"healing field restores the owner standing inside")
+		_expect(is_equal_approx(bystander.health(), mob_before),
+			"healing field does not damage mobs")
+		healing.queue_free()
+	bystander.queue_free()
+	_player.stats.set_health(_player.maximum_health())
+
+
+func _check_linger() -> void:
+	var at := Vector3(40.0, 4.0, 0.0)
+	var recipe := {
+		"ability_id": "laser_eyes",
+		"tint": Color(0.48, 0.84, 1.0),
+		"duration": 2.0,
+		"radius": 1.6,
+		"damage": 10.0,
+		"slow": 40.0,
+		"statuses": [],
+	}
+	var cloud := CrawlerLingerCloud.spawn(self, _player, recipe, at, true)
+	_expect(cloud != null, "a linger cloud can be placed")
+	if cloud == null:
+		return
+	var wash := CrawlerLingerCloud.wash_at(self, at)
+	_expect(wash.a > 0.02, "standing in a linger cloud tints the view")
+	_expect(CrawlerLingerCloud.speed_scale_at(self, at) < 0.75,
+		"a slow linger cloud cuts speed inside")
+	var dummy := CrawlerRanger.new()
+	dummy.configure("linger_hit", Transform3D(Basis(), at), 1, true)
+	add_child(dummy)
+	dummy.set_physics_process(false)
+	var before := dummy.health()
+	cloud._tick_inside()
+	_expect(dummy.health() < before, "a linger cloud damages a mob inside")
+	dummy.queue_free()
+	cloud.queue_free()
+
+
+func _check_elemental_mods() -> void:
+	var stacked := CrawlerRanger.new()
+	stacked.configure("beam_toxin", Transform3D(Basis(), Vector3(72.0, 4.0, 0.0)), 1, true)
+	add_child(stacked)
+	stacked.set_physics_process(false)
+	var pulse := DamageHit.beam(
+		stacked.combat_position(), stacked.combat_position() + Vector3.RIGHT, 1.0, 1.0)
+	pulse.faction = DamageHit.Faction.PLAYER
+	CrawlerElements.apply_to_hit(pulse, [{
+		"id": String(CombatStatuses.POISON),
+		"duration": 4.0,
+		"strength": 2.0,
+		"stack": true,
+	}], true)
+	stacked.apply_damage(pulse)
+	var first := stacked.statuses.strength(CombatStatuses.POISON)
+	stacked.apply_damage(pulse)
+	_expect(stacked.statuses.has(CombatStatuses.POISON)
+			and stacked.statuses.strength(CombatStatuses.POISON) > first,
+		"a toxic beam stacks poison on a mob")
+	stacked.queue_free()
+
+	var blast := DamageHit.area(Vector3(80.0, 4.0, 0.0), 10.0, 20.0, 1.0)
+	blast.faction = DamageHit.Faction.PLAYER
+	blast.with_status(CombatStatuses.CHARM, 4.0)
+	var near := CrawlerMob.new()
+	near.configure("charm_near", Transform3D(Basis(), Vector3(80.0, 4.0, 0.0)), 1, true)
+	var far := CrawlerMob.new()
+	far.configure("charm_far", Transform3D(Basis(), Vector3(88.0, 4.0, 0.0)), 1, true)
+	add_child(near)
+	add_child(far)
+	near.set_physics_process(false)
+	far.set_physics_process(false)
+	var centre := blast.resolved_for(near)
+	var edge := blast.resolved_for(far)
+	_expect(centre.status_duration > edge.status_duration
+			and edge.status_duration > 0.0,
+		"charm on a blast trails off toward the edge")
+	near.queue_free()
+	far.queue_free()
+
+	var burned := CrawlerRanger.new()
+	burned.configure("wall_toxin", Transform3D(Basis(), Vector3(96.0, 4.0, 0.0)), 1, true)
+	add_child(burned)
+	burned.set_physics_process(false)
+	var cold := DamageHit.impact(burned.combat_position(), 1.0, 4.0)
+	cold.faction = DamageHit.Faction.PLAYER
+	cold.ability_id = "wall"
+	CrawlerElements.apply_to_hit(cold, CrawlerElements.payload(
+		_player, "wall", {"firewall": 0.0}))
+	burned.apply_damage(cold)
+	_expect(not burned.statuses.has(CombatStatuses.POISON),
+		"toxic on wall does nothing without firewall")
+	var hot := DamageHit.impact(burned.combat_position(), 1.0, 4.0)
+	hot.faction = DamageHit.Faction.PLAYER
+	CrawlerElements.apply_to_hit(hot, [{
+		"id": String(CombatStatuses.POISON),
+		"duration": 4.0,
+		"strength": 8.0,
+		"stack": true,
+	}], true, AbilityBarrier.FIRE_STEP)
+	burned.apply_damage(hot)
+	_expect(burned.statuses.has(CombatStatuses.POISON),
+		"toxic on a burning wall applies poison")
+	burned.queue_free()
+
+	var chill_at := Vector3(104.0, 4.0, 0.0)
+	var chilled := CrawlerFieldVolume.create(
+		self, _player, "static_field", chill_at,
+		{"damage": 0.0, "shock": 0.0, "freeze": 40.0,
+			"radius": 7.0, "duration": 6.0, "fade_duration": 0.0},
+		Color(0.48, 0.84, 1.0), true)
+	if chilled != null:
+		chilled._age = CrawlerFieldVolume.EXPAND
+		_expect(CrawlerFieldVolume.speed_scale_at(self, chill_at) < 0.75,
+			"ice on a field slows bodies and shots inside")
+		chilled.queue_free()
+
+
+func _check_multi_shot() -> void:
+	var two := CrawlerMulti.yaw_degrees(2)
+	_expect(two.size() == 2
+			and is_equal_approx(two[0], -CrawlerRules.MULTI_BEAM_YAW)
+			and is_equal_approx(two[1], CrawlerRules.MULTI_BEAM_YAW),
+		"two-way multi shot fans to 45 degrees")
+	var three := CrawlerMulti.fan_points(
+		Vector3.ZERO, Vector3(0.0, 0.0, -10.0), 3, Vector3.UP)
+	_expect(three.size() == 3
+			and three[1].distance_to(Vector3(0.0, 0.0, -10.0)) < 0.05,
+		"three-way multi shot keeps a center beam")
+	var walls := CrawlerMulti.wall_offsets(5, 8.0)
+	_expect(walls.size() == 5 and is_equal_approx(walls[0], 0.0),
+		"five walls keep one on the player")
+	_expect(CrawlerMulti.shots({"multi": 2}) == 2
+			and CrawlerMulti.extras({"multi": 5}) == 4
+			and CrawlerMulti.shots({}) == 1,
+		"shockwaves and fields recast once per extra split")
+	_expect(CrawlerRules.MULTI_ECHO_GAP == 1.0
+			and CrawlerRules.MULTI_SPLIT_TRAVEL > 0.0,
+		"projectiles split after they leave, blasts wait a second")
+	var punches := CrawlerMulti.punch_offsets(4)
+	_expect(punches.size() == 4
+			and is_equal_approx(punches[1], CrawlerRules.MULTI_PUNCH_GAP),
+		"physical extras sit an inch in front of each other")
+
+
+func _check_reach() -> void:
+	_expect(is_equal_approx(CrawlerReach.range_mul(0), CrawlerRules.REACH_RANGE_MUL)
+			and is_equal_approx(CrawlerReach.far_cast_meters(0),
+				CrawlerRules.REACH_FAR_CAST),
+		"reach starts at 1.28x range and a two meter far cast")
+	var from := Vector3.ZERO
+	var along := Vector3.FORWARD
+	var shifted := CrawlerReach.shift(from, along, {"far_cast": 2.0})
+	_expect(shifted.distance_to(from + along * 2.0) < 0.001,
+		"far cast moves the origin along the aim")
+	_expect(CrawlerReach.shift(from, along, {}).is_equal_approx(from),
+		"no far cast leaves the origin alone")
+	var pair := CrawlerReach.shift_pair(
+		Vector3(-1.0, 0.0, 0.0), Vector3(1.0, 0.0, 0.0),
+		Vector3(0.0, 0.0, 1.0), {"far_cast": 2.0})
+	_expect(pair.size() == 2
+			and is_equal_approx(pair[0].z, 2.0)
+			and is_equal_approx(pair[1].z, 2.0),
+		"both eyes move forward together")
+	var longer := CrawlerMulti.fan_points(
+		shifted, shifted + along * 60.0 * CrawlerRules.REACH_RANGE_MUL, 3,
+		Vector3.UP)
+	_expect(longer.size() == 3
+			and longer[1].distance_to(
+				shifted + along * 60.0 * CrawlerRules.REACH_RANGE_MUL) < 0.05,
+		"multi shot fans from the far-cast origin across the longer reach")
+
+
+func _check_bounce() -> void:
+	_expect(CrawlerRules.bounce_count(0) == CrawlerRules.BOUNCE_BASE
+			and CrawlerRules.bounce_count(CrawlerRules.BOUNCE_MAX_RANK)
+				== CrawlerRules.BOUNCE_MAX,
+		"bounce starts at one ricochet and upgrades to five")
+	var outgoing := CrawlerBounce.reflect(Vector3(1.0, -1.0, 0.0), Vector3.UP)
+	_expect(outgoing.y > 0.0 and outgoing.x > 0.0,
+		"bounce reflects off a surface normal")
+	_expect(CrawlerBounce.count({"bounce": 3}) == 3
+			and CrawlerBounce.count({}) == 0,
+		"seated bounce is a count, and empty stats do not ricochet")
+	var recipe := CrawlerBubbles.recipe_from(
+		CrawlerCatalog.make_modifier("bubble"),
+		CrawlerCatalog.make_ability("laser_eyes"),
+		{"bounce": 2.0, "radius": 0.45})
+	_expect(CrawlerBounce.count(recipe) == 2,
+		"bubble recipes inherit bounce from the host")
+	_expect(CrawlerBounce.explodes_on_bounce(ItemDB.ability_definition("mini_nuke"))
+			and not CrawlerBounce.explodes_on_bounce(
+				ItemDB.ability_definition("teleport")),
+		"orb blasts still explode on bounce, teleport does not")
+
+
+func _check_impact_cast() -> void:
+	_expect(CrawlerRules.upgrade_stats_for("impact_cast").is_empty(),
+		"impact cast has no upgrades")
+	_expect(CrawlerImpactCast.enabled({"impact_cast": 1.0})
+			and not CrawlerImpactCast.enabled(
+				{"impact_cast": 1.0, "_impact_echo": 1.0}),
+		"echo copies cannot nest another impact cast")
+	var along := CrawlerImpactCast.random_along(Vector3.UP)
+	_expect(along.is_normalized() and along.dot(Vector3.UP) > 0.0,
+		"impact copies leave off the hit face")
+	_expect(CrawlerImpactCast.can_echo("mini_nuke")
+			and CrawlerImpactCast.can_echo("meteor_punch")
+			and not CrawlerImpactCast.can_echo("teleport")
+			and not CrawlerImpactCast.can_echo("wall"),
+		"impact cast copies combat abilities and skips teleport and walls")
+	var flagged := CrawlerCatalog.resolve_stats(
+		"laser_eyes", PackedStringArray(["impact_cast"]), {})
+	_expect(CrawlerImpactCast.enabled(flagged)
+			and not CrawlerCatalog.resolve_stats(
+				"roar", PackedStringArray(["impact_cast"]), {}).has("impact_cast"),
+		"impact cast flags beams and projectiles, not shockwaves")
+
+
+func _check_homing() -> void:
+	_expect(is_equal_approx(CrawlerRules.homing_steer(0),
+			CrawlerRules.HOMING_STEER_BASE)
+			and is_equal_approx(CrawlerRules.homing_range(0),
+				CrawlerRules.HOMING_RANGE_BASE)
+			and CrawlerRules.upgrade_max_rank("homing", "homing")
+				== CrawlerRules.HOMING_MAX_RANK,
+		"homing starts at 4.5 pull / 8 m and upgrades to rank six")
+	_expect(CrawlerHoming.enabled({"homing": 4.5, "homing_range": 8.0})
+			and not CrawlerHoming.enabled({}),
+		"seated homing is a pull-and-seek pair")
+	_expect(CrawlerHoming.enabled(CrawlerCatalog.resolve_stats(
+			"laser_eyes", PackedStringArray(["homing"]), {}))
+			and CrawlerHoming.enabled(CrawlerCatalog.resolve_stats(
+				"starfire", PackedStringArray(["homing"]), {}))
+			and CrawlerHoming.enabled(CrawlerCatalog.resolve_stats(
+				"meteor_punch", PackedStringArray(["homing"]), {}))
+			and not CrawlerCatalog.resolve_stats(
+				"roar", PackedStringArray(["homing"]), {}).has("homing"),
+		"homing flags beams, shots, and punches, not shockwaves")
+	var recipe := CrawlerBubbles.recipe_from(
+		CrawlerCatalog.make_modifier("bubble"),
+		CrawlerCatalog.make_ability("laser_eyes"),
+		{"homing": 6.0, "homing_range": 11.0})
+	_expect(float(recipe.get("homing", 0.0)) >= 11.0
+			and float(recipe.get("steer", 0.0)) >= 6.0,
+		"bubble recipes inherit host homing even at bubble homing rank 0")
+	var cloud := CrawlerLingers.recipe_from(
+		CrawlerCatalog.make_modifier("linger"),
+		CrawlerCatalog.make_ability("laser_eyes"),
+		{"homing": 6.0, "homing_range": 11.0})
+	_expect(is_equal_approx(float(cloud.get("homing", 0.0)), 11.0)
+			and is_equal_approx(float(cloud.get("steer", 0.0)), 6.0),
+		"linger clouds inherit host homing")
+	var curve := CrawlerHoming.arc(
+		Vector3.ZERO, Vector3(0.0, 0.0, -6.0), Vector3.FORWARD,
+		{"homing": 8.0, "homing_range": 12.0})
+	_expect(curve.size() == CrawlerHoming.ARC_STEPS + 1,
+		"homing draws a curved beam path")
 
 
 func _press_interact(player: OnlinePlayer) -> void:
@@ -2152,6 +4207,34 @@ func _ranger_albedo(ranger: CrawlerRanger) -> Color:
 	return Color.BLACK
 
 
+func _has_safe_zone_row(player: OnlinePlayer) -> bool:
+	if player == null:
+		return false
+	for row_variant: Variant in player.status_rows():
+		if typeof(row_variant) != TYPE_DICTIONARY:
+			continue
+		if StringName((row_variant as Dictionary).get("id", &"")) == &"safe_zone":
+			return true
+	return false
+
+
+func _safe_zone_chip_visible(player: OnlinePlayer) -> bool:
+	var hud := player.combat_hud() as CombatHud if player != null else null
+	if hud == null:
+		return false
+	hud.refresh(0.016)
+	var layer := hud.status_layer()
+	if layer == null:
+		return false
+	var chip := layer.find_child("Chip_safe_zone", true, false) as StatusChip
+	if chip == null:
+		return false
+	for node: Node in chip.find_children("*", "Label", true, false):
+		if (node as Label).text == "Safe Zone":
+			return true
+	return false
+
+
 func _face_along(player: OnlinePlayer, toward: Vector3, up := Vector3.UP) -> void:
 	var along := toward
 	if along.length_squared() < 0.0001:
@@ -2167,6 +4250,153 @@ func _has_named_clip(animator: AnimationPlayer, clip: String) -> bool:
 		if listed == clip or listed.ends_with("/" + clip):
 			return true
 	return false
+
+
+func _check_kill_loot(progress: CrawlerProgress) -> void:
+	_expect(CrawlerLoot.base_chance(CrawlerLoot.KIND_HAT) >= 0.01
+			and CrawlerLoot.base_chance(CrawlerLoot.KIND_HAT) <= 0.03
+			and CrawlerLoot.base_chance(CrawlerLoot.KIND_ABILITY) >= 0.01
+			and CrawlerLoot.base_chance(CrawlerLoot.KIND_MOD) <= 0.03,
+		"basic hats, abilities, and mods drop at a 1-3 percent chance")
+	var plain := CrawlerLoot.drop_chance(CrawlerLoot.KIND_HAT, 0.0)
+	var lucky := CrawlerLoot.drop_chance(CrawlerLoot.KIND_HAT, 16.0)
+	_expect(plain >= 0.01 and plain <= 0.03,
+		"no luck keeps hat drops in the 1-3 percent band")
+	_expect(lucky > plain and lucky <= CrawlerLoot.CHANCE_CAP
+			and lucky >= CrawlerLoot.CHANCE_CAP - 0.02,
+		"luck lifts hat drops toward ten percent")
+	_expect(CrawlerLoot.drop_chance(CrawlerLoot.KIND_ABILITY, 16.0)
+			>= CrawlerLoot.CHANCE_CAP - 0.02
+			and CrawlerLoot.drop_chance(CrawlerLoot.KIND_MOD, 16.0)
+			>= CrawlerLoot.CHANCE_CAP - 0.02,
+		"luck lifts ability and mod drops toward ten percent")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1
+	var drops := CrawlerLoot.roll_kill_drops(
+		progress, rng, PackedFloat32Array([0.0, 0.0, 0.0]))
+	_expect(drops.size() == 3, "a lucky roll can drop an ability, a mod, and a hat")
+	var kinds: PackedStringArray = PackedStringArray()
+	for drop: Dictionary in drops:
+		kinds.append(str(drop.get("kind", "")))
+	_expect(kinds.has(CrawlerLoot.KIND_ABILITY)
+			and kinds.has(CrawlerLoot.KIND_MOD)
+			and kinds.has(CrawlerLoot.KIND_HAT),
+		"one kill can offer every loot kind")
+	_expect(CrawlerLoot.roll_kill_drops(
+			progress, rng, PackedFloat32Array([0.99, 0.99, 0.99])).is_empty(),
+		"an unlucky roll drops nothing")
+	var before := progress.owned_hats.size()
+	var uid := progress.grant_hat(CrawlerProgress.HAT_WARD)
+	_expect(not uid.is_empty() and progress.owned_hats.size() == before + 1,
+		"a dropped hat is granted without a gold spend")
+	var hat := DroppedCrawlerHat.new()
+	hat.configure(11, CrawlerProgress.HAT_MISSILE)
+	add_child(hat)
+	_expect(hat.find_child("HatLamp", true, false) != null
+			and hat.find_child("HatVisual", true, false) != null,
+		"a dropped hat is the glowing hat model")
+	hat.global_position = Vector3(0.0, 2.8, 0.0)
+	hat.begin_settle_to(Vector3(0.0, 0.2, 0.0))
+	hat._process(0.4)
+	_expect(hat.global_position.y < 2.2, "dropped hats fall while they spin")
+	hat.free()
+
+
+func _hat_missiles() -> Array[CrawlerMissile]:
+	var found: Array[CrawlerMissile] = []
+	if not is_inside_tree():
+		return found
+	for node_variant: Variant in get_tree().get_nodes_in_group(CrawlerMissile.GROUP):
+		var missile := node_variant as CrawlerMissile
+		if missile != null and is_instance_valid(missile) and not missile._spent:
+			found.append(missile)
+	return found
+
+
+func _free_hat_missiles() -> void:
+	for missile: CrawlerMissile in _hat_missiles():
+		missile.free()
+
+
+func _hat_mines() -> Array[CrawlerHatMine]:
+	var found: Array[CrawlerHatMine] = []
+	if not is_inside_tree():
+		return found
+	for node_variant: Variant in get_tree().get_nodes_in_group(CrawlerHatMine.GROUP):
+		var mine := node_variant as CrawlerHatMine
+		if mine != null and is_instance_valid(mine) and not mine._spent:
+			found.append(mine)
+	return found
+
+
+func _free_hat_mines() -> void:
+	for mine: CrawlerHatMine in _hat_mines():
+		mine.free()
+
+
+func _clear_stray_crawler_mobs() -> void:
+	if not is_inside_tree():
+		return
+	for node_variant: Variant in get_tree().get_nodes_in_group(CrawlerMob.GROUP):
+		var node := node_variant as Node
+		if node != null and is_instance_valid(node):
+			node.free()
+
+
+func _advance_hat_missiles(missiles: Array[CrawlerMissile], seconds: float) -> void:
+	var left := seconds
+	while left > 0.0:
+		var step := minf(left, 0.05)
+		left -= step
+		for missile: CrawlerMissile in missiles:
+			if is_instance_valid(missile) and not missile._spent:
+				missile._physics_process(step)
+
+
+func _death_home_is_on_plate(screen: DeathScreen) -> bool:
+	if screen == null:
+		return false
+	var button := screen.respawn_button()
+	var plate := screen.find_child("Plate", true, false) as Control
+	if button == null or plate == null:
+		return false
+	var btn := button.get_global_rect()
+	var box := plate.get_global_rect()
+	return btn.position.y >= box.position.y - 1.0 \
+		and btn.end.y <= box.end.y + 2.0 \
+		and btn.position.x >= box.position.x - 1.0 \
+		and btn.end.x <= box.end.x + 2.0
+
+
+func _store_upgrades_fit(detail: Control, grid: Control) -> bool:
+	if detail == null or grid == null:
+		return false
+	var pane := detail.get_global_rect().grow(2.0)
+	var tiles: Array[Control] = []
+	for child: Node in grid.get_children():
+		var tile := child as Control
+		if tile == null or not str(tile.name).begins_with("UpgradeTile_"):
+			continue
+		if not tile.visible:
+			continue
+		tiles.append(tile)
+	if tiles.is_empty():
+		return false
+	for tile: Control in tiles:
+		var box := tile.get_global_rect()
+		if box.size.x < 8.0 or box.size.y < 8.0:
+			return false
+		if box.position.x < pane.position.x - 2.0 \
+				or box.position.y < pane.position.y - 2.0 \
+				or box.end.x > pane.end.x + 2.0 \
+				or box.end.y > pane.end.y + 2.0:
+			return false
+	for index in tiles.size():
+		var first := tiles[index].get_global_rect().grow(-2.0)
+		for other in range(index + 1, tiles.size()):
+			if first.intersects(tiles[other].get_global_rect().grow(-2.0)):
+				return false
+	return true
 
 
 func _expect(ok: bool, label: String) -> void:

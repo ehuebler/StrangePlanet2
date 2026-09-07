@@ -3,12 +3,17 @@ extends CharacterBody3D
 
 ## Shared combatant for crawler siege enemies. Host owns health and motion;
 ## other peers interpolate the compact state the horde publishes.
+##
+## Unique hunt and fire live in `_tick_ai`. The director only runs that on
+## nearby bodies that still have think budget. New kinds should not override
+## `_physics_process` or query the height field every tick. Start a windup
+## with `_begin_attack` so the swarm shares an attack token.
 
 signal died
 
 const GROUP := &"crawler_mobs"
 const ENEMY_SHADER: Shader = preload("res://shaders/crawler/crawler_enemy.gdshader")
-const CrawlerCityRingScript := preload("res://game/crawler/crawler_city_ring.gd")
+const MobSense := preload("res://game/crawler/crawler_mob_sense.gd")
 const STATE_SYNC_INTERVAL := 0.1
 const CLIENT_FOLLOW_SPEED := 18.0
 const DAMAGE_FLASH_SECONDS := 0.32
@@ -26,6 +31,7 @@ const RUN_CLIP_SPEED := 22.0
 var mob_id := ""
 var city_id := -1
 var garrison_slot := -1
+var persistent := false
 var threat_level := 0
 var chase := false
 var ever_chased := false
@@ -33,6 +39,9 @@ var idle_seconds := 0.0
 var hang_origin := Vector3.ZERO
 var dismissed := false
 var last_source_peer := 0
+var statuses := CombatStatuses.new()
+var _poison_float := 0.0
+var _frost_float := 0.0
 
 var _alive := true
 var _base_health := 48.0
@@ -61,6 +70,14 @@ var _spotted_left := 0.0
 var _network_transform := Transform3D.IDENTITY
 var _network_velocity := Vector3.ZERO
 var _has_network_transform := false
+var _orbit_dir := Vector3.ZERO
+var _sensed_player: Node3D
+var _sensed_frame := -1
+var _cached_up := Vector3.ZERO
+var _cached_up_at := Vector3.INF
+var _cached_alt := 0.0
+var _cached_alt_at := Vector3.INF
+var _clip_names: Dictionary = {}
 
 
 func configure(id: String, at: Transform3D, level: int, should_chase: bool,
@@ -94,6 +111,7 @@ func _ready() -> void:
 	_build_body()
 	add_to_group(DamageHit.COMBATANT_GROUP)
 	add_to_group(GROUP)
+	MobSense.note_spawned(self)
 	_network_transform = global_transform
 	if hang_origin == Vector3.ZERO:
 		hang_origin = global_position
@@ -121,26 +139,72 @@ func _physics_process(delta: float) -> void:
 		return
 	if not _alive:
 		return
+	var clock := Time.get_ticks_usec()
+	MobSense.begin_frame(get_tree())
+	var lod := MobSense.lod_of(self)
+	if lod == CrawlerRules.MOB_LOD_COLD:
+		_tick_cold(delta)
+		MobSense.note_tick(self, Time.get_ticks_usec() - clock)
+		return
 	_attack_left = maxf(_attack_left - delta, 0.0)
-	_tick_ai(delta)
-	_respect_flyer_ceiling(delta)
-	_keep_clear_of_terrain(false)
-	if _faces_motion:
-		_face_motion(delta)
-	_keep_out_of_safe_zones()
-	var player := _nearest_player()
-	var nearby := player != null \
-		and global_position.distance_to(player.global_position) < 150.0
-	if nearby:
-		move_and_slide()
+	_tick_statuses(delta)
+	if not _alive:
+		MobSense.note_tick(self, Time.get_ticks_usec() - clock)
+		return
+	var hot := lod == CrawlerRules.MOB_LOD_HOT
+	if is_frozen():
+		velocity = Vector3.ZERO
+	elif hot and MobSense.take_think(self, chase or is_charmed()):
+		_tick_ai(delta)
+		var field_slow := MobSense.field_slow(self, global_position)
+		if field_slow < 0.999:
+			velocity *= field_slow
 	else:
+		_tick_far(delta)
+	if hot:
+		_respect_flyer_ceiling(delta)
+		_keep_clear_of_terrain(false)
+		if _faces_motion and not is_frozen():
+			_face_motion(delta)
+		_keep_out_of_safe_zones()
+	# Mask is 0, so move_and_slide would not collide. Integrate the same way
+	# far and near so a crowd does not pay a physics-server slide each tick.
+	if velocity.length_squared() > 0.0001:
 		global_position += velocity * delta
-	_keep_clear_of_terrain(true)
+	if hot:
+		_keep_clear_of_terrain(true)
 	_publish_state(delta)
+	MobSense.note_tick(self, Time.get_ticks_usec() - clock)
 
 
 func _tick_ai(_delta: float) -> void:
 	pass
+
+
+func _tick_far(delta: float) -> void:
+	var player := _nearest_player()
+	if player == null or not tick_agro(player, delta):
+		velocity = velocity.move_toward(Vector3.ZERO, 10.0 * delta)
+		return
+	var along := _combat_position_of(player) - global_position
+	if along.length_squared() < 0.04:
+		return
+	_match_speed(move_speed(), delta, 1.2, 16.0)
+	_steer_toward(along.normalized() * _cruise, delta, 10.0)
+
+
+func _tick_cold(delta: float) -> void:
+	var stride := maxi(CrawlerRules.MOB_COLD_STRIDE, 1)
+	if (Engine.get_physics_frames() + get_instance_id()) % stride != 0:
+		velocity = Vector3.ZERO
+		return
+	var step := delta * float(stride)
+	_attack_left = maxf(_attack_left - step, 0.0)
+	_tick_statuses(step)
+	var player := _nearest_player()
+	tick_agro(player, step)
+	velocity = Vector3.ZERO
+	_publish_state(step)
 
 
 func _build_body() -> void:
@@ -198,19 +262,22 @@ func fire_scale() -> float:
 
 
 func apply_damage(hit: DamageHit) -> float:
-	if hit == null or not _alive or not _is_host() \
-			or hit.faction != DamageHit.Faction.PLAYER:
+	if hit == null or not _alive or not _is_host() or not _accepts_hit(hit):
 		return 0.0
+	var status_applied := CrawlerElements.apply_to_combatant(self, hit)
 	var actual := minf(maxf(hit.amount, 0.0) if is_finite(hit.amount) else 0.0, _health)
-	if actual <= 0.0:
+	if actual <= 0.0 and not status_applied:
 		return 0.0
-	_health -= actual
+	if actual > 0.0:
+		_health -= actual
+		_flash_left = DAMAGE_FLASH_SECONDS
 	if hit.source_peer > 0:
 		last_source_peer = hit.source_peer
 	chase = true
 	ever_chased = true
 	idle_seconds = 0.0
-	_flash_left = DAMAGE_FLASH_SECONDS
+	if is_charmed():
+		MobSense.note_charmed(self, true)
 	if hit.world_impulse.is_finite():
 		velocity += hit.world_impulse
 	if _health <= 0.0:
@@ -219,12 +286,88 @@ func apply_damage(hit: DamageHit) -> float:
 	return actual
 
 
+func _accepts_hit(hit: DamageHit) -> bool:
+	if hit.faction == DamageHit.Faction.PLAYER:
+		return true
+	return hit.faction == DamageHit.Faction.ENEMY and is_charmed()
+
+
+func is_charmed() -> bool:
+	return statuses.has(CombatStatuses.CHARM)
+
+
+func is_frozen() -> bool:
+	return statuses.movement_locked()
+
+
+func outgoing_faction() -> int:
+	return DamageHit.Faction.PLAYER if is_charmed() \
+		else DamageHit.Faction.ENEMY
+
+
+func _tick_statuses(delta: float) -> void:
+	if statuses.has(CombatStatuses.POISON):
+		var dps := statuses.strength(CombatStatuses.POISON)
+		if dps > 0.0 and _alive:
+			var dealt := minf(dps * delta, _health)
+			_health = maxf(_health - dealt, 0.0)
+			if dealt > 0.0:
+				_poison_float += dealt
+				if _poison_float >= 1.0:
+					_emit_status_float(DamageNumberEvent.Kind.POISON, _poison_float)
+					_poison_float = 0.0
+			if _flash_left <= 0.0:
+				_flash_left = DAMAGE_FLASH_SECONDS * 0.45
+			if _health <= 0.0:
+				_die()
+				return
+	if statuses.has(CombatStatuses.FREEZE):
+		var frost := statuses.strength(CombatStatuses.FREEZE)
+		if frost > 0.0 and _alive:
+			var chilled := minf(frost * delta, _health)
+			_health = maxf(_health - chilled, 0.0)
+			if chilled > 0.0:
+				_frost_float += chilled
+				if _frost_float >= 1.0:
+					_emit_status_float(DamageNumberEvent.Kind.FREEZE, _frost_float)
+					_frost_float = 0.0
+			if _flash_left <= 0.0:
+				_flash_left = DAMAGE_FLASH_SECONDS * 0.45
+			if _health <= 0.0:
+				_die()
+				return
+	var had_charm := is_charmed()
+	var had_poison := statuses.has(CombatStatuses.POISON)
+	var had_freeze := statuses.has(CombatStatuses.FREEZE)
+	statuses.tick(delta)
+	if statuses.consume_pulse(CombatStatuses.CHARM, CombatStatuses.CHARM_PULSE):
+		_emit_status_float(DamageNumberEvent.Kind.CHARM, 1.0)
+	if statuses.consume_shock_pulse():
+		_emit_status_float(DamageNumberEvent.Kind.SHOCK, 1.0)
+	if had_poison and not statuses.has(CombatStatuses.POISON) and _poison_float > 0.0:
+		_emit_status_float(DamageNumberEvent.Kind.POISON, _poison_float)
+		_poison_float = 0.0
+	if had_freeze and not statuses.has(CombatStatuses.FREEZE) and _frost_float > 0.0:
+		_emit_status_float(DamageNumberEvent.Kind.FREEZE, _frost_float)
+		_frost_float = 0.0
+	if had_charm and not is_charmed():
+		MobSense.note_charmed(self, false)
+		chase = true
+		ever_chased = true
+		idle_seconds = 0.0
+
+
+func _exit_tree() -> void:
+	MobSense.note_gone(self)
+
+
 func dismiss() -> void:
 	if dismissed:
 		return
 	dismissed = true
 	_alive = false
 	velocity = Vector3.ZERO
+	MobSense.note_gone(self)
 	queue_free()
 
 
@@ -233,6 +376,7 @@ func _die() -> void:
 		return
 	_alive = false
 	velocity = Vector3.ZERO
+	MobSense.note_gone(self)
 	_play_death_burst()
 	died.emit()
 	_force_publish()
@@ -266,6 +410,10 @@ func wild_kind() -> String:
 	return "ranger"
 
 
+func is_persistent() -> bool:
+	return persistent
+
+
 func flies() -> bool:
 	return CrawlerRules.flies(wild_kind())
 
@@ -284,11 +432,17 @@ func surface_altitude(at := Vector3.INF) -> float:
 	var point := at if at.is_finite() else global_position
 	if _planet == null:
 		return 0.0
+	if not at.is_finite() and point.distance_squared_to(_cached_alt_at) < 0.04:
+		return _cached_alt
 	var local := _planet.to_local(point)
 	if local.length_squared() < 0.0001:
 		local = _up()
 	var surface := _planet.surface_position(local)
-	return (point - surface).dot(_planet.up_at(surface))
+	var altitude := (point - surface).dot(_planet.up_at(surface))
+	if not at.is_finite():
+		_cached_alt = altitude
+		_cached_alt_at = point
+	return altitude
 
 
 func _clamp_below_ceiling(at: Vector3) -> Vector3:
@@ -354,6 +508,25 @@ func combat_position() -> Vector3:
 
 func combat_radius() -> float:
 	return 0.7
+
+
+func warp_to(at: Vector3) -> void:
+	if not at.is_finite():
+		return
+	var dest := at
+	if _planet != null:
+		var local := _planet.to_local(at)
+		if local.length_squared() > 0.0001:
+			var surface := _planet.surface_position(local)
+			var up := _planet.up_at(surface)
+			if flies():
+				dest = _clamp_flyer_band(at)
+			else:
+				dest = surface + up * maxf(combat_radius(), 0.55)
+	global_position = dest
+	velocity = Vector3.ZERO
+	reset_physics_interpolation()
+	_force_publish()
 
 
 func combat_aabb() -> AABB:
@@ -422,25 +595,81 @@ func _force_publish() -> void:
 		_horde.call(&"publish_mob_state", self)
 
 
-func _nearest_player() -> Node3D:
-	var nearest: Node3D
-	var nearest_squared := INF
-	if not is_inside_tree():
+func _emit_status_float(kind: int, amount: float) -> void:
+	var player := _player_for_peer(last_source_peer)
+	if player == null:
+		player = _nearest_player()
+	if player == null or not player.has_method(&"combat_world_float"):
+		return
+	var merge := "mob-%d-%d" % [get_instance_id(), kind]
+	player.call(&"combat_world_float", kind, amount, combat_position(), merge)
+
+
+func _player_for_peer(peer: int) -> Node3D:
+	if peer <= 0 or not is_inside_tree():
 		return null
-	for player_variant: Variant in get_tree().get_nodes_in_group(&"network_players"):
-		var player := player_variant as Node3D
-		if player == null:
-			continue
-		if not DamageHit.in_same_world(self, player) \
-				and DamageHit.game_world_of(self) != null:
-			continue
-		if player.has_method(&"is_dead") and bool(player.call(&"is_dead")):
-			continue
-		var away := global_position.distance_squared_to(player.global_position)
-		if away < nearest_squared:
-			nearest_squared = away
-			nearest = player
-	return nearest
+	MobSense.begin_frame(get_tree())
+	for player: Node3D in MobSense.players():
+		if is_instance_valid(player) and player.has_method(&"combat_peer_id") \
+				and int(player.call(&"combat_peer_id")) == peer:
+			return player
+	return null
+
+
+func _nearest_player() -> Node3D:
+	var frame := Engine.get_physics_frames()
+	if _sensed_frame == frame:
+		return _sensed_player if is_instance_valid(_sensed_player) else null
+	_sensed_frame = frame
+	_sensed_player = MobSense.nearest_player(self)
+	return _sensed_player
+
+
+func _hunt_target(delta: float) -> Node3D:
+	if is_charmed():
+		chase = true
+		ever_chased = true
+		idle_seconds = 0.0
+		return _nearest_other_mob()
+	var bait := _nearest_charmed_mob()
+	if bait != null \
+			and global_position.distance_to(_combat_position_of(bait)) \
+				<= CrawlerRules.PERCEPTION:
+		chase = true
+		ever_chased = true
+		idle_seconds = 0.0
+		return bait
+	var player := _nearest_player()
+	if player == null or not tick_agro(player, delta):
+		return null
+	return player
+
+
+func _combat_target() -> Node3D:
+	if is_charmed():
+		return _nearest_other_mob()
+	var bait := _nearest_charmed_mob()
+	if bait != null \
+			and global_position.distance_to(_combat_position_of(bait)) \
+				<= CrawlerRules.PERCEPTION:
+		return bait
+	return _nearest_player()
+
+
+func _nearest_other_mob() -> CrawlerMob:
+	return _nearest_mob(false)
+
+
+func _nearest_charmed_mob() -> CrawlerMob:
+	return _nearest_mob(true)
+
+
+func _nearest_mob(charmed_only: bool) -> CrawlerMob:
+	var found := MobSense.nearest_charmed(self) if charmed_only \
+		else MobSense.nearest_other(self)
+	if not is_instance_valid(found):
+		return null
+	return found as CrawlerMob
 
 
 func _player_speed(player: Node) -> float:
@@ -457,11 +686,14 @@ func _player_velocity(player: Node) -> Vector3:
 
 
 func _combat_position_of(target: Node) -> Vector3:
-	if target != null and target.has_method(&"combat_position"):
+	if not is_instance_valid(target):
+		return global_position
+	if target.has_method(&"combat_position"):
 		var at: Variant = target.call(&"combat_position")
 		if at is Vector3:
 			return at
-	return (target as Node3D).global_position if target is Node3D else global_position
+	var body := target as Node3D
+	return body.global_position if body != null else global_position
 
 
 func sees_player(player: Node3D) -> bool:
@@ -478,7 +710,7 @@ func tick_agro(player: Node3D, delta: float) -> bool:
 	var was_chasing := chase
 	if player == null:
 		chase = false
-	elif CrawlerCityRingScript.contains_any(player):
+	elif MobSense.player_in_city(player):
 		chase = false
 	elif chase and gap > CrawlerMobs.number(
 			wild_kind(), threat_level, "deagro_range", CrawlerRules.DEAGRO_RANGE):
@@ -509,47 +741,23 @@ func _steer_toward(wanted: Vector3, delta: float, accel := 18.0) -> void:
 
 
 func _keep_out_of_safe_zones() -> void:
-	if not is_inside_tree():
-		return
-	for zone_variant: Variant in get_tree().get_nodes_in_group(CrawlerSafeBox.GROUP):
-		var zone := zone_variant as CrawlerSafeBox
-		if zone == null or not zone.blocks_point(global_position):
-			continue
-		var away := zone.push_out(global_position, combat_radius() + 1.2)
-		global_position = away
-		var out := (global_position - zone.zone_centre()).normalized()
-		if out.length_squared() > 0.0001:
-			velocity = out * maxf(velocity.length(), 8.0)
-	for ring_variant: Variant in get_tree().get_nodes_in_group(&"crawler_city_rings"):
-		var ring := ring_variant as Node3D
-		if ring == null or not ring.has_method(&"blocks_near") \
-				or not bool(ring.call(&"blocks_near", global_position)):
-			continue
-		var cleared: Vector3 = ring.call(&"push_out", global_position, combat_radius() + 1.6)
-		global_position = cleared
-		var centre: Vector3 = ring.call(&"zone_centre")
-		var up: Vector3 = ring.call(&"world_up")
-		var out_ring := (global_position - centre)
-		out_ring -= up * out_ring.dot(up)
-		if out_ring.length_squared() > 0.0001:
-			velocity = out_ring.normalized() * maxf(velocity.length(), 8.0)
-	var overlay := get_tree().get_first_node_in_group(LandPatchOverlay.GROUP) \
-		as LandPatchOverlay
-	if overlay == null or not overlay.keeps_mobs_out(global_position):
-		return
-	var pushed := overlay.push_out_of_cities(global_position, combat_radius() + 1.6)
-	var out_city := pushed - global_position
-	global_position = pushed
-	if out_city.length_squared() > 0.0001:
-		velocity = out_city.normalized() * maxf(velocity.length(), 8.0)
+	MobSense.keep_clear(self)
 
 
 func _up() -> Vector3:
+	if global_position.distance_squared_to(_cached_up_at) < 1.0 \
+			and _cached_up.length_squared() > 0.0001:
+		return _cached_up
+	var up := Vector3.UP
 	if _planet != null:
-		return _planet.up_at(global_position)
-	if global_position.length_squared() > 0.01:
-		return global_position.normalized()
-	return Vector3.UP
+		var radial := _planet.up_at(global_position)
+		if radial.length_squared() > 0.0001:
+			up = radial.normalized()
+	elif global_position.length_squared() > 0.01:
+		up = global_position.normalized()
+	_cached_up = up
+	_cached_up_at = global_position
+	return up
 
 
 func _find_planet() -> Planet:
@@ -602,6 +810,8 @@ func _wander_point() -> Vector3:
 
 
 func _orbit_bias() -> Vector3:
+	if _orbit_dir.length_squared() > 0.0001:
+		return _orbit_dir
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(hash(mob_id) & 0x7fffffff) * 17 + 91
 	var dir := Vector3(
@@ -611,7 +821,8 @@ func _orbit_bias() -> Vector3:
 	)
 	if dir.length_squared() < 0.0001:
 		dir = Vector3.FORWARD
-	return dir.normalized()
+	_orbit_dir = dir.normalized()
+	return _orbit_dir
 
 
 func _make_mesh(mesh: Mesh, colour: Color, _energy := 1.4) -> MeshInstance3D:
@@ -678,16 +889,25 @@ func _bind_animator(model: Node) -> void:
 func _resolve_clip(clip: String) -> String:
 	if _animator == null or clip.is_empty():
 		return ""
+	if _clip_names.has(clip):
+		return str(_clip_names[clip])
+	var resolved := ""
 	if _animator.has_animation(clip):
-		return clip
-	for listed in _animator.get_animation_list():
-		if listed == clip or listed.ends_with("/" + clip):
-			return listed
-	return ""
+		resolved = clip
+	else:
+		for listed in _animator.get_animation_list():
+			if listed == clip or listed.ends_with("/" + clip):
+				resolved = listed
+				break
+	_clip_names[clip] = resolved
+	return resolved
 
 
-func _begin_attack(seconds: float) -> void:
+func _begin_attack(seconds: float) -> bool:
+	if not MobSense.take_attack(wild_kind()):
+		return false
 	_attack_left = maxf(seconds, 0.05)
+	return true
 
 
 func _attacking() -> bool:
@@ -729,7 +949,9 @@ func _update_clips() -> void:
 	if resolved != _current_clip:
 		_current_clip = resolved
 		_animator.play(resolved, CLIP_BLEND)
-	_animator.speed_scale = maxf(rate, 0.05)
+	var scale := maxf(rate, 0.05)
+	if not is_equal_approx(_animator.speed_scale, scale):
+		_animator.speed_scale = scale
 
 
 func _face_motion(delta: float) -> void:
@@ -744,9 +966,21 @@ func _face_motion(delta: float) -> void:
 	ahead -= up * ahead.dot(up)
 	if ahead.length_squared() < 0.0001:
 		return
-	var desired := Basis.looking_at(ahead.normalized(), up)
-	global_transform.basis = global_transform.basis.slerp(
-		desired, clampf(delta * 7.0, 0.0, 1.0)).orthonormalized()
+	var desired := Basis.looking_at(ahead.normalized(), up).orthonormalized()
+	if desired.determinant() < 0.0:
+		desired.x = -desired.x
+	if absf(desired.determinant()) < 0.01:
+		return
+	var current := global_transform.basis.orthonormalized()
+	if current.determinant() < 0.0:
+		current.x = -current.x
+	if absf(current.determinant()) < 0.01:
+		global_transform.basis = desired
+		return
+	global_transform.basis = Basis(
+		current.get_rotation_quaternion().slerp(
+			desired.get_rotation_quaternion(),
+			clampf(delta * 7.0, 0.0, 1.0))).orthonormalized()
 
 
 func _update_flash() -> void:

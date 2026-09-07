@@ -4,7 +4,7 @@ extends RefCounted
 ## Every item the game can put in a slot.
 ##
 ## `kind` explicitly separates apparel, ordinary items, weapons and abilities.
-## `slot` remains the wearable slot an apparel item occupies. Only hats remain.
+## `slot` remains the wearable slot an apparel item occupies. Hats and capes.
 ## Container filters call [method accepts], so body equipment,
 ## the numbered hotbar, ability buttons and the backpack all share these rules.
 ## `scene` is the .glb, worn on the body or put in the hands and also rendered
@@ -83,6 +83,102 @@ const ITEMS := {
 		"slot": "hat",
 		"scene": "res://assets/runtime/apparel/apparel_c3_jester_hat.glb",
 		"tint": Color(0.18, 0.78, 0.42),
+	},
+	"crawler_kit_hat": {
+		"title": "Bench Visor",
+		"description": "A city-made visor. Ability mods can be moved anywhere the moment it sits on.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_visor.glb",
+		"tint": Color(0.92, 0.62, 0.18),
+	},
+	"crawler_missile_hat": {
+		"title": "Hex Hat",
+		"description": "A city-made wizard hat. It looses a few homing missiles at the nearest mob.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_wizard_hat.glb",
+		"tint": Color(0.48, 0.22, 0.82),
+	},
+	"crawler_mine_hat": {
+		"title": "Trail Cap",
+		"description": "A city-made hard hat. It drops a mine at your feet that bursts after a second.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_hard_hat.glb",
+		"tint": Color(0.92, 0.42, 0.12),
+	},
+	"crawler_vampire_hat": {
+		"title": "Vampire Horns",
+		"description": "City-cut devil horns. Damage you deal pulls a little health back.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_devil_horns.glb",
+		"tint": Color(0.72, 0.08, 0.14),
+	},
+	"crawler_phase_hat": {
+		"title": "Phase Helm",
+		"description": "A city-made space helm. Incoming projectiles sometimes pass through.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_space_helmet.glb",
+		"tint": Color(0.42, 0.88, 0.96),
+	},
+	"crawler_ordinance_hat": {
+		"title": "Ordinance Helm",
+		"description": "A city-made combat helm. Explosive damage does not land.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_helmet.glb",
+		"tint": Color(0.42, 0.48, 0.22),
+	},
+	"crawler_rubber_hat": {
+		"title": "Rubber Beanie",
+		"description": "A city-made yellow beanie. Shock does not land.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_beanie.glb",
+		"tint": Color(0.96, 0.86, 0.18),
+	},
+	"crawler_learned_hat": {
+		"title": "Learned Cap",
+		"description": "A city-made deerstalker. A fourth ability can be equipped.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_deerstalker.glb",
+		"tint": Color(0.38, 0.24, 0.16),
+	},
+	"crawler_juke_hat": {
+		"title": "Juke Cap",
+		"description": "A city-made ball cap. Juking through a foe hurts them.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_baseball_cap.glb",
+		"tint": Color(0.22, 0.72, 0.38),
+	},
+	"crawler_plain_cape": {
+		"title": "Plain Cape",
+		"description": "A blank white cape. It hangs from the shoulders and follows the wind. Colour comes later.",
+		"kind": KIND_APPAREL,
+		"slot": "cape",
+		"scene": "res://game/player/cape_cloth.tscn",
+		"tint": Color(1.0, 1.0, 1.0),
+	},
+	"crawler_fool_cape": {
+		"title": "Fool's Teleport Cape",
+		"description": "Purple cloth with red splotches. A hit throws you somewhere else, usually a few metres, rarely a very long way.",
+		"kind": KIND_APPAREL,
+		"slot": "cape",
+		"scene": "res://game/player/cape_cloth.tscn",
+		"tint": Color(0.42, 0.16, 0.62),
+		"paint": "res://assets/runtime/apparel/cape_fool_paint.png",
+	},
+	"crawler_respawn_ticket": {
+		"title": "Respawn Ticket",
+		"description": "One death comes back at Relay 07. Buy more at the city black market. Without a ticket the run ends.",
+		"kind": KIND_ITEM,
+		"ledger": true,
+		"tint": Color(0.86, 0.22, 0.28),
 	},
 	"c3_top_hat": {
 		"title": "Top Hat",
@@ -474,18 +570,22 @@ const ITEMS := {
 ## places writing "60 m" their own way is how one of them ends up saying "60.0".
 ## Anything an ability declares that is not listed here is still shown, using
 ## its own key and a plain number, so a new stat is never silently swallowed.
-const STAT_ORDER := ["damage", "player_damage", "impact", "speed", "duration",
-	"range", "radius", "cooldown", "delay", "launch_height", "launch_speed",
+const STAT_ORDER := ["boost", "damage", "player_damage", "impact", "speed", "duration",
+	"range", "radius", "cooldown", "cast", "delay", "launch_height", "launch_speed",
 	"slam_speed", "rope_length", "swing_acceleration", "max_speed",
 	"impact_speed", "knockback", "lift", "self_launch_speed",
 	"crater_radius", "crater_depth", "crater_warp",
 	"projectile_radius", "beam_radius", "paint_radius", "paint_spacing",
 	"chain_interval",
-	"size", "beam_width", "impact_radius", "slots",
-	"wobble", "wobble_cone_degrees",
+	"size", "beam_width", "impact_radius", "damage_hz", "arcs", "shock",
+	"toxic", "freeze", "charm", "slots",
+	"wobble", "wobble_cone_degrees", "multi", "far_cast", "bounce",
+	"impact_cast", "homing", "homing_range",
 	"wall_width", "wall_height", "wall_thickness", "fade_duration",
+	"project", "firewall", "house", "swap",
 	"explosion_duration", "animation_duration", "apex_time"]
 const STAT_LABELS := {
+	"boost": "Boost",
 	"damage": "Damage",
 	"player_damage": "Player Damage",
 	"impact": "Impact",
@@ -494,6 +594,7 @@ const STAT_LABELS := {
 	"range": "Range",
 	"radius": "Radius",
 	"cooldown": "Cooldown",
+	"cast": "Cast Time",
 	"delay": "Delay",
 	"launch_height": "Launch Height",
 	"launch_speed": "Launch Speed",
@@ -516,13 +617,29 @@ const STAT_LABELS := {
 	"size": "Size",
 	"beam_width": "Beam Width",
 	"impact_radius": "Impact Radius",
+	"damage_hz": "Pulse Rate",
+	"arcs": "Arcs",
+	"shock": "Shock",
+	"toxic": "Toxic",
+	"freeze": "Freeze",
+	"charm": "Charm",
 	"slots": "Modifier Slots",
 	"wobble": "Wobble",
 	"wobble_cone_degrees": "Wobble Cone",
+	"multi": "Splits",
+	"far_cast": "Far Cast",
+	"bounce": "Bounces",
+	"impact_cast": "Impact Cast",
+	"homing": "Homing",
+	"homing_range": "Seek Range",
 	"wall_width": "Wall Width",
 	"wall_height": "Wall Height",
 	"wall_thickness": "Wall Thickness",
 	"fade_duration": "Fade",
+	"project": "Project",
+	"firewall": "Firewall",
+	"house": "House",
+	"swap": "Swap",
 	"explosion_duration": "Explosion",
 	"animation_duration": "Animation",
 	"apex_time": "Apex Hold",
@@ -536,6 +653,7 @@ const STAT_UNITS := {
 	"range": " m",
 	"radius": " m",
 	"cooldown": " s",
+	"cast": " s",
 	"delay": " s",
 	"launch_height": " m",
 	"launch_speed": " m/s",
@@ -558,18 +676,29 @@ const STAT_UNITS := {
 	"slots": "",
 	"beam_width": " x",
 	"impact_radius": " m",
+	"damage_hz": "/s",
+	"arcs": "",
+	"shock": " s",
+	"toxic": " s",
+	"freeze": "%",
+	"charm": " s",
 	"wobble_cone_degrees": "°",
+	"multi": "x",
+	"far_cast": " m",
+	"bounce": "",
 	"wall_width": " m",
 	"wall_height": " m",
 	"wall_thickness": " m",
 	"fade_duration": " s",
+	"project": " m/s",
+	"firewall": "/s",
 	"explosion_duration": " s",
 	"animation_duration": " s",
 	"apex_time": " s",
 }
 
-## The only wearable slot. Hats sit on the head; everything else was retired.
-const SLOT_ORDER := ["hat"]
+## Wearable slots, hat then cape. Hats sit on the head; capes hang from the back.
+const SLOT_ORDER := ["hat", "cape"]
 
 const ATTACK_SWING := "swing"
 const ATTACK_SHOOT := "shoot"
@@ -577,10 +706,31 @@ const ATTACK_SHOOT := "shoot"
 ## Shown on an equipment slot that has nothing in it yet.
 const SLOT_LABELS := {
 	"hat": "Hat",
+	"cape": "Cape",
 }
 
 
+static var _runtime_items: Dictionary = {}
+
+
+static func register_runtime_item(id: String, data: Dictionary) -> void:
+	if id.is_empty() or data.is_empty():
+		return
+	_runtime_items[id] = data.duplicate(true)
+
+
+static func unregister_runtime_item(id: String) -> void:
+	_runtime_items.erase(id)
+
+
+static func model_of(id: String) -> String:
+	var listed := String(_field(id, "model", ""))
+	return listed if not listed.is_empty() else id
+
+
 static func has_item(id: String) -> bool:
+	if _runtime_items.has(id):
+		return true
 	if CrawlerCatalog.is_token(id):
 		return CrawlerCatalog.has(id)
 	return ITEMS.has(id) or AbilityCatalog.has(id) or CrawlerCatalog.has(id)
@@ -649,8 +799,13 @@ static func is_ability(id: String) -> bool:
 
 
 ## Numbered slots accept things that can be drawn and activated with the mouse.
+## Ledger items stay on the run sheet; they never occupy a hotbar or backpack slot.
 static func accepts_hotbar(id: String) -> bool:
-	return has_item(id) and (is_weapon(id) or is_item(id))
+	return has_item(id) and (is_weapon(id) or is_item(id)) and not is_ledger(id)
+
+
+static func is_ledger(id: String) -> bool:
+	return bool(_field(id, "ledger", false))
 
 
 static func accepts_ability(id: String) -> bool:
@@ -659,7 +814,7 @@ static func accepts_ability(id: String) -> bool:
 
 ## Abilities are selected powers rather than carried objects.
 static func accepts_backpack(id: String) -> bool:
-	return has_item(id) and not is_ability(id)
+	return has_item(id) and not is_ability(id) and not is_ledger(id)
 
 
 ## Shared rule used by [ItemContainer]. Empty ids always clear a slot.
@@ -812,6 +967,10 @@ static func _stat_value(stats: Dictionary, key: String) -> String:
 	if not _is_stat_number(stats.get(key, null)):
 		return ""
 	var amount := float(stats[key])
+	if key == "boost":
+		return "%d%%" % int(round(amount * 100.0))
+	if key == "swap":
+		return "On" if amount > 0.5 else "Off"
 	var written := "%d" % int(round(amount)) if is_equal_approx(
 		amount, round(amount)) else "%.1f" % amount
 	# A per-second or per-hit qualifier authored beside the number, so a
@@ -847,6 +1006,10 @@ static func scene_path(id: String) -> String:
 	return String(_field(id, "scene", ""))
 
 
+static func paint_path(id: String) -> String:
+	return String(_field(id, "paint", ""))
+
+
 ## Every item that is worn in `slot`, which is how the wardrobe is stocked.
 static func items_for_slot(slot: String) -> Array:
 	var found := []
@@ -857,5 +1020,7 @@ static func items_for_slot(slot: String) -> Array:
 
 
 static func _field(id: String, key: String, fallback: Variant) -> Variant:
+	if _runtime_items.has(id):
+		return (_runtime_items[id] as Dictionary).get(key, fallback)
 	var entry: Dictionary = ITEMS.get(id, {})
 	return entry.get(key, fallback)

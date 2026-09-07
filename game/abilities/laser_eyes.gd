@@ -65,18 +65,23 @@ var _gap_left := 0.0
 var _dwell_at := Vector3.ZERO
 var _dwell := 0.0
 var _dwell_burned := false
+var _linger_from := Vector3.ZERO
+var _linger_at := Vector3.ZERO
+var _linger_ready := false
+var _linger_paths: Array[PackedVector3Array] = []
 
 
 func _press() -> bool:
 	_gap_left = 0.0
 	_left = stat("duration", 4.0)
-	_since_damage = DAMAGE_STEP
+	_since_damage = _damage_step()
 	_forget_dwell()
 	if _left <= 0.0:
 		return false
 	# Aim on the press frame, not the next physics tick, so the first drawn
 	# beam is already leaving the eyes.
 	_aim_beams()
+	_on_beam_lit()
 	return true
 
 
@@ -110,14 +115,16 @@ func _tick_pulse(delta: float) -> void:
 		if _gap_left > 0.0:
 			return
 		_left = stat("duration", 0.4)
-		_since_damage = DAMAGE_STEP
+		_since_damage = _damage_step()
 		_forget_dwell()
+		_on_beam_lit()
 		return
 	_left -= delta
 	if _left <= 0.0:
 		player.laser_beams().stop()
 		_forget_dwell()
 		_gap_left = cooldown()
+		_on_beam_dark()
 		return
 	var shot := _aim_beams()
 	_step_damage(delta, shot["eyes"], shot["at"], bool(shot["landed"]))
@@ -127,28 +134,40 @@ func _aim_beams() -> Dictionary:
 	var empty: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 	if player == null:
 		return {"eyes": empty, "at": Vector3.ZERO, "landed": false}
-	var eyes := player.eye_points()
-	var from: Vector3 = (eyes[0] + eyes[1]) * 0.5
+	var origins := _cast_origins()
+	var from: Vector3 = (origins[0] + origins[1]) * 0.5
 	var landing := _landing(from)
 	var at: Vector3 = landing["at"]
-	player.laser_beams().aim(
-		eyes[0], eyes[1], at, LaserBeams.COLOR, _beam_width(), _wobble_amount())
-	return {"eyes": eyes, "at": at, "landed": landing["landed"]}
+	var targets := CrawlerMulti.fan_points(
+		from, at, CrawlerMulti.shots(stats), CrawlerMulti.up_of(player))
+	var paths := _bounce_paths(player, from, targets)
+	_linger_paths.clear()
+	if CrawlerHoming.uses_path(stats):
+		_linger_paths = paths
+	player.laser_beams().aim_many(
+		origins[0], origins[1], targets, _beam_tint(), _beam_width(),
+		_wobble_amount(), _follow_mode(), CrawlerReach.far_cast(stats),
+		paths if CrawlerHoming.uses_path(stats) else [])
+	return {"eyes": origins, "at": at, "landed": landing["landed"]}
 
 
 func _step_damage(delta: float, eyes: Array, at: Vector3, landed: bool) -> void:
+	var step := _damage_step()
 	_since_damage += delta
-	if _since_damage < DAMAGE_STEP:
+	if _since_damage < step:
 		return
-	_since_damage -= DAMAGE_STEP
+	_since_damage -= step
 	player.fire_beam(
 		ability_id, eyes[0], eyes[1], at, landed,
 		_beam_radius(), _beam_width(), _wobble_amount())
+	_linger_from = (eyes[0] + eyes[1]) * 0.5
+	_linger_at = at
+	_linger_ready = true
 	if landed:
 		# A damage step's worth, not a tick's: this runs once per step, so
 		# adding the tick delta would count time at a sixth of its real rate
 		# and the groove would take six times as long to appear as it reads.
-		_burn(at, DAMAGE_STEP)
+		_burn(at, step)
 	else:
 		_forget_dwell()
 
@@ -157,6 +176,7 @@ func _release() -> void:
 	if player != null:
 		player.laser_beams().stop()
 	_forget_dwell()
+	_on_beam_dark()
 
 
 ## Where the beam stops, and whether it stopped on something or ran out of
@@ -166,6 +186,16 @@ func _release() -> void:
 func _landing(from: Vector3) -> Dictionary:
 	var reach := stat("range", 60.0)
 	var along := _aim_along(from)
+	if CrawlerHoming.enabled(stats):
+		along = CrawlerHoming.aim(from, along, stats, player)
+		var prey := CrawlerHoming.nearest(player, from, along, stats)
+		if prey != null:
+			var dest := CrawlerHoming.combat_at(prey)
+			var wall := _surface(player, from, dest)
+			if wall.is_empty() or from.distance_to(wall.get("position", dest)) \
+					>= from.distance_to(dest) - 0.2:
+				return {"at": dest, "landed": true}
+			return {"at": wall["position"], "landed": true}
 	var to := from + along * reach
 	var hit := _surface(player, from, to)
 	if hit.is_empty():
@@ -202,6 +232,15 @@ static func _surface(shooter: OnlinePlayer, from: Vector3,
 		if hit.is_empty() or not _is_flora(hit):
 			return hit
 	return {}
+
+
+static func is_planet_hit(shooter: OnlinePlayer, hit: Dictionary) -> bool:
+	if shooter == null or hit.is_empty():
+		return false
+	var world_planet := shooter.planet()
+	var collider := hit.get("collider") as Node
+	return world_planet != null and collider != null \
+		and collider.get_parent() == world_planet
 
 
 ## Appends every flora collision body in this world so one ray can ignore them.
@@ -260,6 +299,7 @@ func _burn(at: Vector3, delta: float) -> void:
 	var moved := _dwell_at == Vector3.ZERO \
 		or direction.distance_to(_dwell_at) * world_planet.shape.radius \
 			> SCAR_SPACING
+	var scale := _scar_scale()
 	if moved:
 		_dwell_at = direction
 		_dwell = 0.0
@@ -270,8 +310,8 @@ func _burn(at: Vector3, delta: float) -> void:
 	_dwell_burned = true
 	var scar := TerrainScars.Scar.new()
 	scar.direction = direction
-	scar.radius = SCAR_RADIUS
-	scar.depth = SCAR_DEPTH
+	scar.radius = SCAR_RADIUS * scale
+	scar.depth = SCAR_DEPTH * scale
 	scar.profile = TerrainScars.Profile.GROOVE
 	scar.char = SCAR_CHAR
 	player.request_scar(scar)
@@ -293,6 +333,59 @@ func _aim_along(from: Vector3) -> Vector3:
 	return player.aim_direction(from)
 
 
+func _origin_points() -> Array[Vector3]:
+	if player == null:
+		return [Vector3.ZERO, Vector3.ZERO]
+	return player.eye_points()
+
+
+func _cast_origins() -> Array[Vector3]:
+	var origins := _origin_points()
+	if origins.size() < 2:
+		return origins
+	var from: Vector3 = (origins[0] + origins[1]) * 0.5
+	return CrawlerReach.shift_pair(
+		origins[0], origins[1], _aim_along(from), stats)
+
+
+func _beam_tint() -> Color:
+	return LaserBeams.COLOR
+
+
+func _follow_mode() -> int:
+	return LaserBeams.FOLLOW_EYES
+
+
+func _damage_hz() -> float:
+	return maxf(stat("damage_hz", DAMAGE_HZ), 1.0)
+
+
+func _damage_step() -> float:
+	return 1.0 / _damage_hz()
+
+
+func _scar_scale() -> float:
+	return 1.0
+
+
+func _on_beam_lit() -> void:
+	pass
+
+
+func _on_beam_dark() -> void:
+	if _linger_ready and player != null:
+		if not _linger_paths.is_empty():
+			for path: PackedVector3Array in _linger_paths:
+				if path.size() >= 2:
+					CrawlerLingers.emit_path(
+						player, ability_id, path, CrawlerRules.LINGER_BEAM_MUL)
+		else:
+			CrawlerLingers.emit_beam_trail(
+				player, ability_id, _linger_from, _linger_at)
+	_linger_ready = false
+	_linger_paths.clear()
+
+
 func _beam_radius() -> float:
 	return maxf(stat("radius", 0.45), 0.05)
 
@@ -305,22 +398,84 @@ func _wobble_amount() -> float:
 	return maxf(stat("wobble", 0.0), 0.0)
 
 
+func _bounce_paths(shooter: OnlinePlayer, from: Vector3,
+		targets: PackedVector3Array) -> Array[PackedVector3Array]:
+	var traces := _bounce_traces(
+		shooter, from, targets, stat("range", 60.0), stats)
+	var paths: Array[PackedVector3Array] = []
+	for traced: Dictionary in traces:
+		var points: PackedVector3Array = traced.get("points", PackedVector3Array())
+		if points.size() >= 2:
+			paths.append(points)
+	return paths
+
+
+static func _bounce_traces(shooter: OnlinePlayer, from: Vector3,
+		targets: PackedVector3Array, reach: float,
+		stats: Dictionary) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var bounces := CrawlerBounce.count(stats)
+	var homes := CrawlerHoming.enabled(stats)
+	for target: Vector3 in targets:
+		var along := target - from
+		if along.length_squared() < 0.000001:
+			out.append({
+				"points": PackedVector3Array([from, target]),
+				"hits": PackedVector3Array(),
+				"landed": false,
+			})
+			continue
+		if bounces > 0:
+			out.append(CrawlerBounce.trace(
+				shooter, from, along, reach, bounces, stats))
+		elif homes:
+			out.append(CrawlerHoming.trace(shooter, from, along, reach, stats))
+		else:
+			out.append({
+				"points": PackedVector3Array([from, target]),
+				"hits": PackedVector3Array(),
+				"landed": false,
+			})
+	return out
+
+
 static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 		right_eye: Vector3, at: Vector3, landed: bool,
 		radius := -1.0, beam_width := 1.0, wobble := 0.0, pulse := false) -> void:
 	if shooter == null:
 		return
-	shooter.laser_beams().aim(
-		left_eye, right_eye, at, LaserBeams.COLOR, beam_width, wobble)
+	if id == "lightning":
+		Lightning.apply_effect(
+			shooter, id, left_eye, right_eye, at, landed, radius, beam_width,
+			wobble, pulse)
+		return
 	var stats := _resolved_stats(shooter, id)
+	var step := 1.0 / _damage_hz_for(id, stats)
+	var from: Vector3 = (left_eye + right_eye) * 0.5
+	var targets := CrawlerMulti.fan_points(
+		from, at, CrawlerMulti.shots(stats), CrawlerMulti.up_of(shooter))
+	if targets.is_empty():
+		targets = PackedVector3Array([at])
+	var reach := maxf(float(stats.get("range", 60.0)), 1.0)
+	var traces := _bounce_traces(shooter, from, targets, reach, stats)
+	var draw_paths: Array[PackedVector3Array] = []
+	if CrawlerHoming.uses_path(stats):
+		for traced: Dictionary in traces:
+			var points: PackedVector3Array = traced.get(
+				"points", PackedVector3Array())
+			if points.size() >= 2:
+				draw_paths.append(points)
+	shooter.laser_beams().aim_many(
+		left_eye, right_eye, targets, _tint_for(id), beam_width, wobble,
+		_follow_for(id), CrawlerReach.far_cast(stats), draw_paths)
 	var per_tick := float(stats.get("damage", 0.0))
 	if shooter != null and CrawlerRules.active() \
 			and shooter.has_method(&"crawler_damage_scale"):
 		per_tick *= float(shooter.call(&"crawler_damage_scale"))
 	# Damage is a rate. A crawler burst used to dump the whole number once,
-	# which made duration only a visual; each step now pays DAMAGE_STEP of the
+	# which made duration only a visual; each step now pays a slice of the
 	# authored per-second figure for as long as the beam stays on the target.
-	per_tick *= DAMAGE_STEP
+	per_tick *= step
 	if radius < 0.0:
 		radius = float(stats.get("radius", 0.4))
 	var impact_radius := IMPACT_RADIUS
@@ -328,8 +483,42 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 		impact_radius = float(stats.get("impact_radius", IMPACT_RADIUS))
 	elif beam_width > 1.0:
 		impact_radius *= beam_width
-	var from: Vector3 = (left_eye + right_eye) * 0.5
+	var knockback := maxf(float(stats.get("knockback", 0.0)), 0.0)
+	if shooter != null and CrawlerRules.active() \
+			and shooter.has_method(&"crawler_knockback_scale"):
+		knockback *= float(shooter.call(&"crawler_knockback_scale"))
+	var bubble_pulse := int(Time.get_ticks_msec() / 100)
+	for index in targets.size():
+		var target: Vector3 = targets[index]
+		var traced: Dictionary = traces[index] if index < traces.size() else {}
+		var points: PackedVector3Array = traced.get(
+			"points", PackedVector3Array([from, target]))
+		CrawlerBubbles.emit_beam(
+			shooter, id, left_eye, right_eye, target, wobble, bubble_pulse,
+			points)
+		var hits: PackedVector3Array = traced.get("hits", PackedVector3Array())
+		if not CrawlerHoming.uses_path(stats) or points.size() < 2:
+			_apply_one(
+				shooter, id, stats, from, target, landed, radius, impact_radius,
+				per_tick, knockback, step, beam_width)
+			continue
+		for seg in range(points.size() - 1):
+			var a: Vector3 = points[seg]
+			var b: Vector3 = points[seg + 1]
+			var end_hit := false
+			for hit_at: Vector3 in hits:
+				if hit_at.distance_squared_to(b) < 0.04:
+					end_hit = true
+					break
+			_apply_one(
+				shooter, id, stats, a, b, end_hit, radius, impact_radius,
+				per_tick, knockback, step, beam_width)
 
+
+static func _apply_one(shooter: OnlinePlayer, id: String, stats: Dictionary,
+		from: Vector3, at: Vector3, landed: bool, radius: float,
+		impact_radius: float, per_tick: float, knockback: float, step: float,
+		beam_width: float) -> void:
 	var beam := DamageHit.beam(from, at, radius, per_tick)
 	beam.ability_id = id
 	beam.faction = shooter.combat_faction()
@@ -338,17 +527,14 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 	# used to restart a pooled debris burst; the impact dust already says the
 	# beam is cutting, and the plants still hide and fall.
 	beam.plant_break_effects = false
-	var knockback := maxf(float(stats.get("knockback", 0.0)), 0.0)
-	if shooter != null and CrawlerRules.active() \
-			and shooter.has_method(&"crawler_knockback_scale"):
-		knockback *= float(shooter.call(&"crawler_knockback_scale"))
 	var along := at - from
 	if along.length_squared() > 0.0001:
 		along = along.normalized()
 	else:
 		along = Vector3.ZERO
 	if knockback > 0.0 and along != Vector3.ZERO:
-		beam.world_impulse = along * knockback * DAMAGE_STEP
+		beam.world_impulse = along * knockback * step
+	CrawlerElements.stamp(beam, shooter, id, stats, true, step)
 	DamageHit.apply_to_world(shooter, beam)
 
 	if not landed:
@@ -364,6 +550,7 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 			burst.world_impulse = along * knockback
 		burst.radial_impulse = knockback * 0.35
 		burst.radial_lift = knockback * 0.12
+	CrawlerElements.stamp(burst, shooter, id, stats, true, step)
 	DamageHit.apply_to_world(shooter, burst)
 
 	var world_planet := shooter.planet()
@@ -378,12 +565,30 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 		if normal.length_squared() > 0.5:
 			facing = normal
 	shooter.play_laser_impact_dust(at, facing, true)
+	CrawlerImpactCast.emit(shooter, id, at, facing, stats)
 	if world_planet == null or world_planet.scorches == null:
 		return
 	if not shooter.laser_beams().take_scorch(at, SCORCH_SPACING):
 		return
 	world_planet.scorches.scorch(
 		at, facing, SCORCH_RADIUS * maxf(beam_width, 1.0), 0.85)
+
+
+static func _tint_for(id: String) -> Color:
+	if id == "kame":
+		var definition := ItemDB.ability_definition(id)
+		return definition.tint if definition != null else Color(0.24, 0.71, 1.0)
+	return LaserBeams.COLOR
+
+
+static func _follow_for(id: String) -> int:
+	return LaserBeams.FOLLOW_HANDS_MERGED if id == "kame" \
+		else LaserBeams.FOLLOW_EYES
+
+
+static func _damage_hz_for(id: String, stats: Dictionary) -> float:
+	var fallback := 16.0 if id == "kame" else DAMAGE_HZ
+	return maxf(float(stats.get("damage_hz", fallback)), 1.0)
 
 
 static func _resolved_stats(shooter: OnlinePlayer, id: String) -> Dictionary:

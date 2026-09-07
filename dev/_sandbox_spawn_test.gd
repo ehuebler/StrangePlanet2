@@ -1,11 +1,8 @@
 extends Node
 
-## Focused online-sandbox formation checks without loading the rendered planet.
+## Sandbox must host the same crawler rules and spawn path as crawler.
 ##
 ##     godot --headless --path . dev/_sandbox_spawn_test.tscn
-
-const TEST_CYCLE := preload("res://dev/_multiplayer_test_cycle.gd")
-const PEERS: Array[int] = [1, 7, 13, 19, 25, 31, 37, 43]
 
 var _failures := 0
 var _saved_players: Dictionary
@@ -32,7 +29,7 @@ func _ready() -> void:
 	var world := _make_world()
 	add_child(world)
 	await get_tree().process_frame
-	_check_formation(world)
+	_check_sandbox_matches_crawler(world)
 
 	world.queue_free()
 	await get_tree().process_frame
@@ -57,13 +54,12 @@ func _make_world() -> GameWorld:
 	first.name = "Spawn1"
 	first.position = Vector3(0.0, 3.0, 17000.0)
 	spawn_points.add_child(first)
-	# Every chosen peer id maps to Spawn1 under the old peer-id modulo rule.
 	var second := Marker3D.new()
 	second.name = "Spawn2"
 	second.position = Vector3(50.0, 3.0, 17000.0)
 	spawn_points.add_child(second)
 	world.add_child(spawn_points)
-	var cycle := TEST_CYCLE.new() as CelestialCycle
+	var cycle := (load("res://dev/_multiplayer_test_cycle.gd") as GDScript).new() as CelestialCycle
 	cycle.name = "CelestialCycle"
 	world.add_child(cycle)
 	var centre := Node3D.new()
@@ -73,52 +69,40 @@ func _make_world() -> GameWorld:
 	return world
 
 
-func _check_formation(world: GameWorld) -> void:
-	var frames: Array[Transform3D] = []
-	for peer_id in PEERS:
-		frames.append(world._spawn_transform(peer_id))
-	_expect(frames.size() == PEERS.size(),
-		"all eight online sandbox players receive a spawn transform")
-
-	var closest := INF
-	var facing := 1.0
-	for index in frames.size():
-		var frame := frames[index]
-		var toward_planet := -frame.origin.normalized()
-		facing = minf(facing, (-frame.basis.z).normalized().dot(toward_planet))
-		for other in range(index + 1, frames.size()):
-			closest = minf(
-				closest, frame.origin.distance_to(frames[other].origin))
-	_expect(closest >= GameWorld.ONLINE_SANDBOX_SPAWN_SPACING - 0.001,
-		"no two players share a spawn capsule (closest %.2f m)" % closest)
-	_expect(facing > 0.999999,
-		"every player faces the planet centre (worst dot %.7f)" % facing)
-
-	var across := frames[0].basis.x.normalized()
-	var lanes := PackedFloat32Array()
-	for frame in frames:
-		lanes.append((frame.origin - frames[0].origin).dot(across))
-	lanes.sort()
-	var widest_gap := 0.0
-	for index in range(1, lanes.size()):
-		widest_gap = maxf(widest_gap, lanes[index] - lanes[index - 1])
-	_expect(widest_gap <= GameWorld.ONLINE_SANDBOX_SPAWN_SPACING + 0.001,
-		"formation slots remain directly beside one another")
-
-	var repeated := world._spawn_transform(PEERS[3])
-	_expect(repeated.is_equal_approx(frames[3]),
-		"a peer keeps the same formation slot across repeated lookups")
-	world._despawn_player(PEERS[1])
-	var replacement := world._spawn_transform(99)
-	_expect(replacement.is_equal_approx(frames[1]),
-		"a vacated formation slot is safely reused by the next player")
-
-	NetworkManager.is_single_player = true
-	var authored := world._spawn_transform(13)
-	var marker := world.get_node("SpawnPoints/Spawn1") as Marker3D
-	_expect(authored.is_equal_approx(marker.global_transform),
-		"single-player Sandbox retains its authored spawn behavior")
-	NetworkManager.is_single_player = false
+func _check_sandbox_matches_crawler(world: GameWorld) -> void:
+	_expect(CrawlerRules.active() and CrawlerRules.sandbox(),
+		"sandbox hosts crawler rules")
+	var sandbox_at := world._spawn_transform(1)
+	NetworkManager.session_options["mode"] = "crawler"
+	_expect(CrawlerRules.active() and not CrawlerRules.sandbox(),
+		"crawler stays the named crawler mode")
+	var crawler_at := world._spawn_transform(1)
+	_expect(sandbox_at.is_equal_approx(crawler_at),
+		"sandbox spawn matches crawler spawn")
+	NetworkManager.session_options["mode"] = "sandbox"
+	_expect(world._spawn_transform(13).is_equal_approx(sandbox_at)
+			or world._spawn_transform(13).origin.length_squared() > 0.0,
+		"sandbox keeps a usable spawn transform")
+	_expect(CrawlerRules.sandbox_invincible() and CrawlerRules.sandbox_fast()
+			and not CrawlerRules.sandbox_no_mobs()
+			and not CrawlerRules.sandbox_infinite_gold(),
+		"sandbox starts invincible and fast")
+	CrawlerRules.set_sandbox_cheat(CrawlerRules.CHEAT_MOBS, true)
+	CrawlerRules.set_sandbox_cheat(CrawlerRules.CHEAT_INVINCIBLE, true)
+	CrawlerRules.set_sandbox_cheat(CrawlerRules.CHEAT_FAST, true)
+	CrawlerRules.set_sandbox_cheat(CrawlerRules.CHEAT_GOLD, true)
+	_expect(CrawlerRules.sandbox_no_mobs()
+			and CrawlerRules.sandbox_invincible()
+			and CrawlerRules.sandbox_fast()
+			and CrawlerRules.sandbox_infinite_gold(),
+		"sandbox cheats only arm while sandbox is hosted")
+	NetworkManager.session_options["mode"] = "crawler"
+	_expect(not CrawlerRules.sandbox_no_mobs()
+			and not CrawlerRules.sandbox_invincible()
+			and not CrawlerRules.sandbox_fast()
+			and not CrawlerRules.sandbox_infinite_gold(),
+		"crawler never reads sandbox cheats")
+	CrawlerRules.clear_sandbox_cheats()
 
 
 func _expect(condition: bool, message: String) -> void:

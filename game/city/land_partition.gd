@@ -12,9 +12,12 @@ extends RefCounted
 ##
 ## The cut is a Voronoi partition of an icosphere restricted to buildable
 ## vertices, so neighbouring patches meet on a shared edge and a peninsula stays
-## with the land it is attached to rather than jumping a bay. The line between
-## two patches is the spherical perpendicular bisector of their seeds — that is
-## the boundary later city logic should test against, not the hex mesh edges.
+## with the land it is attached to rather than jumping a bay. The first cut is
+## the neighbourhood used by cities and spawn recipes. A second cut splits each
+## of those into smaller named cells for the tilde map without moving that
+## first-cut geography. The line between two cells is the spherical
+## perpendicular bisector of their seeds — that is the boundary later city
+## logic should test against, not the hex mesh edges.
 
 class Patch:
 	var id := -1
@@ -24,6 +27,12 @@ class Patch:
 	var direction := Vector3.UP
 	var area := 0.0
 	var span := 0.0
+	## First-cut territory this cell belongs to. Same as [member id] when
+	## the cell was not split.
+	var parent_id := -1
+	## Name used for crawler recipes and reserved-site rules. Stays on the
+	## first-cut territory so spawn tables do not move when cells split.
+	var recipe_name := ""
 
 
 class BorderChain:
@@ -41,7 +50,7 @@ class BorderChain:
 const SUBDIVISIONS := 6
 const FROST_LIMIT := 0.08
 const VOLCANO_LIMIT := 0.02
-const MAX_PATCHES := 512
+const MAX_PATCHES := 2048
 
 const NAMES: PackedStringArray = [
 	"Aurel Reach", "Vesper Coast", "Cinder Marches", "Lumen Shelf",
@@ -59,6 +68,9 @@ const NAMES: PackedStringArray = [
 ]
 
 var patches: Array[Patch] = []
+## First-cut neighbourhoods. Cells in [member patches] inherit spawn and
+## city keys from these so a finer overlay does not move the world.
+var territories: Array[Patch] = []
 ## Unit directions of the icosphere vertices.
 var vertices: PackedVector3Array = PackedVector3Array()
 ## Patch id per vertex, or -1 where the ground is not a city territory.
@@ -72,9 +84,11 @@ func bake(
 		shape: PlanetShape,
 		mountain_dirs: PackedVector3Array,
 		mountain_clearance: float,
-		target_span: float
+		target_span: float,
+		cell_span := -1.0
 	) -> void:
 	patches.clear()
+	territories.clear()
 	vertices = PackedVector3Array()
 	owners = PackedInt32Array()
 	border_chains.clear()
@@ -116,6 +130,12 @@ func bake(
 			component, adjacency, vertex_area, target_area, next_id)
 	_name_patches()
 	_measure_patches(shape, vertex_area)
+	_snapshot_territories()
+	var fine_span := cell_span if cell_span > 0.0 else target_span * 0.5
+	if fine_span > 0.0 and fine_span < target_span - 0.5:
+		_subdivide_cells(adjacency, vertex_area, fine_span)
+		_measure_patches(shape, vertex_area)
+		_name_cells()
 	_collect_borders(faces, shape)
 
 
@@ -259,6 +279,233 @@ func _name_patches() -> void:
 		else:
 			patch.name = "%s %d" % [
 				NAMES[index % NAMES.size()], index / NAMES.size() + 1]
+		patch.parent_id = patch.id
+		patch.recipe_name = patch.name
+
+
+func _snapshot_territories() -> void:
+	territories.clear()
+	for patch in patches:
+		territories.append(_copy_patch(patch))
+
+
+func _copy_patch(src: Patch) -> Patch:
+	var out := Patch.new()
+	out.id = src.id
+	out.name = src.name
+	out.seed = src.seed
+	out.direction = src.direction
+	out.area = src.area
+	out.span = src.span
+	out.parent_id = src.parent_id
+	out.recipe_name = src.recipe_name
+	return out
+
+
+func _subdivide_cells(
+		adjacency: Array[PackedInt32Array],
+		vertex_area: float,
+		cell_span: float
+	) -> void:
+	if territories.is_empty() or vertices.is_empty():
+		return
+	var groups: Array[PackedInt32Array] = []
+	groups.resize(territories.size())
+	for index in territories.size():
+		groups[index] = PackedInt32Array()
+	for vertex in vertices.size():
+		var owner := owners[vertex]
+		if owner < 0 or owner >= groups.size():
+			continue
+		groups[owner].append(vertex)
+	var target_area := maxf(cell_span * cell_span, vertex_area * 4.0)
+	var next_id := 0
+	var next_patches: Array[Patch] = []
+	var next_owners := owners.duplicate()
+	for parent in territories:
+		if parent.id < 0 or parent.id >= groups.size():
+			continue
+		var component := groups[parent.id]
+		if component.is_empty():
+			continue
+		var area := float(component.size()) * vertex_area
+		var wanted := mini(
+			MAX_PATCHES - next_id,
+			maxi(1, int(round(area / target_area))))
+		if wanted <= 1 or component.size() < 6:
+			var kept := _make_cell(next_id, parent, parent.seed)
+			next_patches.append(kept)
+			for vertex in component:
+				next_owners[vertex] = next_id
+			next_id += 1
+			continue
+		var seeds := _place_seeds(component, adjacency, wanted)
+		if seeds.is_empty():
+			continue
+		var assigned: Dictionary = _assign(seeds, component, adjacency)
+		var remap: Dictionary = {}
+		var parent_first := next_id
+		for vertex in component:
+			var raw: Variant = assigned.get(vertex, seeds[0])
+			var seed := int(raw)
+			if not remap.has(seed):
+				if next_id >= MAX_PATCHES:
+					remap[seed] = maxi(parent_first, next_id - 1)
+				else:
+					remap[seed] = next_id
+					next_patches.append(_make_cell(next_id, parent, vertices[seed]))
+					next_id += 1
+			next_owners[vertex] = int(remap[seed])
+	if next_patches.is_empty():
+		return
+	patches = next_patches
+	owners = next_owners
+
+
+func _make_cell(id: int, parent: Patch, seed: Vector3) -> Patch:
+	var cell := Patch.new()
+	cell.id = id
+	cell.seed = seed
+	cell.parent_id = parent.id
+	cell.recipe_name = parent.name
+	cell.name = parent.name
+	return cell
+
+
+func _name_cells() -> void:
+	var used: Dictionary = {}
+	var by_parent: Dictionary = {}
+	for patch in patches:
+		var kids: Variant = by_parent.get(patch.parent_id, [])
+		if not (kids is Array):
+			kids = []
+		(kids as Array).append(patch)
+		by_parent[patch.parent_id] = kids
+	for parent in territories:
+		var raw: Variant = by_parent.get(parent.id, [])
+		if not (raw is Array):
+			continue
+		var kids := raw as Array
+		if kids.is_empty():
+			continue
+		var keep: Patch = kids[0]
+		var best := -2.0
+		for item: Variant in kids:
+			var kid := item as Patch
+			if kid == null:
+				continue
+			var score := kid.direction.dot(parent.seed)
+			if score > best:
+				best = score
+				keep = kid
+		if keep != null:
+			keep.name = _unique_name(parent.name, used)
+		for item: Variant in kids:
+			var kid := item as Patch
+			if kid == null or kid == keep:
+				continue
+			var suffix := _compass_suffix(parent.direction, kid.direction)
+			kid.name = _unique_name("%s %s" % [parent.name, suffix], used)
+
+
+func _unique_name(wanted: String, used: Dictionary) -> String:
+	if not used.has(wanted):
+		used[wanted] = true
+		return wanted
+	var step := 2
+	var named := "%s %d" % [wanted, step]
+	while used.has(named):
+		step += 1
+		named = "%s %d" % [wanted, step]
+	used[named] = true
+	return named
+
+
+func _compass_suffix(parent_dir: Vector3, child_dir: Vector3) -> String:
+	var up := parent_dir.normalized() if parent_dir.length_squared() > 0.0001 \
+			else Vector3.UP
+	var pole := Vector3.UP if absf(up.y) < 0.9 else Vector3.RIGHT
+	var east := up.cross(pole)
+	if east.length_squared() < 0.0001:
+		return "Center"
+	east = east.normalized()
+	var north := east.cross(up)
+	var child := child_dir.normalized() if child_dir.length_squared() > 0.0001 \
+			else up
+	var local := child - up * child.dot(up)
+	if local.length_squared() < 0.00008:
+		return "Center"
+	local = local.normalized()
+	var angle := atan2(local.dot(east), local.dot(north))
+	var sector := int(round(angle / (PI * 0.25))) % 8
+	if sector < 0:
+		sector += 8
+	match sector:
+		0:
+			return "North"
+		1:
+			return "Northeast"
+		2:
+			return "East"
+		3:
+			return "Southeast"
+		4:
+			return "South"
+		5:
+			return "Southwest"
+		6:
+			return "West"
+		7:
+			return "Northwest"
+		_:
+			return "Center"
+
+
+func recipe_name_of(patch_id: int) -> String:
+	if patch_id < 0 or patch_id >= patches.size():
+		return ""
+	var named := patches[patch_id].recipe_name
+	return named if not named.is_empty() else patches[patch_id].name
+
+
+func territory_id_of(patch_id: int) -> int:
+	if patch_id < 0 or patch_id >= patches.size():
+		return -1
+	var parent := patches[patch_id].parent_id
+	return parent if parent >= 0 else patches[patch_id].id
+
+
+func territory_of(patch_id: int) -> Patch:
+	if patch_id < 0 or patch_id >= patches.size():
+		return null
+	var tid := patches[patch_id].parent_id
+	if tid >= 0 and tid < territories.size():
+		return territories[tid]
+	return patches[patch_id]
+
+
+func first_cell_of(territory_id: int) -> int:
+	var keep := -1
+	for patch in patches:
+		if patch.parent_id != territory_id:
+			continue
+		if keep < 0:
+			keep = patch.id
+		if patch.name == patch.recipe_name:
+			return patch.id
+	return keep
+
+
+func belongs_to(direction: Vector3, query_id: int) -> bool:
+	return same_territory(owner_at(direction), query_id)
+
+
+func same_territory(owner_id: int, query_id: int) -> bool:
+	var a := territory_id_of(owner_id)
+	var b := territory_id_of(query_id)
+	if a >= 0 and b >= 0:
+		return a == b
+	return owner_id == query_id and owner_id >= 0
 
 
 func _measure_patches(shape: PlanetShape, vertex_area: float) -> void:
@@ -490,8 +737,12 @@ func _record_chain(
 
 func directions_of(patch_id: int) -> PackedVector3Array:
 	var dirs := PackedVector3Array()
+	var tid := territory_id_of(patch_id)
 	for index in vertices.size():
-		if owners[index] == patch_id:
+		var owner := owners[index]
+		if owner < 0:
+			continue
+		if owner == patch_id or (tid >= 0 and territory_id_of(owner) == tid):
 			dirs.append(vertices[index])
 	return dirs
 

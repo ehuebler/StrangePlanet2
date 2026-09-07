@@ -7,16 +7,19 @@ extends Control
 signal finished
 
 const HOLD := 2.2
+const REWARD_HOLD := 2.8
 const RED := Color("ef151f")
 const GREEN := Color("39d98a")
 const GOLD := Color("ffd45a")
 const PIECES := 46
 
 var title_text := "Kill 10 mobs"
+var reward_lines := PackedStringArray()
 var _age := 0.0
 var _done := false
 var _heading: Label
 var _detail: Label
+var _rewards: Label
 var _confetti: Array[Dictionary] = []
 
 
@@ -33,12 +36,21 @@ func _init() -> void:
 	offset_bottom = 0.0
 
 
-func configure(achievement_title: String) -> void:
+func configure(
+		achievement_title: String,
+		rewards: PackedStringArray = PackedStringArray()
+	) -> void:
 	title_text = achievement_title.strip_edges()
 	if title_text.is_empty():
 		title_text = "Achievement"
+	reward_lines = rewards.duplicate()
 	if _detail != null:
 		_detail.text = '"%s"' % title_text
+	_apply_rewards()
+
+
+func _hold() -> float:
+	return REWARD_HOLD if not reward_lines.is_empty() else HOLD
 
 
 func _ready() -> void:
@@ -75,8 +87,26 @@ func _ready() -> void:
 	_detail.add_theme_color_override(&"font_outline_color", Color(0.08, 0.0, 0.0, 0.96))
 	_detail.add_theme_constant_override(&"outline_size", 8)
 	add_child(_detail)
+
+	_rewards = Label.new()
+	_rewards.name = "AchievementCompleteRewards"
+	_rewards.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_rewards.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_rewards.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rewards.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_rewards.offset_left = 0.0
+	_rewards.offset_top = 120.0
+	_rewards.offset_right = 0.0
+	_rewards.offset_bottom = 188.0
+	_rewards.add_theme_font_size_override(&"font_size", 22)
+	_rewards.add_theme_color_override(&"font_color", GREEN)
+	_rewards.add_theme_color_override(&"font_outline_color", Color(0.04, 0.0, 0.0, 0.96))
+	_rewards.add_theme_constant_override(&"outline_size", 7)
+	add_child(_rewards)
+	_apply_rewards()
 	_seed_confetti()
 	_drive_title()
+	CrtType.watch(self, true)
 
 
 func _process(delta: float) -> void:
@@ -86,7 +116,7 @@ func _process(delta: float) -> void:
 	_drive_title()
 	_advance_confetti(delta)
 	queue_redraw()
-	if _age >= HOLD:
+	if _age >= _hold():
 		_finish()
 
 
@@ -98,11 +128,18 @@ func _finish() -> void:
 	queue_free()
 
 
+func _apply_rewards() -> void:
+	if _rewards == null:
+		return
+	_rewards.text = "   ·   ".join(reward_lines)
+	_rewards.visible = not reward_lines.is_empty()
+
+
 func _drive_title() -> void:
 	var pop := smoothstep(0.0, 0.14, _age)
 	var bounce := 1.0 + 0.1 * sin(_age * 22.0) * exp(_age * -5.0)
-	var fade := 1.0 - smoothstep(HOLD - 0.22, HOLD, _age)
-	for label: Label in [_heading, _detail]:
+	var fade := 1.0 - smoothstep(_hold() - 0.22, _hold(), _age)
+	for label: Label in [_heading, _detail, _rewards]:
 		if label == null:
 			continue
 		label.pivot_offset = label.size * 0.5
@@ -141,7 +178,7 @@ func _draw() -> void:
 	var flash := 1.0 - smoothstep(0.0, 0.38, _age)
 	draw_circle(centre, 36.0 + _age * 240.0, Color(GOLD, 0.20 * flash))
 	draw_circle(centre, 16.0 + _age * 170.0, Color(RED, 0.28 * flash))
-	var fade := 1.0 - smoothstep(HOLD - 0.28, HOLD, _age)
+	var fade := 1.0 - smoothstep(_hold() - 0.28, _hold(), _age)
 	for piece: Dictionary in _confetti:
 		var at: Vector2 = centre + piece["origin"]
 		var angle := _age * float(piece["spin"])

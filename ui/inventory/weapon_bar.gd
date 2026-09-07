@@ -103,13 +103,29 @@ func add_vitals(control: Control) -> void:
 
 
 func refresh() -> void:
+	_sync_slot_count()
+	_bind_slots()
 	for slot in _slots:
 		slot.queue_redraw()
 	_update_cooldowns()
+	_update_ammo()
+	_update_selection()
 
 
 func _process(_delta: float) -> void:
 	_update_cooldowns()
+	_update_ammo()
+
+
+func _update_ammo() -> void:
+	var kit: CrawlerKit = null
+	if _ability_controller != null and _ability_controller.player != null:
+		kit = _ability_controller.player.crawler_kit
+	for index in _ability_slots.size():
+		var text := ""
+		if kit != null:
+			text = kit.ammo_count_text(kit.equipped_card(index))
+		_ability_slots[index].count_text = text
 
 
 func _update_cooldowns() -> void:

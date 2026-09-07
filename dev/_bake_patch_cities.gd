@@ -147,15 +147,24 @@ func _write_layout(partition: LandPartition) -> void:
 func _patch_order(partition: LandPartition) -> Array[int]:
 	var ids: Array[int] = []
 	if _only_patch >= 0:
-		if _only_patch < partition.patches.size():
-			ids.append(_only_patch)
+		var cell := partition.first_cell_of(_only_patch)
+		if cell < 0 and _only_patch < partition.patches.size():
+			cell = _only_patch
+		if cell >= 0:
+			ids.append(cell)
 		return ids
 	var ranked: Array = []
-	for patch in partition.patches:
-		ranked.append({"id": patch.id, "area": patch.area})
+	if partition.territories.size() > 0:
+		for home in partition.territories:
+			ranked.append({"id": partition.first_cell_of(home.id), "area": home.area})
+	else:
+		for patch in partition.patches:
+			ranked.append({"id": patch.id, "area": patch.area})
 	ranked.sort_custom(_area_desc)
 	for row in ranked:
-		ids.append(int(row["id"]))
+		var cell_id := int(row["id"])
+		if cell_id >= 0:
+			ids.append(cell_id)
 	return ids
 
 
@@ -170,23 +179,29 @@ func _bake_patch(
 		verify: bool
 	) -> bool:
 	var patch := partition.patches[patch_id]
-	if _skip.has(patch_id):
-		print("bake_patch_cities: skip %s (requested)" % patch.name)
+	var home_id := partition.territory_id_of(patch_id)
+	if home_id < 0:
+		home_id = patch_id
+	var home_name := partition.recipe_name_of(patch_id)
+	if home_name.is_empty():
+		home_name = patch.name
+	if _skip.has(home_id) or _skip.has(patch_id):
+		print("bake_patch_cities: skip %s (requested)" % home_name)
 		return true
-	if not _force and STORE.has_phase(patch_id, PatchCity.PHASE_PAINTED, patch.name):
-		print("bake_patch_cities: skip %s (painted bake exists)" % patch.name)
-		_done[patch_id] = [0, 1, 2, 3, 4]
+	if not _force and STORE.has_phase(home_id, PatchCity.PHASE_PAINTED, home_name):
+		print("bake_patch_cities: skip %s (painted bake exists)" % home_name)
+		_done[home_id] = [0, 1, 2, 3, 4]
 		return true
 	var started := Time.get_ticks_msec()
 	var generator := PatchCityGenerator.new()
 	var plan := generator.generate(shape, partition, patch_id)
 	if plan.districts.is_empty():
-		print("bake_patch_cities: skip %s (no districts)" % patch.name)
-		_done[patch_id] = []
+		print("bake_patch_cities: skip %s (no districts)" % home_name)
+		_done[home_id] = []
 		return true
 	var city := PatchCity.new()
 	if city == null:
-		_fail("%s: PatchCity.new() failed" % patch.name)
+		_fail("%s: PatchCity.new() failed" % home_name)
 		return false
 	add_child(city)
 	city.apply(plan, shape)
@@ -195,16 +210,16 @@ func _bake_patch(
 		return false
 	while city.phase < PatchCity.PHASE_PAINTED:
 		if not city.advance(shape):
-			_fail("%s failed to advance from phase %d" % [patch.name, city.phase])
+			_fail("%s failed to advance from phase %d" % [home_name, city.phase])
 			city.queue_free()
 			return false
 		if not _save_phase(city, city.phase, verify and city.phase == PatchCity.PHASE_PAINTED):
 			city.queue_free()
 			return false
-	_done[patch_id] = [0, 1, 2, 3, 4]
+	_done[home_id] = [0, 1, 2, 3, 4]
 	print("bake_patch_cities: finished %s  %d districts  %d buildings  %.1f s"
 		% [
-			patch.name,
+			home_name,
 			plan.districts.size(),
 			city.fabric.get("lots", []).size(),
 			(Time.get_ticks_msec() - started) / 1000.0,

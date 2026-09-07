@@ -2,16 +2,33 @@
 class_name AbilityCatalog
 extends RefCounted
 
-const ORDER := ["laser_eyes", "meteor_punch", "starfire", "grapple", "nuke", "lasso", "wall", "nausicaa"]
+const ORDER := ["laser_eyes", "kame", "meteor_punch", "hero_punch", "starfire", "grapple", "nuke", "mini_nuke", "lasso", "wall", "nausicaa", "lightning", "light_bolt", "icicle", "teleport", "fus", "roar", "toxic_blast", "charming_aura", "freeze_blast", "static_field", "toxic_field", "freeze_field", "healing_field", "overdrive"]
 const PATHS := {
 	"laser_eyes": "res://game/abilities/definitions/laser_eyes.tres",
+	"kame": "res://game/abilities/definitions/kame.tres",
 	"meteor_punch": "res://game/abilities/definitions/meteor_punch.tres",
+	"hero_punch": "res://game/abilities/definitions/hero_punch.tres",
 	"starfire": "res://game/abilities/definitions/starfire.tres",
 	"grapple": "res://game/abilities/definitions/grapple.tres",
 	"nuke": "res://game/abilities/definitions/nuke.tres",
+	"mini_nuke": "res://game/abilities/definitions/mini_nuke.tres",
 	"lasso": "res://game/abilities/definitions/lasso.tres",
 	"wall": "res://game/abilities/definitions/wall.tres",
 	"nausicaa": "res://game/abilities/definitions/nausicaa.tres",
+	"lightning": "res://game/abilities/definitions/lightning.tres",
+	"light_bolt": "res://game/abilities/definitions/light_bolt.tres",
+	"icicle": "res://game/abilities/definitions/icicle.tres",
+	"teleport": "res://game/abilities/definitions/teleport.tres",
+	"fus": "res://game/abilities/definitions/fus.tres",
+	"roar": "res://game/abilities/definitions/roar.tres",
+	"toxic_blast": "res://game/abilities/definitions/toxic_blast.tres",
+	"charming_aura": "res://game/abilities/definitions/charming_aura.tres",
+	"freeze_blast": "res://game/abilities/definitions/freeze_blast.tres",
+	"static_field": "res://game/abilities/definitions/static_field.tres",
+	"toxic_field": "res://game/abilities/definitions/toxic_field.tres",
+	"freeze_field": "res://game/abilities/definitions/freeze_field.tres",
+	"healing_field": "res://game/abilities/definitions/healing_field.tres",
+	"overdrive": "res://game/abilities/definitions/overdrive.tres",
 }
 
 static var _cache: Dictionary = {}

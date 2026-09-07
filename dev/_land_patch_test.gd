@@ -32,6 +32,9 @@ func _check(partition: LandPartition, shape: PlanetShape) -> void:
 		"icosphere has a useful number of vertices")
 	_expect(partition.buildable_count > 0, "some of the globe is buildable land")
 	_expect(partition.patches.size() > 0, "buildable land was cut into patches")
+	_expect(partition.territories.size() > 0
+			and partition.patches.size() > partition.territories.size(),
+		"the first cut was split into smaller named cells")
 	_expect(partition.owners.size() == partition.vertices.size(),
 		"every vertex has an owner slot")
 	var named: Dictionary = {}
@@ -52,11 +55,23 @@ func _check(partition: LandPartition, shape: PlanetShape) -> void:
 			_fail("a patch claimed volcano vertex %d" % index)
 	_expect(owned == partition.buildable_count,
 		"every buildable vertex belongs to a patch, with no extras")
+	var homes: Dictionary = {}
+	for home in partition.territories:
+		homes[home.id] = home.name
 	for patch in partition.patches:
 		_expect(not patch.name.is_empty(), "every patch has a name")
 		_expect(not named.has(patch.name), "patch names are unique")
 		named[patch.name] = true
 		_expect(patch.area > 0.0, "%s covers some ground" % patch.name)
+		_expect(not patch.recipe_name.is_empty()
+				and homes.has(patch.parent_id)
+				and str(homes[patch.parent_id]) == patch.recipe_name,
+			"%s keeps its territory recipe" % patch.name)
+	for home in partition.territories:
+		_expect(partition.first_cell_of(home.id) >= 0
+				and partition.recipe_name_of(partition.first_cell_of(home.id))
+					== home.name,
+			"%s still has a cell for spawn and cities" % home.name)
 	_expect(partition.border_chains.size() >= 1,
 		"patches have borders to draw")
 	for chain in partition.border_chains:
@@ -66,9 +81,10 @@ func _check(partition: LandPartition, shape: PlanetShape) -> void:
 	for patch in partition.patches:
 		_expect(patch.seed.length_squared() > 0.5,
 			"%s has a Voronoi seed" % patch.name)
-	print("land_patch_test: %d patches, %.0f km², %d vertices, %d edges"
+	print("land_patch_test: %d cells in %d territories, %.0f km², %d vertices, %d edges"
 		% [
 			partition.patches.size(),
+			partition.territories.size(),
 			partition.buildable_area / 1_000_000.0,
 			partition.vertices.size(),
 			partition.border_edge_count(),

@@ -10,10 +10,10 @@ extends Node
 ## only place the pre-game warm-up can be tested at all.
 ##
 ## What it is checking is a sequence rather than a picture: that choosing a mode
-## runs the warm-up without raising a loading card, that its real draw geometry
-## exists only in an offscreen viewport and never on the menu camera, that the
-## warm-up takes that geometry away again, and that the session then opens and
-## hands the player the camera.
+## runs the warm-up behind a small red/green bar (not a full-screen card), that
+## its real draw geometry exists only in an offscreen viewport and never on the
+## menu camera, that the warm-up takes that geometry away again, and that the
+## session then opens and hands the player the camera.
 
 const WORLD := preload("res://game/world.tscn")
 
@@ -56,13 +56,17 @@ func _run() -> void:
 	var saw_warmup := false
 	var most_offscreen_geometry := 0
 	var main_camera_geometry := 0
-	var raised_loading_bar := false
+	var saw_loading_bar := false
+	var loading_bar_too_big := false
 	var player: OnlinePlayer = null
 	while player == null and Time.get_ticks_msec() - began < 30000:
 		await _wait(1)
 		if is_instance_valid(_home):
-			raised_loading_bar = raised_loading_bar or not _home.find_children(
-				"*", "ProgressBar", true, false).is_empty()
+			var bar := _home.find_child("StartLoadingBar", true, false) as Control
+			if bar != null and bar.visible:
+				saw_loading_bar = true
+				if bar.size.x > 360.0 or bar.size.y > 22.0:
+					loading_bar_too_big = true
 		main_camera_geometry = maxi(main_camera_geometry, _camera_geometry(camera))
 		var warmup := _world.find_child("WorldWarmup", true, false) as WorldWarmup
 		if warmup != null:
@@ -72,12 +76,15 @@ func _run() -> void:
 		player = _world.local_player()
 		_observe_handover_bodies(player)
 	print("start_test: warm-up offscreen=%d, loading bar=%s, menu-camera=%d" % [
-		most_offscreen_geometry, raised_loading_bar, main_camera_geometry])
+		most_offscreen_geometry, saw_loading_bar, main_camera_geometry])
 	if not saw_warmup or most_offscreen_geometry == 0:
 		print("start_test: FAIL  nothing was warmed up")
 		return
-	if raised_loading_bar:
-		print("start_test: FAIL  warm-up raised a loading bar")
+	if not saw_loading_bar:
+		print("start_test: FAIL  warm-up never showed the start loading bar")
+		return
+	if loading_bar_too_big:
+		print("start_test: FAIL  the start loading bar was a full-screen card")
 		return
 	if main_camera_geometry != 0 or _camera_geometry(camera) != 0:
 		print("start_test: FAIL  warm-up geometry entered the menu camera")

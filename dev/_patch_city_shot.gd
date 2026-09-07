@@ -147,6 +147,14 @@ func _pick_patch(partition: LandPartition) -> int:
 		return -1
 	var best := -1
 	var best_area := -1.0
+	for home in partition.territories:
+		if home.area > best_area:
+			best_area = home.area
+			best = home.id
+	if best >= 0:
+		var cell := partition.first_cell_of(best)
+		if cell >= 0:
+			return cell
 	for patch in partition.patches:
 		if patch.area > best_area:
 			best_area = patch.area

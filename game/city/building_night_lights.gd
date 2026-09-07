@@ -5,7 +5,7 @@ extends Node3D
 ## so nearby walls, floors, and props pick up the same colour after dark.
 
 const NODE_NAME := "NightLights"
-const MAX_LIGHTS := 22
+const MAX_LIGHTS := 28
 const CLUSTER := 6.5
 const MIN_EMIT := 0.18
 const HUE_MERGE := 0.14
@@ -80,9 +80,27 @@ func _collect(root: Node3D, node: Node) -> Array:
 		var sample := _sample_mesh(root, node as MeshInstance3D)
 		if not sample.is_empty():
 			found.append(sample)
+	elif node is Node3D and _is_light_marker(node):
+		found.append(_sample_marker(root, node as Node3D))
 	for child in node.get_children():
 		found.append_array(_collect(root, child))
 	return found
+
+
+func _is_light_marker(node: Node) -> bool:
+	var folded := String(node.name).to_lower()
+	return folded == "light_source" \
+			or folded.ends_with("_light_source") \
+			or folded.ends_with("-light_source")
+
+
+func _sample_marker(root: Node3D, marker: Node3D) -> Dictionary:
+	return {
+		"position": root.to_local(marker.global_position),
+		"color": Color(1.0, 0.78, 0.42),
+		"energy": 2.1,
+		"reach": 14.0,
+	}
 
 
 func _sample_mesh(root: Node3D, mesh_i: MeshInstance3D) -> Dictionary:

@@ -42,6 +42,10 @@ ENUMS = {
         "ENERGY_DISK": 3,
         "ENERGY_ORB": 4,
         "TETHER": 5,
+        "ENERGY_BOLT": 6,
+        "ENERGY_ICICLE": 7,
+        "TELEPORT_ORB": 8,
+        "ENERGY_CONE": 9,
     },
     "impact_type": {
         "NONE": 0,
@@ -51,6 +55,9 @@ ENUMS = {
         "GRAPPLE_SLAM": 4,
         "MASSIVE_BLAST": 5,
         "DELAYED_BLAST": 6,
+        "FROST_BURST": 7,
+        "TELEPORT": 8,
+        "KNOCKBACK_BURST": 9,
     },
     "grapple_type": {
         "NONE": 0,

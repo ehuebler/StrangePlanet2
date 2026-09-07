@@ -20,6 +20,12 @@ const ORB_COLORS: PackedColorArray = [
 	Color(0.42, 0.08, 0.95),
 	Color(1.00, 0.42, 0.86),
 ]
+const SNOW_COLORS: PackedColorArray = [
+	Color(1.00, 1.00, 1.00),
+	Color(0.92, 0.97, 1.00),
+	Color(0.78, 0.90, 1.00),
+	Color(0.86, 0.94, 1.00),
+]
 
 var _size := 2.4
 var _up := Vector3.UP
@@ -36,6 +42,10 @@ static func death(world: Node, at: Vector3, up := Vector3.UP, size := 2.4,
 
 static func orb(world: Node, at: Vector3, up := Vector3.UP, size := 1.8) -> CrawlerBurst:
 	return play(world, at, up, size, ORB_COLORS)
+
+
+static func snow(world: Node, at: Vector3, up := Vector3.UP, size := 1.2) -> CrawlerBurst:
+	return play(world, at, up, clampf(size, 0.45, 3.4), SNOW_COLORS)
 
 
 static func play(world: Node, at: Vector3, up: Vector3, size: float,

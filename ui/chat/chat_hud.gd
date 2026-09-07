@@ -49,6 +49,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	layer = 3
 	_build()
+	CrtType.watch(self, false)
 	visible = false
 	ChatManager.message_posted.connect(_on_message_posted)
 	ChatManager.history_reset.connect(_refresh_log)

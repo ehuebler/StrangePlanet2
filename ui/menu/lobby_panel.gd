@@ -27,24 +27,9 @@ const ROSTER_CARD_SIZE := Vector2(238.0, 274.0)
 const ROSTER_PORTRAIT_SIZE := Vector2(220.0, 190.0)
 const GAME_MODES: Array[Dictionary] = [
 	{
-		"id": "story",
-		"label": "Story Mode",
-		"description": "Explore the planet together and follow its story.",
-	},
-	{
 		"id": "crawler",
 		"label": "Crawler Mode",
 		"description": "Push through hostile sites as a co-op crew.",
-	},
-	{
-		"id": "duels",
-		"label": "Duels Mode",
-		"description": "Compete in Battle or Race rounds.",
-	},
-	{
-		"id": "sandbox",
-		"label": "Sandbox Mode",
-		"description": "Build, explore, and experiment without objectives.",
 	},
 ]
 const DUELS_MODES: Array[Dictionary] = [
@@ -80,7 +65,7 @@ var _lobby_name := ""
 var _visibility := "public"
 var _private_code := ""
 var _max_players := 8
-var _selected_mode := "story"
+var _selected_mode := "crawler"
 var _selected_duels_mode := "battle"
 
 
@@ -162,6 +147,7 @@ func _ready() -> void:
 	_reset_page_state()
 	_connect_network_signals()
 	_build_current()
+	CrtType.watch(self)
 	if NetworkManager.has_pending_invite():
 		call_deferred("_consume_pending_invite")
 
@@ -199,8 +185,9 @@ func _build_current() -> void:
 		tab_button.pressed.connect(func() -> void: _show_tab(chosen as Tab))
 		_tabs.add_child(tab_button)
 	for tab_button: Node in _tabs.get_children():
-		if tab_button is Button:
-			(tab_button as Button).disabled = waiting
+		var button := CrtType.inner(tab_button) as Button
+		if button != null:
+			button.disabled = waiting
 
 	_clear(_content)
 	if waiting:
@@ -459,6 +446,8 @@ func _build_game_modes(waiting: bool) -> void:
 	modes.add_child(_heading("GAME MODES", 22, MODE_GREEN))
 	modes.add_child(_rule())
 
+	if _selected_mode == "sandbox" and not CrawlerMeta.sandbox_unlocked():
+		_selected_mode = "crawler"
 	var selected_mode := _current_option("mode", _selected_mode)
 	if waiting:
 		var hosted := HBoxContainer.new()
@@ -487,13 +476,20 @@ func _build_game_modes(waiting: bool) -> void:
 	modes.add_child(row)
 	for mode: Dictionary in GAME_MODES:
 		var mode_id := str(mode["id"])
-		row.add_child(_mode_card(
+		var locked := mode_id == "sandbox" and not CrawlerMeta.sandbox_unlocked()
+		var card := _mode_card(
 			mode,
-			mode_id == _selected_mode,
+			mode_id == _selected_mode and not locked,
 			func() -> void:
+				if mode_id == "sandbox" and not CrawlerMeta.sandbox_unlocked():
+					return
 				_selected_mode = mode_id
 				_build_current()
-		))
+		)
+		if locked:
+			card.disabled = true
+			card.tooltip_text = "Reach your first city to unlock Sandbox."
+		row.add_child(card)
 
 	var host := _button("HOST LOBBY", true)
 	host.name = "HostLobby"
@@ -564,6 +560,12 @@ func _add_waiting_actions(parent: HBoxContainer) -> void:
 		start.custom_minimum_size.y = 48
 		start.pressed.connect(NetworkManager.start_hosted_game)
 		actions.add_child(start)
+		if GameSave.has_save():
+			var load_start := _button("START FROM SAVE")
+			load_start.name = "StartLobbyFromSave"
+			load_start.custom_minimum_size.y = 48
+			load_start.pressed.connect(NetworkManager.start_hosted_game_from_save)
+			actions.add_child(load_start)
 	else:
 		var waiting := _caption("WAITING FOR THE HOST TO START…")
 		waiting.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -798,13 +800,15 @@ func _host_lobby() -> void:
 	if _visibility == "private" and not _is_valid_code(_private_code):
 		notice.emit("Private passwords must be 4-12 letters or numbers.", true)
 		return
+	if _selected_mode == "sandbox" and not CrawlerMeta.sandbox_unlocked():
+		notice.emit("Reach your first city to unlock Sandbox.", true)
+		return
 	NetworkManager.host_game({
 		"player_name": player_name,
 		"name": _lobby_name.strip_edges(),
 		"max_players": _max_players,
-		"mode": _selected_mode,
-		"duels_mode": (
-			_selected_duels_mode if _selected_mode == "duels" else ""),
+		"mode": "crawler",
+		"duels_mode": "",
 		"visibility": _visibility,
 		"code": _private_code if _visibility == "private" else "",
 		"map": "world",
@@ -869,7 +873,7 @@ func _reset_page_state() -> void:
 	_visibility = "public"
 	_private_code = ""
 	_max_players = 8
-	_selected_mode = "story"
+	_selected_mode = "crawler"
 	_selected_duels_mode = "battle"
 
 

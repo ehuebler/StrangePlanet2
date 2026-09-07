@@ -24,6 +24,7 @@ var _icon: Control
 var _bar: ColorRect
 var _track: PanelContainer
 var _track_inner: Control
+var _lasting := false
 
 
 func _init() -> void:
@@ -95,15 +96,28 @@ func _build() -> void:
 func apply_row(row: Dictionary) -> void:
 	status_id = StringName(row.get("id", &""))
 	_title.text = String(row.get("title", String(status_id)))
+	_lasting = bool(row.get("lasting", false))
 	var rem := float(row.get("remaining", 0.0))
-	maximum = maxf(maximum, rem)
-	remaining = rem
-	_icon.visible = status_id == CombatStatuses.FLIGHTLESS
+	if not _lasting:
+		maximum = maxf(maximum, rem)
+		remaining = rem
+	if _icon != null:
+		_icon.visible = CombatStatuses.is_known(status_id)
+	_refresh()
 
 
 func _refresh() -> void:
 	if _time == null:
 		return
+	if _lasting:
+		_time.text = ""
+		_time.visible = false
+		if _track != null:
+			_track.visible = false
+		return
+	_time.visible = true
+	if _track != null:
+		_track.visible = true
 	_time.text = "%.1f s" % remaining
 	var share := clampf(remaining / maximum, 0.0, 1.0)
 	if _track_inner != null and _bar != null:

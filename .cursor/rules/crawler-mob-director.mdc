@@ -1,0 +1,17 @@
+---
+description: Crawler mob spawn and attack performance contract
+globs: game/crawler/**/*.gd
+alwaysApply: false
+---
+
+# Crawler Mob Director
+
+Huge swarms stay cheap the way Megabonk-style horde games do: precompute homes, drip instantiates, and run unique attack logic only on a nearby budgeted set.
+
+- Put unique hunt, aim, fire, and charge code in `_tick_ai` only. Do not override `_physics_process` unless you call `super` and keep the director LOD path.
+- Start a windup or shot with `_begin_attack`. It spends the shared attack token. If it returns false, skip the spawn/hit and retry later.
+- Do not call `planet.surface_position` every tick. Use `surface_altitude()` / `_up()` caches, and only snap terrain on HOT bodies.
+- Do not `get_nodes_in_group` from a mob. Read players, fields, charms, and keep-out through `CrawlerMobSense`.
+- Horde fill must `_enqueue_wild` / ready homes. Instant `_make_mob` is for tests, garrison, and the per-frame drain only (`MOB_SPAWN_BUILD`).
+- Far bodies coast with `_tick_far` / `_tick_cold`. New kinds inherit that; do not add per-mob sleep forks.
+- A new enemy that needs a custom attack still has to fit the think budget. Prefer shared shots and one director decision over N independent planners.

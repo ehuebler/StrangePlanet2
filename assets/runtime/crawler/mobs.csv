@@ -14,3 +14,27 @@ rammer,4,Rammer,Tide Margin 4:far;*,84,37,18,10,leash,ahead,ram,42,125,90,240,11
 rift_hulk,1,Rift-Hulk,,220,28,11,1,leash,ground,slam,28,90,16,32,0,0,0,0,0,0,0,0,0,0,0,0,0,1.35,36,Box brute. Not called by field patches.
 rift_hulk,2,Rift-Hulk,,280,34,12,1,leash,ground,slam,30,95,16,34,0,0,0,0,0,0,0,0,0,0,0,0,0,1.20,58,Tougher slam. Still a box spawn only.
 rift_hulk,3,Rift-Hulk,,350,42,13,1,leash,ground,slam,32,100,16,36,0,0,0,0,0,0,0,0,0,0,0,0,0,1.05,88,Late-box hulk. Field patches still do not call it.
+gloam,1,Gloam,Long Shore 4;Far Beacon 4,36,8,9,14,leash,ring,bite,28,90,90,240,14,0,0,0,0,0,0,0,0,0,0,0,0,0.55,10,Two-winged flock on the castle and office grounds. Bites on the ground. Takes off if the player pulls away.
+gloam,2,Gloam,Long Shore 4;Far Beacon 4,46,10,10,14,leash,ring,bite,30,95,90,240,16,0,0,0,0,0,0,0,0,0,0,0,0,0.50,18,Tougher flock biters. Still only around Stormwatch and Meridian Tower.
+gloam,3,Gloam,Long Shore 4;Far Beacon 4,58,13,11,16,leash,ring,bite,32,100,90,240,18,0,0,0,0,0,0,0,0,0,0,0,0,0.46,28,Harder castle and office tiles pack more Gloam. Bite stays close-range.
+gloam,4,Gloam,Long Shore 4;Far Beacon 4,74,16,12,16,leash,ring,bite,34,105,90,240,20,0,0,0,0,0,0,0,0,0,0,0,0,0.42,40,Late castle and office flocks hit harder and stay on the player.
+vesper,1,Vesper,Long Shore 4;Far Beacon 4,70,16,38,5,leash,ahead,beam,52,140,90,240,18,18,48,22,38,0,0,0,1.15,0,0,0,0,1.40,22,Four-winged patrol around Stormwatch and Meridian Tower. Locks a red telegraph beam before it fires.
+vesper,2,Vesper,Long Shore 4;Far Beacon 4,88,20,42,5,leash,ahead,beam,54,145,90,240,22,20,54,24,42,0,0,0,1.08,0,0,0,0,1.25,36,Quicker lock on the castle and office grounds. Same telegraph, harder beam.
+vesper,3,Vesper,Long Shore 4;Far Beacon 4,110,25,46,6,leash,ahead,beam,56,150,90,240,26,22,60,26,46,0,0,0,1.00,0,0,0,0,1.12,52,Harder castle and office tiles keep more Vespers in the air.
+vesper,4,Vesper,Long Shore 4;Far Beacon 4,138,31,50,6,leash,ahead,beam,58,155,90,240,30,24,66,28,50,0,0,0,0.92,0,0,0,0,1.00,72,Late castle and office beams charge faster and hit harder.
+threnody,1,Threnody,Long Shore 4;Far Beacon 4,220,20,28,1,leash,ahead,column,96,220,90,240,28,40,90,50,70,0,0,0,0,0,0,0,0,4.50,48,Six-winged cursed giant on the castle and office grounds. One per pack. Drops shock columns.
+threnody,2,Threnody,Long Shore 4;Far Beacon 4,280,26,30,1,leash,ahead,column,100,230,90,240,32,42,96,54,76,0,0,0,0,0,0,0,0,4.20,72,Tougher cursed giant. Still only around Stormwatch and Meridian Tower.
+threnody,3,Threnody,Long Shore 4;Far Beacon 4,350,32,32,1,leash,ahead,column,104,240,90,240,36,44,102,58,82,0,0,0,0,0,0,0,0,3.90,100,Late castle and office tiles still field only one Threnody.
+threnody,4,Threnody,Long Shore 4;Far Beacon 4,430,40,34,1,leash,ahead,column,108,250,90,240,40,46,108,62,88,0,0,0,0,0,0,0,0,3.60,136,Hard-patch Threnody on the castle and office grounds. Columns drop a bit sooner.
+gruk,1,Gruk,,70,14,8.5,0,leash,garrison,swing,48,90,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.80,12,Castle bruiser. Charges and swings. Preset pad. Does not respawn.
+gruk,2,Gruk,,88,17,9.0,0,leash,garrison,swing,50,95,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.74,20,Tougher castle bruiser. Still a one-shot garrison pad.
+gruk,3,Gruk,,110,21,9.5,0,leash,garrison,swing,52,100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.68,30,Harder Gruk. Castle pads do not refill.
+gruk,4,Gruk,,138,26,10.0,0,leash,garrison,swing,54,105,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.62,42,Late-tile Gruk. Same charge and swing.
+nix,1,Nix,,48,10,11.0,0,leash,garrison,swing,48,90,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.70,10,Smaller castle runner. Charges and swings. Does not respawn.
+nix,2,Nix,,60,12,11.5,0,leash,garrison,swing,50,95,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.64,16,Quicker Nix. Still a one-shot pad.
+nix,3,Nix,,76,15,12.0,0,leash,garrison,swing,52,100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.58,24,Harder Nix. Castle pads stay empty after a kill.
+nix,4,Nix,,96,18,12.5,0,leash,garrison,swing,54,105,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.52,34,Late-tile Nix. Same melee rush.
+vex,1,Vex,,52,16,7.0,0,leash,garrison,mortar,70,110,0,0,0,14,36,18,28,16,0.42,1.15,0,0,0,0,0,1.85,14,Holds the back line and lobs a red mortar from his staff. Does not respawn.
+vex,2,Vex,,64,19,7.2,0,leash,garrison,mortar,72,115,0,0,0,14,38,18,30,17,0.40,1.10,0,0,0,0,0,1.70,22,Same staff mortar. Hits a bit harder.
+vex,3,Vex,,80,23,7.4,0,leash,garrison,mortar,74,120,0,0,0,13,40,17,32,18,0.38,1.05,0,0,0,0,0,1.55,32,Harder Vex. Pads stay empty after a kill.
+vex,4,Vex,,100,28,7.6,0,leash,garrison,mortar,76,125,0,0,0,12,42,16,34,19,0.36,1.00,0,0,0,0,0,1.40,44,Late-tile Vex. Red mortars from the staff tip.

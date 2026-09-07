@@ -280,6 +280,16 @@ func _check_meta_upgrades() -> void:
 		"meta test payload starts with 80 gems")
 	_expect(CharacterDB.playable_ids().size() >= 6,
 		"character selector offers more than the settler")
+	_expect(CrawlerMeta.shop_stats() == PackedStringArray(CrawlerProgress.LEVEL_STATS),
+		"the gem shop lists every in-run player stat")
+	var shop := MetaUpgradesPanel.new()
+	add_child(shop)
+	for stat_id: String in CrawlerProgress.LEVEL_STATS:
+		_expect(shop.find_child("UpgradeRow_%s" % stat_id, true, false) != null,
+			"gem shop draws a row for %s" % stat_id)
+		_expect(CrawlerMeta.upgrade_price(stat_id) > 0,
+			"gems can buy a permanent %s rank" % stat_id)
+	shop.queue_free()
 	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_HEALTH),
 		"gems buy a permanent health rank")
 	_expect(CrawlerMeta.rank_of(CrawlerProgress.STAT_HEALTH) == 1,
@@ -330,6 +340,19 @@ func _check_meta_upgrades() -> void:
 		"juke cooldown stops at the floor")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_JUKE),
 		"a bought juke rank can be refunded")
+	_expect(is_equal_approx(scratch.juke_distance(),
+			CrawlerProgress.JUKE_DISTANCE_BASE),
+		"juke distance starts at the authored dash")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_JUKE_DISTANCE),
+		"gems buy a permanent juke distance rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_JUKE_DISTANCE).contains("("),
+		"permanent juke distance ranks appear beside the base dash")
+	_expect(is_equal_approx(scratch.juke_distance(),
+			CrawlerProgress.JUKE_DISTANCE_BASE
+				+ CrawlerProgress.JUKE_DISTANCE_PER_RANK),
+		"one gem juke distance rank adds eight tenths of a metre")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_JUKE_DISTANCE),
+		"a bought juke distance rank can be refunded")
 	_expect(is_equal_approx(scratch.knockback_scale(), 1.0),
 		"knockback starts at 1X")
 	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_KNOCKBACK),
@@ -352,6 +375,27 @@ func _check_meta_upgrades() -> void:
 		"one gem range rank is twelve percent")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_RANGE),
 		"a bought range rank can be refunded")
+	_expect(is_equal_approx(scratch.cast_trim(), 0.0),
+		"cast starts with no stand-still trim")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_CAST),
+		"gems buy a permanent cast rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_CAST).contains("("),
+		"permanent cast ranks appear beside the base stand")
+	_expect(is_equal_approx(scratch.cast_trim(), CrawlerProgress.CAST_PER_RANK),
+		"one gem cast rank trims a tenth of a second")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_CAST),
+		"a bought cast rank can be refunded")
+	_expect(is_equal_approx(scratch.elemental_scale(), 1.0),
+		"elemental starts at 1X")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_ELEMENTAL),
+		"gems buy a permanent elemental rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_ELEMENTAL).contains("("),
+		"permanent elemental ranks appear beside the base multiplier")
+	_expect(is_equal_approx(scratch.elemental_scale(),
+			1.0 + CrawlerProgress.ELEMENTAL_PER_RANK),
+		"one gem elemental rank is fourteen percent")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_ELEMENTAL),
+		"a bought elemental rank can be refunded")
 	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_LUCK),
 		"gems buy a permanent luck rank")
 	_expect(CrawlerMeta.rank_of(CrawlerProgress.STAT_LUCK) == 1,
@@ -363,6 +407,39 @@ func _check_meta_upgrades() -> void:
 		"shop luck raises legendary level-up odds")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_LUCK),
 		"a bought luck rank can be refunded")
+	_expect(is_equal_approx(scratch.gold_scale(), 1.0),
+		"gold gain starts at 1X")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_GOLD),
+		"gems buy a permanent gold rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_GOLD).contains("("),
+		"permanent gold ranks appear beside the base multiplier")
+	_expect(is_equal_approx(scratch.gold_scale(),
+			1.0 + CrawlerProgress.GOLD_GAIN_PER_RANK),
+		"one gem gold rank is twelve percent")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_GOLD),
+		"a bought gold rank can be refunded")
+	_expect(is_equal_approx(scratch.xp_scale(), 1.0),
+		"XP gain starts at 1X")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_XP),
+		"gems buy a permanent XP rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_XP).contains("("),
+		"permanent XP ranks appear beside the base multiplier")
+	_expect(is_equal_approx(scratch.xp_scale(),
+			1.0 + CrawlerProgress.XP_GAIN_PER_RANK),
+		"one gem XP rank is twelve percent")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_XP),
+		"a bought XP rank can be refunded")
+	_expect(is_equal_approx(scratch.gem_scale(), 1.0),
+		"gem gain starts at 1X")
+	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_GEMS),
+		"gems buy a permanent gem rank")
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_GEMS).contains("("),
+		"permanent gem ranks appear beside the base multiplier")
+	_expect(is_equal_approx(scratch.gem_scale(),
+			1.0 + CrawlerProgress.GEM_GAIN_PER_RANK),
+		"one gem gem rank is twelve percent")
+	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_GEMS),
+		"a bought gem rank can be refunded")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_HEALTH),
 		"a bought rank can be refunded")
 	_expect(CrawlerMeta.rank_of(CrawlerProgress.STAT_HEALTH) == 0
@@ -385,7 +462,9 @@ func _check_achievements() -> void:
 	_expect(unlocked.has("kill_10_mobs") and journal.is_done("kill_10_mobs"),
 		"the tenth kill completes kill 10 mobs")
 	_expect(CrawlerMeta.gems() == 0,
-		"completing does not pay until the reward is claimed")
+		"completing does not pay claimable gems until the reward is claimed")
+	_expect(CrawlerMeta.global_xp() == JournalDB.xp_of("kill_10_mobs"),
+		"kill 10 mobs pays global XP immediately")
 	_expect(journal.can_claim("kill_10_mobs"),
 		"the menu can claim a finished gem reward")
 	var board := AchievementsPanel.new()
@@ -412,6 +491,42 @@ func _check_achievements() -> void:
 		"reset achievements clears claimed rewards")
 	_expect(journal.is_done("see_vacationers_landing"),
 		"reset achievements leaves quests alone")
+	CrawlerMeta.begin_test()
+	Journal.begin_test()
+	journal = Journal.new()
+	_expect(CrawlerMeta.title_for(1) == "Newbie"
+			and CrawlerMeta.title_for(4) == "Newbie"
+			and CrawlerMeta.title_for(5) == "Recruit",
+		"global titles advance every five levels from Newbie")
+	_expect(not CrawlerMeta.sandbox_unlocked(),
+		"sandbox starts locked")
+	var city := journal.note_city()
+	_expect(city.has("first_city") and journal.is_done("first_city"),
+		"reaching a city completes First City")
+	_expect(CrawlerMeta.sandbox_unlocked(),
+		"First City unlocks sandbox")
+	_expect(CrawlerMeta.gems() == 10 and CrawlerMeta.global_xp() == 100,
+		"First City pays ten gems and 100 XP immediately")
+	_expect(JournalDB.instant_reward_lines("first_city").has("Sandbox Mode")
+			and JournalDB.instant_reward_lines("first_city").has("10 Gems")
+			and JournalDB.instant_reward_lines("first_city").has("100 XP"),
+		"First City lists sandbox, gems, and XP as instant rewards")
+	_expect(not journal.can_claim("first_city"),
+		"First City gems are not a claimable menu reward")
+	CrawlerMeta.begin_test()
+	Journal.begin_test()
+	journal = Journal.new()
+	var need := 0
+	for at in range(1, 5):
+		need += CrawlerMeta.xp_needed(at)
+	CrawlerMeta.add_xp(need)
+	var ranked := journal.note_global_level(CrawlerMeta.global_level())
+	_expect(CrawlerMeta.global_level() == 5 and CrawlerMeta.title() == "Recruit",
+		"360 expedition XP reaches global level 5")
+	_expect(ranked.has("reach_global_5") and journal.is_done("reach_global_5"),
+		"level 5 completes the Recruit achievement")
+	_expect(CrawlerMeta.gems() == 10 and not journal.can_claim("reach_global_5"),
+		"level 5 pays ten gems immediately")
 	board.queue_free()
 	Journal.end_test()
 	CrawlerMeta.end_test()
@@ -876,7 +991,7 @@ func _check_steam_lobby_contract() -> void:
 		and panel._visibility == "public"
 		and panel._private_code.is_empty()
 		and panel._max_players == 8
-		and panel._selected_mode == "story"
+		and panel._selected_mode == "crawler"
 		and panel._selected_duels_mode == "battle",
 		"leaving a hosted game resets the Online page to Create defaults")
 

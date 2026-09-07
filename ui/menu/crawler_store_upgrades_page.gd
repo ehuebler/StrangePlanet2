@@ -17,21 +17,32 @@ const BLACK_68 := Color(0.0, 0.0, 0.0, 0.68)
 const INV_EDGE := 36.0
 const TILE_MIN := 78.0
 const UPGRADE_COLUMNS := 3
+const UPGRADE_TILE_MIN := Vector2(108.0, 72.0)
 
 var _player: OnlinePlayer
 var _kit: CrawlerKit
 var _selected_token := ""
 var _ability_tiles: Array[CrawlerAbilityTile] = []
+var _ability_row: HBoxContainer
 var _inventory_slots: Array[RedItemSlot] = []
 var _inventory_grid: GridContainer
 var _title: Label
+var _type_marks: HBoxContainer
 var _body: Label
-var _rows: GridContainer
+var _rows: Control
+var _upgrade_host: Control
+var _upgrade_columns_used := UPGRADE_COLUMNS
 
 
 func configure(player: OnlinePlayer) -> void:
+	if _player != null and _player.crawler_progress != null \
+			and _player.crawler_progress.changed.is_connected(refresh):
+		_player.crawler_progress.changed.disconnect(refresh)
 	_player = player
 	_kit = player.crawler_kit if player != null else null
+	if _player != null and _player.crawler_progress != null \
+			and not _player.crawler_progress.changed.is_connected(refresh):
+		_player.crawler_progress.changed.connect(refresh)
 
 
 func _ready() -> void:
@@ -67,14 +78,24 @@ func _build() -> void:
 	loadout_body.add_theme_constant_override(&"separation", 6)
 	loadout.add_child(loadout_body)
 
+	var ability_scroll := ScrollContainer.new()
+	ability_scroll.name = "StoreAbilityScroll"
+	ability_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	ability_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	ability_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ability_scroll.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ability_scroll.custom_minimum_size.y = TILE_MIN + 8.0
+	ability_scroll.clip_contents = true
+	loadout_body.add_child(ability_scroll)
 	var abilities := HBoxContainer.new()
 	abilities.name = "StoreAbilityRow"
 	abilities.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	abilities.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	abilities.custom_minimum_size.y = TILE_MIN
 	abilities.add_theme_constant_override(&"separation", 6)
-	loadout_body.add_child(abilities)
-	for index in CrawlerRules.ABILITY_SLOTS:
+	_ability_row = abilities
+	ability_scroll.add_child(abilities)
+	for index in _ability_slot_count():
 		abilities.add_child(_make_ability_tile(index))
 
 	var inventory_row := HBoxContainer.new()
@@ -114,32 +135,48 @@ func _build() -> void:
 	var detail_body := VBoxContainer.new()
 	detail_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	detail_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	detail_body.add_theme_constant_override(&"separation", 8)
+	detail_body.add_theme_constant_override(&"separation", 4)
 	detail.add_child(detail_body)
-	_title = _label("SELECT A CARD", 16, RED_BRIGHT)
+	var heading := HBoxContainer.new()
+	heading.name = "StoreUpgradeHeading"
+	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heading.add_theme_constant_override(&"separation", 8)
+	detail_body.add_child(heading)
+	_title = _label("SELECT A CARD", 14, RED_BRIGHT)
 	_title.name = "StoreUpgradeTitle"
-	detail_body.add_child(_title)
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	heading.add_child(_title)
+	_type_marks = CrawlerTypeMarks.make_row("StoreUpgradeTypes", PackedStringArray(), 20.0)
+	heading.add_child(_type_marks)
 	_body = _label(
 		"CLICK AN ABILITY, A SEATED MOD, OR A BAG TILE TO SEE ITS UPGRADES.",
-		12,
+		11,
 		RED_TEXT,
-		true
+		true,
+		2
 	)
 	_body.name = "StoreUpgradeBody"
+	_body.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	detail_body.add_child(_body)
-	var scroll := ScrollContainer.new()
-	scroll.name = "StoreUpgradeScroll"
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	detail_body.add_child(scroll)
-	_rows = GridContainer.new()
+	_upgrade_host = MarginContainer.new()
+	_upgrade_host.name = "StoreUpgradeHost"
+	_upgrade_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_upgrade_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_upgrade_host.clip_contents = true
+	_upgrade_host.add_theme_constant_override(&"margin_left", 0)
+	_upgrade_host.add_theme_constant_override(&"margin_top", 0)
+	_upgrade_host.add_theme_constant_override(&"margin_right", 0)
+	_upgrade_host.add_theme_constant_override(&"margin_bottom", 0)
+	_upgrade_host.resized.connect(_fit_upgrade_grid)
+	detail_body.add_child(_upgrade_host)
+	_rows = Control.new()
 	_rows.name = "StoreUpgradeRows"
-	_rows.columns = UPGRADE_COLUMNS
 	_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_rows.add_theme_constant_override(&"h_separation", 8)
-	_rows.add_theme_constant_override(&"v_separation", 8)
-	scroll.add_child(_rows)
+	_rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_rows.clip_contents = true
+	_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rows.set_meta(&"columns", UPGRADE_COLUMNS)
+	_upgrade_host.add_child(_rows)
 
 
 func _make_ability_tile(index: int) -> CrawlerAbilityTile:
@@ -177,7 +214,26 @@ func _build_inventory_slots() -> void:
 		_inventory_slots.append(slot)
 
 
+func _ability_slot_count() -> int:
+	if _player != null and _player.abilities != null:
+		return _player.abilities.size()
+	return CrawlerRules.ABILITY_SLOTS
+
+
+func _sync_ability_tiles() -> void:
+	if _ability_row == null:
+		return
+	var wanted := _ability_slot_count()
+	while _ability_tiles.size() < wanted:
+		_ability_row.add_child(_make_ability_tile(_ability_tiles.size()))
+	while _ability_tiles.size() > wanted:
+		var tile: CrawlerAbilityTile = _ability_tiles.pop_back()
+		if tile != null:
+			tile.queue_free()
+
+
 func _refresh_loadout() -> void:
+	_sync_ability_tiles()
 	for tile: CrawlerAbilityTile in _ability_tiles:
 		tile.setup(tile.index, _kit)
 		tile.selected = not _selected_token.is_empty() \
@@ -208,6 +264,7 @@ func _fill_detail() -> void:
 	var card := _card_for(_selected_token)
 	if card == null:
 		_title.text = "SELECT A CARD"
+		CrawlerTypeMarks.fill(_type_marks, PackedStringArray())
 		_body.text = "CLICK AN ABILITY, A SEATED MOD, OR A BAG TILE TO SEE ITS UPGRADES."
 		return
 	var gold := 0
@@ -215,6 +272,7 @@ func _fill_detail() -> void:
 		gold = _player.crawler_progress.gold
 	var kind := "MOD" if card.is_modifier() else "ABILITY"
 	_title.text = "%s  //  %s" % [kind, CrawlerCatalog.title_of(card.id).to_upper()]
+	CrawlerTypeMarks.fill(_type_marks, CrawlerCatalog.display_types(card.id), 20.0)
 	var host := _kit.host_ability_for(card.token()) if _kit != null else null
 	var host_id := host.id if host != null else ""
 	var size_rank := card.upgrade_rank("size") if card.id == "big" else -1
@@ -223,15 +281,14 @@ func _fill_detail() -> void:
 		description = ItemDB.description(card.id, host_id, size_rank).strip_edges()
 	var body_lines := PackedStringArray()
 	body_lines.append(description if not description.is_empty() else "NO DESCRIPTION FILED.")
-	if card.is_modifier():
-		var ranks := {}
-		for stat_id: String in CrawlerRules.upgrade_stats_for(card.id):
-			ranks[stat_id] = _kit.upgrade_rank_for(card, stat_id) if _kit != null \
-				else card.upgrade_rank(stat_id)
-		var level := _kit.shop_rank_for(card) if _kit != null else card.shop_rank()
-		body_lines.append_array(CrawlerRules.mod_progress_lines(card.id, level, ranks))
+	var typed := CrawlerCatalog.type_line(card.id)
+	if not typed.is_empty():
+		body_lines.append(typed)
 	_body.text = "\n".join(body_lines)
 	var listed := CrawlerRules.upgrade_stats_for(card.id)
+	if _rows != null:
+		_upgrade_columns_used = _upgrade_columns(listed.size())
+		_rows.set_meta(&"columns", _upgrade_columns_used)
 	var rows := 0
 	for stat_id: String in listed:
 		if stat_id == "slots" and card.slot_count >= CrawlerRules.MAX_MOD_SLOTS:
@@ -239,10 +296,12 @@ func _fill_detail() -> void:
 		_add_upgrade_tile(card, stat_id, gold)
 		rows += 1
 	if rows <= 0:
-		var note := _label("THIS CARD HAS NO STORE UPGRADES.", 13, RED_MUTED, true)
+		var note := _label("THIS CARD HAS NO STORE UPGRADES.", 12, RED_MUTED, true, 2)
 		note.name = "StoreUpgradeEmpty"
 		note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_rows.add_child(note)
+	_fit_upgrade_grid()
+	_fit_upgrade_grid.call_deferred()
 
 
 func _add_upgrade_tile(card: CrawlerCard, stat_id: String, gold: int) -> void:
@@ -253,6 +312,10 @@ func _add_upgrade_tile(card: CrawlerCard, stat_id: String, gold: int) -> void:
 		else card.upgrade_rank(stat_id)
 	var cap := CrawlerRules.upgrade_max_rank(card.id, stat_id)
 	var at_max := cap > 0 and rank >= cap
+	var city := _player.crawler_city_key() if _player != null else ""
+	var progress := _player.crawler_progress if _player != null else null
+	var in_stock := progress == null \
+			or progress.upgrade_in_stock(card.id, stat_id, city)
 	var blurb := CrawlerRules.upgrade_stat_blurb(card.id, stat_id)
 	if stat_id == "slots":
 		blurb += " %d → %d." % [card.slot_count, card.slot_count + 1]
@@ -261,41 +324,70 @@ func _add_upgrade_tile(card: CrawlerCard, stat_id: String, gold: int) -> void:
 			CrawlerRules.format_mul(CrawlerRules.big_size_scale(rank)),
 			CrawlerRules.format_mul(CrawlerRules.big_size_scale(mini(rank + 1, cap))),
 		]
+	elif card.id == "clip" and stat_id == "ammo":
+		blurb += " %s → %s." % [
+			CrawlerRules.format_mul(float(CrawlerRules.clip_ammo_mul(rank))),
+			CrawlerRules.format_mul(float(CrawlerRules.clip_ammo_mul(mini(rank + 1, cap)))),
+		]
+	elif card.id == "wall" and stat_id == "house":
+		blurb += " Off → On." if rank <= 0 else " On."
+	elif card.id == "teleport" and stat_id == "swap":
+		blurb += " Off → On." if rank <= 0 else " On."
 	else:
 		blurb += " Rank %d → %d." % [rank, rank + 1]
-	var tile := PanelContainer.new()
+	var tile := Control.new()
 	tile.name = "UpgradeTile_%s" % stat_id
-	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	tile.custom_minimum_size = Vector2(160.0, 148.0)
-	tile.add_theme_stylebox_override(
+	tile.size_flags_horizontal = Control.SIZE_FILL
+	tile.size_flags_vertical = Control.SIZE_FILL
+	tile.custom_minimum_size = UPGRADE_TILE_MIN
+	tile.clip_contents = true
+	var plate := Panel.new()
+	plate.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	plate.add_theme_stylebox_override(
 		&"panel",
-		_box(BLACK_40, Color(RED_BRIGHT, 0.82), 2)
+		_box(BLACK_40, Color(RED_BRIGHT, 0.82), 2, 5)
 	)
+	tile.add_child(plate)
 	var copy := VBoxContainer.new()
-	copy.add_theme_constant_override(&"separation", 6)
-	copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	copy.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	copy.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	copy.offset_left = 5.0
+	copy.offset_top = 5.0
+	copy.offset_right = -5.0
+	copy.offset_bottom = -5.0
+	copy.add_theme_constant_override(&"separation", 2)
+	copy.clip_contents = true
 	tile.add_child(copy)
 	copy.add_child(_label(
-		CrawlerRules.upgrade_stat_title(stat_id).to_upper(),
-		14,
+		CrawlerRules.upgrade_stat_title(stat_id, card.id).to_upper(),
+		12,
 		RED_TEXT
 	))
-	copy.add_child(_label("%dg" % price, 13, GREEN_TEXT))
-	var detail := _label(blurb, 11, RED_MUTED, true)
+	copy.add_child(_label("%dg" % price, 11, GREEN_TEXT))
+	var detail := _label(blurb, 10, RED_MUTED, true, 2)
 	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	copy.add_child(detail)
 	var button := Button.new()
 	button.name = "UpgradeAct_%s" % stat_id
-	button.text = "MAX" if at_max else "UPGRADE"
-	button.custom_minimum_size = Vector2(0.0, 36.0)
+	button.clip_text = true
+	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	button.custom_minimum_size = Vector2(0.0, 24.0)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.size_flags_vertical = Control.SIZE_SHRINK_END
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	button.disabled = at_max or gold < price
-	button.pressed.connect(_buy_upgrade.bind(card.uid, stat_id))
-	_style_action(button, not at_max and gold >= price)
+	if at_max:
+		button.text = "MAX"
+		button.disabled = true
+		_style_action(button, false)
+	elif not in_stock:
+		button.text = "OUT OF STOCK"
+		button.disabled = true
+		_style_action(button, false)
+	else:
+		button.text = "UPGRADE"
+		button.disabled = gold < price
+		button.pressed.connect(_buy_upgrade.bind(card.uid, stat_id))
+		_style_action(button, gold >= price)
 	copy.add_child(button)
 	_rows.add_child(tile)
 
@@ -333,7 +425,7 @@ func _select(token: String) -> void:
 func _first_owned_token() -> String:
 	if _kit == null:
 		return ""
-	for index in CrawlerRules.ABILITY_SLOTS:
+	for index in _ability_slot_count():
 		var card := _kit.equipped_card(index)
 		if card != null:
 			return card.token()
@@ -356,11 +448,54 @@ func _fit_inventory_columns() -> void:
 	_inventory_grid.columns = CrawlerRules.INVENTORY_COLUMNS
 
 
+func _upgrade_columns(count: int) -> int:
+	if count <= 6:
+		return UPGRADE_COLUMNS
+	if count <= 8:
+		return 4
+	return 5
+
+
+func _fit_upgrade_grid() -> void:
+	if _rows == null or _upgrade_host == null:
+		return
+	var tiles: Array[Control] = []
+	for child: Node in _rows.get_children():
+		var tile := child as Control
+		if tile != null and tile.visible:
+			tiles.append(tile)
+	var count := tiles.size()
+	_upgrade_columns_used = _upgrade_columns(count)
+	_rows.set_meta(&"columns", _upgrade_columns_used)
+	var area := _upgrade_host.size
+	if area.x < 8.0 or area.y < 8.0:
+		return
+	if count <= 0:
+		return
+	var columns := maxi(_upgrade_columns_used, 1)
+	var rows := int(ceili(float(count) / float(columns)))
+	var gap := 6.0
+	var cell := Vector2(
+		maxf((area.x - gap * float(maxi(columns - 1, 0))) / float(columns), 8.0),
+		maxf((area.y - gap * float(maxi(rows - 1, 0))) / float(rows), 8.0)
+	)
+	for index in tiles.size():
+		var tile := tiles[index]
+		var col := index % columns
+		var row := int(index / columns)
+		tile.custom_minimum_size = cell
+		tile.position = Vector2(
+			float(col) * (cell.x + gap),
+			float(row) * (cell.y + gap)
+		)
+		tile.size = cell
+
+
 func _request_icons() -> void:
 	var menu := _store_menu()
 	if menu == null:
 		return
-	var ids: Array = ["wobble", "big"]
+	var ids: Array = ["wobble", "big", "bubble", "linger", "clip", "endless"]
 	for id: String in ItemDB.ability_ids():
 		ids.append(id)
 	if _kit != null:
@@ -406,10 +541,10 @@ func _pane(node_name: String) -> PanelContainer:
 	box.border_color = Color(RED_BRIGHT, 0.88)
 	box.set_border_width_all(2)
 	box.set_corner_radius_all(0)
-	box.content_margin_left = 10
-	box.content_margin_top = 10
-	box.content_margin_right = 10
-	box.content_margin_bottom = 10
+	box.content_margin_left = 8
+	box.content_margin_top = 8
+	box.content_margin_right = 8
+	box.content_margin_bottom = 8
 	frame.add_theme_stylebox_override(&"panel", box)
 	var glow := RedGlowPanel.add_to(frame)
 	glow.fill_color = Color.TRANSPARENT
@@ -421,37 +556,47 @@ func _pane(node_name: String) -> PanelContainer:
 	return frame
 
 
-func _label(text: String, font_size: int, colour: Color, wrap := false) -> Label:
+func _label(
+		text: String,
+		font_size: int,
+		colour: Color,
+		wrap := false,
+		lines := 0) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.add_theme_font_size_override(&"font_size", font_size)
 	label.add_theme_color_override(&"font_color", colour)
+	label.clip_text = true
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.max_lines_visible = lines if lines > 0 else (2 if wrap else 1)
 	if wrap:
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	else:
+		label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	return label
 
 
 func _style_action(button: Button, enabled: bool) -> void:
 	var accent := GREEN if enabled else Color(RED, 0.55)
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if enabled else Color(0.08, 0.02, 0.02, 0.9)
-	button.add_theme_font_size_override(&"font_size", 15)
+	button.add_theme_font_size_override(&"font_size", 12)
 	button.add_theme_color_override(&"font_color", accent)
 	button.add_theme_color_override(&"font_hover_color", GREEN)
 	button.add_theme_color_override(&"font_pressed_color", GREEN)
 	button.add_theme_color_override(&"font_focus_color", accent)
 	button.add_theme_color_override(&"font_disabled_color", Color(1, 1, 1, 0.45))
-	button.add_theme_stylebox_override(&"normal", _box(fill, Color(accent, 0.95), 2))
-	button.add_theme_stylebox_override(&"hover", _box(BLACK_68, GREEN, 2))
-	button.add_theme_stylebox_override(&"pressed", _box(Color(0.0, 0.19, 0.055, 0.90), GREEN, 2))
-	button.add_theme_stylebox_override(&"disabled", _box(fill, Color(1, 1, 1, 0.28), 1))
-	button.add_theme_stylebox_override(&"focus", _box(fill, GREEN, 2))
+	button.add_theme_stylebox_override(&"normal", _box(fill, Color(accent, 0.95), 2, 4))
+	button.add_theme_stylebox_override(&"hover", _box(BLACK_68, GREEN, 2, 4))
+	button.add_theme_stylebox_override(&"pressed", _box(Color(0.0, 0.19, 0.055, 0.90), GREEN, 2, 4))
+	button.add_theme_stylebox_override(&"disabled", _box(fill, Color(1, 1, 1, 0.28), 1, 4))
+	button.add_theme_stylebox_override(&"focus", _box(fill, GREEN, 2, 4))
 
 
-func _box(fill: Color, border: Color, width: int) -> StyleBoxFlat:
+func _box(fill: Color, border: Color, width: int, margin := 8) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = fill
 	box.border_color = border
 	box.set_border_width_all(width)
-	box.set_content_margin_all(8)
+	box.set_content_margin_all(margin)
 	return box

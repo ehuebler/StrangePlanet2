@@ -68,7 +68,10 @@ func fingerprint() -> String:
 	var stat_keys := extra_stats.keys()
 	stat_keys.sort()
 	for key: Variant in stat_keys:
-		parts.append("%s=%s" % [str(key), str(extra_stats[key])])
+		var name := str(key)
+		if name == "ammo" or name == "ammo_max":
+			continue
+		parts.append("%s=%s" % [name, str(extra_stats[key])])
 	return "|".join(parts)
 
 
@@ -82,10 +85,17 @@ func modifier_ids() -> PackedStringArray:
 
 func filled_modifier_ids() -> PackedStringArray:
 	var out := PackedStringArray()
+	for child: CrawlerCard in filled_mods():
+		out.append(child.id)
+	return out
+
+
+func filled_mods() -> Array[CrawlerCard]:
+	var out: Array[CrawlerCard] = []
 	for index in slot_count:
 		var child := mod_at(index)
 		if child != null and not child.id.is_empty():
-			out.append(child.id)
+			out.append(child)
 	return out
 
 

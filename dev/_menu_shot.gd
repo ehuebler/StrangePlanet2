@@ -117,26 +117,28 @@ func _report_home_controls() -> void:
 		return
 	var normal := name_input.get_theme_stylebox(&"normal") as StyleBoxFlat
 	var focus := name_input.get_theme_stylebox(&"focus") as StyleBoxFlat
-	var name_centre := name_input.get_global_rect().get_center().x
+	var name_rect := CrtType.screen_rect(name_input)
+	var pencil_rect := CrtType.screen_rect(pencil)
+	var name_centre := name_rect.get_center().x
 	var wanted_centre := get_viewport().get_visible_rect().size.x * 0.328
 	print("_menu_shot: home name rect=%s centre=%.1f/%.1f pencil=%s" % [
-		name_input.get_global_rect(),
+		name_rect,
 		name_centre,
 		wanted_centre,
-		pencil.size,
+		pencil_rect.size,
 	])
 	var identity_ok := (
 		name_input.max_length == NetworkManager.PLAYER_NAME_MAX_LENGTH
-		and name_input.size.x <= 151.0
-		and name_input.size.y <= 43.0
+		and name_rect.size.x <= 151.0
+		and name_rect.size.y <= 43.0
 		and name_input.alignment == HORIZONTAL_ALIGNMENT_CENTER
 		and absf(name_centre - wanted_centre) <= 2.0
 		and normal != null and normal.bg_color.a <= 0.001
 		and focus != null and focus.bg_color.a <= 0.001
 		and normal.border_width_left == 0
 		and focus.border_width_left == 0
-		and pencil.size.x <= 35.0
-		and pencil.size.y <= name_input.size.y
+		and pencil_rect.size.x <= 35.0
+		and pencil_rect.size.y <= name_rect.size.y
 		and pencil.get_theme_stylebox(&"normal") is StyleBoxEmpty
 	)
 	if not identity_ok:
@@ -144,7 +146,7 @@ func _report_home_controls() -> void:
 		return
 
 	for button_name: String in [
-		"HomeNewGame", "HomeOnline", "HomeSandbox", "HomeUpgrades",
+		"HomeNewGame", "HomeLoad", "HomeOnline", "HomeSandbox", "HomeUpgrades",
 		"HomeAchievements", "HomeSettings", "HomeQuit"
 	]:
 		var button := _home.find_child(button_name, true, false) as Button
@@ -160,6 +162,11 @@ func _report_home_controls() -> void:
 				< HomeScreen.HOME_ACTION_FONT_SIZE \
 				or not button.get_theme_color(&"font_color").is_equal_approx(wanted):
 			push_error("_menu_shot: %s does not use the larger home action type" % button_name)
+		var wrap := button.get_parent()
+		var host := wrap.get_parent() as SubViewportContainer if wrap != null else null
+		if host == null or host.material == null \
+				or not (host.material is ShaderMaterial):
+			push_error("_menu_shot: %s CRT must sit on a SubViewport host" % button_name)
 	print("_menu_shot: centred text-only 12-character name and unboxed pencil verified")
 
 
@@ -235,6 +242,12 @@ func _report_planet_title() -> void:
 		push_error("_menu_shot: planet title does not follow the terrain surface")
 
 
+func _home_action_host(button: Control) -> Control:
+	var wrap := button.get_parent()
+	var host := wrap.get_parent() as SubViewportContainer if wrap != null else null
+	return host if host != null else button
+
+
 func _run_home_new_game_flow() -> void:
 	var start := _home.find_child("HomeNewGame", true, false) as Button
 	var sandbox := _home.find_child("HomeSandbox", true, false) as Button
@@ -246,14 +259,34 @@ func _run_home_new_game_flow() -> void:
 	if sandbox == null or upgrades == null or achievements == null:
 		push_error("_menu_shot: Sandbox, Upgrades, or Achievements home actions are missing")
 		return
-	var start_rect := start.get_global_rect()
 	var online := _home.find_child("HomeOnline", true, false) as Button
-	var sandbox_rect := sandbox.get_global_rect()
-	var upgrades_rect := upgrades.get_global_rect()
-	if online != null and (
-			sandbox_rect.position.x < online.get_global_rect().end.x
+	var start_host := _home_action_host(start)
+	var sandbox_host := _home_action_host(sandbox)
+	var upgrades_host := _home_action_host(upgrades)
+	var achievements_host := _home_action_host(achievements)
+	var online_host := _home_action_host(online) if online != null else null
+	var start_rect := start_host.get_global_rect()
+	var sandbox_rect := sandbox_host.get_global_rect()
+	var upgrades_rect := upgrades_host.get_global_rect()
+	if start_rect.size.x + 0.5 < 240.0:
+		push_error("_menu_shot: Start Game is too narrow for its label")
+	if achievements.text.to_upper() != "ACHIEVEMENTS":
+		push_error("_menu_shot: Achievements home action is still abbreviated")
+	if online_host != null and (
+			sandbox_rect.position.x < online_host.get_global_rect().end.x
 			or upgrades_rect.position.x < sandbox_rect.end.x):
 		push_error("_menu_shot: Sandbox is not left of Upgrades after Online")
+	var row_one := _home.find_child("HomeMenuRow1", true, false)
+	var row_two := _home.find_child("HomeMenuRow2", true, false)
+	var plate := start.get_theme_stylebox(&"normal")
+	if row_one == null or row_two == null:
+		push_error("_menu_shot: home actions are not split into two rows")
+	elif achievements_host.global_position.y <= start_host.global_position.y + 8.0:
+		push_error("_menu_shot: the second home action row is not below the first")
+	if not plate is StyleBoxEmpty:
+		push_error("_menu_shot: home actions still draw a boxed plate")
+	if start_host.material == null or not (start_host.material is ShaderMaterial):
+		push_error("_menu_shot: home actions have no CRT type material")
 	print("_menu_shot: home actions start='%s' sandbox='%s' upgrades='%s'" % [
 		start.text, sandbox.text, upgrades.text
 	])
@@ -288,8 +321,8 @@ func _report_home_mode_settings(mode_id: String) -> void:
 	if settings == null or start == null or selected == null:
 		push_error("_menu_shot: %s mode settings are incomplete" % mode_id)
 		return
-	var start_is_right := start.get_global_rect().position.x \
-		> settings.get_global_rect().end.x
+	var start_is_right := CrtType.screen_rect(start).position.x \
+		> CrtType.screen_rect(settings).end.x
 	var correct_options := (
 		_home.find_child("HomeDuelsOptions", true, false) != null
 		if mode_id == "duels"
@@ -315,8 +348,8 @@ func _report_mode_card_copy(
 	var title_size := title.get_theme_font_size(&"font_size")
 	var description_size := description.get_theme_font_size(&"font_size")
 	var white := description.get_theme_color(&"font_color")
-	var top_aligned := title.get_global_rect().position.y \
-		< description.get_global_rect().position.y
+	var top_aligned := CrtType.screen_rect(title).position.y \
+		< CrtType.screen_rect(description).position.y
 	if title_size < minimum_title_size \
 			or description_size != description_size_wanted \
 			or title_size <= description_size \
@@ -411,7 +444,7 @@ func _report_online_layout() -> void:
 		if control == null:
 			push_error("_menu_shot: online control %s is missing" % node_name)
 			continue
-		var control_rect := control.get_global_rect()
+		var control_rect := CrtType.screen_rect(control)
 		print("_menu_shot: online %-16s %s%s" % [
 			node_name,
 			control_rect,
@@ -423,10 +456,11 @@ func _report_online_layout() -> void:
 	var host := lobby.find_child("HostLobby", true, false) as Button
 	var page_scroll := lobby.find_child(
 		"OnlinePageScroll", true, false) as ScrollContainer
+	var host_rect := CrtType.screen_rect(host) if host != null else Rect2()
 	var page_fits := page_scroll != null and host != null \
 		and page_scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED \
-		and page_scroll.get_global_rect().encloses(host.get_global_rect())
-	if host == null or host.size.y > 35.0 or not page_fits:
+		and page_scroll.get_global_rect().encloses(host_rect)
+	if host == null or host_rect.size.y > 35.0 or not page_fits:
 		push_error("_menu_shot: thinner Host Lobby action did not eliminate Online scrolling")
 
 
