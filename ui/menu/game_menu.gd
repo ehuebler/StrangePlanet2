@@ -18,7 +18,6 @@ enum Tab {
 	ABILITIES,
 	DATA,
 	SETTINGS,
-	ADMIN,
 	INVENTORY,
 	QUESTS,
 	ACHIEVEMENTS,
@@ -41,7 +40,6 @@ const EDGE_GAP := 28.0
 ## and the circular session actions share the band directly beneath it.
 const CONTENT_RECT := Rect2(0.065, 0.030, 0.870, 0.700)
 const SELECTOR_RECT := Rect2(0.250, 0.742, 0.220, 0.188)
-const ADMIN_RECT := Rect2(0.035, 0.848, 0.135, 0.090)
 const ACTIONS_RECT := Rect2(0.500, 0.742, 0.435, 0.128)
 const SANDBOX_ACTIONS_RECT := Rect2(0.500, 0.742, 0.435, 0.248)
 
@@ -54,7 +52,6 @@ var _shell: Control
 var _page_host: MarginContainer
 var _active_page: Control
 var _selector_buttons: Dictionary = {}
-var _admin_button: Button
 var _settings_action: Button
 var _sandbox_cheat_buttons: Dictionary = {}
 
@@ -133,7 +130,7 @@ func _canonical_tab(tab: Tab) -> Tab:
 	if tab == Tab.QUESTS or tab == Tab.ACHIEVEMENTS:
 		return Tab.DATA
 	if tab == Tab.HERO or tab == Tab.APPAREL or tab == Tab.ITEMS \
-			or tab == Tab.DATA or tab == Tab.SETTINGS or tab == Tab.ADMIN:
+			or tab == Tab.DATA or tab == Tab.SETTINGS:
 		return tab
 	return Tab.HERO
 
@@ -174,7 +171,6 @@ func _build_shell() -> void:
 
 	_build_content_frame()
 	_build_bottom_selector()
-	_build_admin_button()
 	_build_right_actions()
 
 
@@ -278,25 +274,6 @@ func _add_selector_button(
 	button.pressed.connect(func() -> void: show_tab(chosen))
 	parent.add_child(button)
 	_selector_buttons[tab] = button
-
-
-func _build_admin_button() -> void:
-	_admin_button = Button.new()
-	_admin_button.name = "AdminButton"
-	_admin_button.text = "ADMIN"
-	_admin_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	_admin_button.add_theme_font_size_override(&"font_size", 14)
-	_apply_anchor_rect(_admin_button, ADMIN_RECT)
-	_style_admin_button(false)
-	_admin_button.pressed.connect(func() -> void: show_tab(Tab.ADMIN))
-
-	var glow := RedGlowPanel.add_to(_admin_button)
-	glow.fill_color = Color.TRANSPARENT
-	glow.border_color = Color(RED, 0.86)
-	glow.border_width = 1.5
-	glow.glow_intensity = 1.05
-	glow.glow_spread = 8.0
-	_shell.add_child(_admin_button)
 
 
 func _build_right_actions() -> void:
@@ -532,12 +509,6 @@ func _build_page(tab: Tab) -> Control:
 			settings.name = "InGameSettings"
 			settings.configure(true)
 			return settings
-		Tab.ADMIN:
-			var admin := AdminPage.new()
-			admin.name = "AdminPage"
-			if _player != null:
-				admin.configure(_player.backpack, _player.stats, _player.body_id())
-			return admin
 	return null
 
 
@@ -610,7 +581,6 @@ func _refresh_navigation() -> void:
 		_selector_buttons[Tab.DATA] as Button,
 		_tab == Tab.DATA
 	)
-	_style_admin_button(_tab == Tab.ADMIN)
 	_style_action_button(_settings_action, _tab == Tab.SETTINGS)
 
 
@@ -659,39 +629,6 @@ func _selector_style(
 	var box := _style(fill, border, border_width, padding, shadow, shadow_size)
 	box.content_margin_left = 40.0
 	return box
-
-
-func _style_admin_button(selected: bool) -> void:
-	if _admin_button == null:
-		return
-	var accent := GREEN if selected else RED_BRIGHT
-	_admin_button.add_theme_color_override(&"font_color", accent)
-	_admin_button.add_theme_color_override(&"font_hover_color", GREEN_TEXT)
-	_admin_button.add_theme_color_override(&"font_pressed_color", GREEN)
-	_admin_button.add_theme_color_override(&"font_focus_color", accent)
-	_admin_button.add_theme_stylebox_override(
-		&"normal",
-		_style(
-			Color(0.0, 0.14, 0.04, 0.80) if selected else BLACK_82,
-			accent,
-			2 if selected else 1,
-			8.0,
-			Color(accent, 0.18),
-			5
-		)
-	)
-	_admin_button.add_theme_stylebox_override(
-		&"hover",
-		_style(BLACK_82, GREEN, 2, 8.0, Color(RED, 0.18), 5)
-	)
-	_admin_button.add_theme_stylebox_override(
-		&"pressed",
-		_style(Color(0.0, 0.18, 0.05, 0.88), GREEN, 2, 8.0)
-	)
-	_admin_button.add_theme_stylebox_override(
-		&"focus",
-		_style(Color.TRANSPARENT, GREEN, 1, 7.0)
-	)
 
 
 func _style_action_button(button: Button, selected: bool) -> void:

@@ -23,7 +23,7 @@ var damage := 0.0
 var size := 0.14
 var linger := 3.6
 var speed := 16.0
-var seek := 24.0
+var seek := 80.0
 var velocity := Vector3.ZERO
 var authoritative := false
 

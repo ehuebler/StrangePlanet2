@@ -7,7 +7,7 @@ const SETTINGS_PATH := "user://settings.cfg"
 ## Increment when the shipped character skin changes. This lets an existing
 ## settings file receive a new project default once without resetting the
 ## player's skin choice on every later launch.
-const DEFAULT_SKIN_REVISION := 1
+const DEFAULT_SKIN_REVISION := 2
 ## Version one replaces the five-entry weapon rack with three numbered hotbar
 ## entries, two mouse ability entries and persistent backpack contents.
 const LOADOUT_SCHEMA_REVISION := 1
@@ -41,6 +41,11 @@ const DEFAULTS := {
 		## compositor arrives with the map and there is nothing to switch off
 		## until it does.
 		"god_rays": true,
+		## Tear, cell-shift, snow, and RGB fringe on CRT type and rims.
+		## Scanlines stay on either way. Applied live by [CrtType] and
+		## [RedGlowPanel] each frame so the Display row can be compared
+		## without leaving the page.
+		"ui_glitch": true,
 	},
 	"audio": {
 		"master_volume": 0.8,
@@ -64,7 +69,7 @@ const DEFAULTS := {
 	"appearance": {
 		"name": "Player",
 		"body": "settler",
-		"skin": "luke",
+		"skin": "noct_crimson",
 		"worn": {},
 		## Positional because the index is the number or mouse button that uses it.
 		"hotbar": ["", "", ""],
@@ -110,6 +115,14 @@ const DEFAULTS := {
 			"range": 0,
 			"luck": 0,
 			"elemental": 0,
+		},
+		"auto_select": false,
+		"auto_select_prefs": {
+			"flying": true,
+			"health": true,
+			"greed": true,
+			"strength": true,
+			"misc": false,
 		},
 	},
 }
@@ -202,15 +215,16 @@ func _ensure_meta_ranks() -> void:
 		_config.set_value("meta", "ranks", ranks)
 
 
-## Makes the newly shipped Luke painting visible on the next launch even when
-## settings.cfg still contains the former default. The revision marker means
-## choosing another skin afterwards remains persistent as normal.
+## Ships a new default skin once. Players who still have the previous default
+## (Luke) move to Noct Crimson; an explicit later choice stays put.
 func _migrate_default_skin() -> bool:
 	var revision := int(_config.get_value(
 		"appearance", "default_skin_revision", 0))
 	if revision >= DEFAULT_SKIN_REVISION:
 		return false
-	_config.set_value("appearance", "skin", "luke")
+	var current := str(_config.get_value("appearance", "skin", ""))
+	if current.is_empty() or current == "luke":
+		_config.set_value("appearance", "skin", "noct_crimson")
 	_config.set_value("appearance", "default_skin_revision",
 		DEFAULT_SKIN_REVISION)
 	return true

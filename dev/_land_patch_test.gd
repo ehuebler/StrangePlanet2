@@ -89,9 +89,27 @@ func _check(partition: LandPartition, shape: PlanetShape) -> void:
 			partition.vertices.size(),
 			partition.border_edge_count(),
 		])
+	var spawn_rest: LandPartition.Patch = null
+	var lee_rest: LandPartition.Patch = null
+	var crescent: LandPartition.Patch = null
 	for patch in partition.patches:
+		if patch.name == "Tide Margin 4":
+			spawn_rest = patch
+		elif patch.name == "Wind Gap 4":
+			lee_rest = patch
+		elif patch.name == "Far Beacon 4 Northwest":
+			crescent = patch
 		print("land_patch_test:   %s  %.0f km²  span %.0f m"
 			% [patch.name, patch.area / 1_000_000.0, patch.span])
+	_expect(spawn_rest != null, "Tide Margin 4 rest cell exists for the spawn pad")
+	_expect(lee_rest != null, "Wind Gap 4 rest cell exists for the second later city")
+	_expect(crescent != null, "Far Beacon 4 Northwest exists for Crescent Market")
+	if spawn_rest != null:
+		_expect(partition.first_cell_of(spawn_rest.parent_id) == spawn_rest.id,
+			"Tide Margin 4 rest is the keep cell")
+	if lee_rest != null:
+		_expect(partition.first_cell_of(lee_rest.parent_id) == lee_rest.id,
+			"Wind Gap 4 rest is the keep cell")
 
 
 func _expect(ok: bool, message: String) -> void:

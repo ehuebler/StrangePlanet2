@@ -39,11 +39,12 @@ static func recipe_from(mod: CrawlerCard, host: CrawlerCard,
 	var host_scale := CrawlerBubbles.host_size_scale(host_id, host_stats)
 	var recipe := {
 		"ability_id": host_id,
-		"duration": CrawlerRules.LINGER_SECONDS
-			+ CrawlerRules.LINGER_SECONDS_PER_RANK * float(duration_rank),
+		"duration": CrawlerRules.scaled_stat(
+			CrawlerRules.LINGER_SECONDS, duration_rank),
 		"radius": CrawlerRules.LINGER_RADIUS * maxf(host_scale, 0.55),
 		"damage": CrawlerRules.LINGER_DAMAGE,
-		"slow": minf(CrawlerRules.LINGER_SLOW_PER_RANK * float(slow_rank),
+		"slow": minf(CrawlerRules.LINGER_SLOW_PER_RANK
+			* CrawlerRules.upgrade_steps(slow_rank),
 			CrawlerRules.LINGER_SLOW_MAX),
 		"homing": CrawlerHoming.range_of(host_stats),
 		"steer": CrawlerHoming.steer_of(host_stats),
@@ -59,17 +60,17 @@ static func recipe_from(mod: CrawlerCard, host: CrawlerCard,
 	if toxic_rank > 0:
 		carried.append({
 			"id": String(CombatStatuses.POISON),
-			"duration": CrawlerRules.ELEM_TOXIC_HOLD
-				+ CrawlerRules.ELEM_TOXIC_HOLD_PER_RANK * float(toxic_rank),
-			"strength": CrawlerRules.ELEM_TOXIC_DPS
-				+ CrawlerRules.ELEM_TOXIC_DPS_PER_RANK * float(maxi(toxic_rank - 1, 0)),
+			"duration": CrawlerRules.scaled_stat(
+				CrawlerRules.ELEM_TOXIC_HOLD, toxic_rank),
+			"strength": CrawlerRules.scaled_stat(
+				CrawlerRules.ELEM_TOXIC_DPS, maxi(toxic_rank - 1, 0)),
 			"stack": true,
 		})
 	if freeze_rank > 0:
 		carried.append({
 			"id": String(CombatStatuses.FREEZE),
-			"duration": CrawlerRules.ELEM_ICE_HOLD
-				+ CrawlerRules.ELEM_ICE_HOLD_PER_RANK * float(freeze_rank),
+			"duration": CrawlerRules.scaled_stat(
+				CrawlerRules.ELEM_ICE_HOLD, freeze_rank),
 			"strength": 0.0,
 			"stack": false,
 		})
@@ -172,9 +173,8 @@ static func bubble_bonus(host: CrawlerCard) -> float:
 		var child := host.mod_at(index)
 		if child == null or child.id != "linger":
 			continue
-		extra += CrawlerRules.LINGER_BUBBLE_BONUS \
-			+ CrawlerRules.LINGER_BUBBLE_BONUS_PER_RANK \
-			* float(child.upgrade_rank("duration"))
+		extra += CrawlerRules.scaled_stat(
+			CrawlerRules.LINGER_BUBBLE_BONUS, child.upgrade_rank("duration"))
 	return extra
 
 

@@ -31,6 +31,13 @@ const RING_INSET := 3.5
 
 var container: ItemContainer
 var index := 0
+## HUD-only override so a cape tile can show without a loadout container.
+var forced_item_id := "":
+	set(value):
+		if forced_item_id == value:
+			return
+		forced_item_id = value
+		queue_redraw()
 ## HUD tiles are drawn but take no input: the weapon bar reports what is in hand
 ## rather than being rummaged in.
 var interactive := true
@@ -99,6 +106,8 @@ func set_cooldown(fill: float, active: bool) -> void:
 
 
 func item_id() -> String:
+	if not forced_item_id.is_empty():
+		return forced_item_id
 	if container == null:
 		return ""
 	return container.get_item(index)

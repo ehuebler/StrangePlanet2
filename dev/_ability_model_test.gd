@@ -49,7 +49,6 @@ func _ready() -> void:
 	_check_hero_punch_alternation()
 	_check_starfire_motion()
 	_check_starfire_rejection()
-	_check_grapple_pending_release()
 	await _check_new_ability_runtime()
 	await _check_blast_self_launch()
 	await _check_blast_presentation()
@@ -70,13 +69,13 @@ func _ready() -> void:
 func _check_catalogue() -> void:
 	var ids := ItemDB.ability_ids()
 	var expected := PackedStringArray(
-		["laser_eyes", "kame", "meteor_punch", "hero_punch", "starfire", "grapple",
-			"nuke", "mini_nuke", "lasso", "wall", "nausicaa", "lightning",
+		["laser_eyes", "kame", "meteor_punch", "hero_punch", "starfire",
+			"nuke", "mini_nuke", "wall", "nausicaa", "lightning",
 			"light_bolt", "icicle", "teleport", "fus",
 			"roar", "toxic_blast", "charming_aura", "freeze_blast",
 			"static_field", "toxic_field", "freeze_field", "healing_field",
 			"overdrive"])
-	_expect(ids == expected, "all twenty-five abilities are in manifest order")
+	_expect(ids == expected, "all twenty-three abilities are in manifest order")
 	for id: String in expected:
 		_expect(ItemDB.kind_of(id) == ItemDB.KIND_ABILITY,
 			"%s is an ability" % id)
@@ -100,10 +99,8 @@ func _check_authored_ability_shapes() -> void:
 	var meteor := ItemDB.ability_definition("meteor_punch")
 	var hero_punch := ItemDB.ability_definition("hero_punch")
 	var starfire := ItemDB.ability_definition("starfire")
-	var grapple := ItemDB.ability_definition("grapple")
 	var nuke := ItemDB.ability_definition("nuke")
 	var mini_nuke := ItemDB.ability_definition("mini_nuke")
-	var lasso := ItemDB.ability_definition("lasso")
 	var wall := ItemDB.ability_definition("wall")
 	var kame := ItemDB.ability_definition("kame")
 	var nausicaa := ItemDB.ability_definition("nausicaa")
@@ -164,20 +161,6 @@ func _check_authored_ability_shapes() -> void:
 			float(starfire.stats.get("crater_depth", 0.0)) * 2.0,
 			float(meteor.stats.get("crater_depth", -1.0))),
 		"Starfire's crater dimensions are half Meteor Punch's")
-	_expect(grapple != null
-		and grapple.grapple_type
-			== AbilityDefinition.GrappleType.CARRY_SLAM
-		and grapple.impact_type
-			== AbilityDefinition.ImpactType.GRAPPLE_SLAM,
-		"Grapple dispatches a carry slam")
-	_expect(grapple != null
-		and is_equal_approx(float(grapple.stats.get("range", 0.0)), 2.0)
-		and is_equal_approx(
-			float(grapple.stats.get("launch_height", 0.0)), 20.0)
-		and not grapple.animation.is_empty()
-		and not grapple.held_animation.is_empty()
-		and not grapple.impact_animation.is_empty(),
-		"Grapple authors its two-metre reach, twenty-metre rise, and clips")
 	_expect(nuke != null
 		and nuke.projectile_type
 			== AbilityDefinition.ProjectileType.ENERGY_ORB
@@ -224,22 +207,6 @@ func _check_authored_ability_shapes() -> void:
 		and float(mini_nuke.stats.get("range", 0.0))
 			> float(mini_nuke.stats.get("radius", 0.0)),
 		"Mini Nuke authors a smaller, faster, longer-flying orb blast")
-	_expect(lasso != null
-		and lasso.activation_type
-			== AbilityDefinition.ActivationType.SUSTAINED
-		and lasso.projectile_type
-			== AbilityDefinition.ProjectileType.TETHER
-		and lasso.grapple_type
-			== AbilityDefinition.GrappleType.PHYSICS_TETHER
-		and not lasso.held_animation.is_empty()
-		and not lasso.held_hover_animation.is_empty(),
-		"Lasso authors a sustained physical tether and both hold poses")
-	_expect(lasso != null
-		and is_equal_approx(float(lasso.stats.get("range", 0.0)), 30.0)
-		and is_equal_approx(
-			float(lasso.stats.get("rope_length", 0.0)), 10.0)
-		and is_equal_approx(float(lasso.stats.get("duration", 0.0)), 2.0),
-		"Lasso carries its reach, rope length, and two-second hold")
 	_expect(wall != null
 		and wall.construct_type == AbilityDefinition.ConstructType.BARRIER
 		and is_equal_approx(float(wall.stats.get("wall_width", 0.0)), 8.0)
@@ -287,8 +254,10 @@ func _check_authored_ability_shapes() -> void:
 		and is_equal_approx(
 			float(nausicaa.stats.get("paint_spacing", 0.0)), 1.25)
 		and is_equal_approx(
-			float(nausicaa.stats.get("crater_depth", 0.0)), 0.55),
-		"Nausicaä authors a short Laser Eyes-style terrain chain with shallow indents")
+			float(nausicaa.stats.get("crater_depth", 0.0)), 0.55)
+		and is_equal_approx(
+			float(nausicaa.stats.get("range", 0.0)), CrawlerRules.NAUSICAA_RANGE),
+		"Nausicaä authors a short delayed beam with shallow indents")
 	_expect(lightning != null
 		and lightning.activation_type
 			== AbilityDefinition.ActivationType.SUSTAINED
@@ -475,7 +444,7 @@ func _check_laser_beam_placement() -> void:
 	var at := Vector3(0.0, 1.2, -8.0)
 	var beams := _player.laser_beams()
 	beams.aim(left, right, at)
-	var core := beams._beams[0][0] as MeshInstance3D
+	var core := beams._beams[0][0] as Node3D
 	_expect(core != null and core.visible, "the first aim shows the left beam")
 	if core != null:
 		var along := (at - left).normalized()
@@ -601,24 +570,6 @@ func _check_starfire_rejection() -> void:
 			child.queue_free()
 
 
-func _check_grapple_pending_release() -> void:
-	var ability := Grapple.new()
-	ability.configure(
-		_player, 0, "grapple", ItemDB.ability_definition("grapple"))
-	# The real press is waiting on a remote host at this point. Releasing a
-	# normal click must not cancel the request before that answer returns.
-	ability._held = true
-	_player._ability_grapple_id = "grapple"
-	_player._ability_grapple_pending_left = 0.5
-	ability.release()
-	_expect(ability.is_held() and _player.grapple_pending(),
-		"Grapple keeps a quick click alive while host approval is pending")
-	_player._ability_grapple_pending_left = 0.0
-	ability.tick(0.0)
-	_expect(not ability.is_held() and is_zero_approx(ability.cooldown_left()),
-		"a rejected Grapple still clears without charging cooldown")
-
-
 func _check_new_ability_runtime() -> void:
 	var nuke_definition := ItemDB.ability_definition("nuke")
 	var nuke := Nuke.new()
@@ -666,8 +617,8 @@ func _check_new_ability_runtime() -> void:
 	var bolt := AbilityProjectile.launch(
 		self, _player, "light_bolt",
 		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
-	_expect(bolt != null and bolt._disk.mesh is SphereMesh
-			and bolt._halo != null
+	_expect(bolt != null and bolt._disk is EnergyVfx
+			and (bolt._disk as EnergyVfx).kind == EnergyVfx.Kind.PROJECTILE
 			and is_equal_approx(bolt._speed, CrawlerRules.LIGHT_BOLT_SPEED)
 			and not bolt._emits_blast_bubbles(),
 		"Light Bolt builds a small pulsating particle bolt")
@@ -686,8 +637,8 @@ func _check_new_ability_runtime() -> void:
 	var marker := AbilityProjectile.launch(
 		self, _player, "teleport",
 		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
-	_expect(marker != null and marker._disk.mesh is SphereMesh
-			and marker._halo != null
+	_expect(marker != null and marker._disk is EnergyVfx
+			and (marker._disk as EnergyVfx).kind == EnergyVfx.Kind.PROJECTILE
 			and marker._persist_trail != null
 			and is_equal_approx(marker._speed, CrawlerRules.TELEPORT_SPEED)
 			and marker._velocity.y > 0.0
@@ -698,11 +649,11 @@ func _check_new_ability_runtime() -> void:
 	var cone := AbilityProjectile.launch(
 		self, _player, "fus",
 		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
-	_expect(cone != null and is_instance_valid(cone._shock)
+	_expect(cone != null and is_instance_valid(cone._cone_beam)
+			and cone._cone_beam.kind == EnergyVfx.Kind.BEAM_STREAMS
 			and is_equal_approx(cone._speed, CrawlerRules.FUS_SPEED)
-			and cone._shock.visible
 			and not cone._emits_blast_bubbles(),
-		"Fus builds a travelling meteor-shock cone")
+		"Fus builds a travelling white stream beam")
 	if cone != null:
 		cone.queue_free()
 	var thrown := Teleport.new()
@@ -801,12 +752,15 @@ func _check_new_ability_runtime() -> void:
 			"Nausicaä's detonation then advances along the painted trail")
 
 	var beams := _player.laser_beams()
-	var nausicaa_tint := ItemDB.ability_definition("nausicaa").tint
 	beams.aim(Vector3(-0.05, 1.8, 0.0), Vector3(0.05, 1.8, 0.0),
-		Vector3(0.0, 0.0, -8.0), nausicaa_tint)
-	_expect(beams._colour == nausicaa_tint
-		and beams._glow_material.emission == nausicaa_tint,
-		"Nausicaä reuses the Laser Eyes beams with a blue glow")
+		Vector3(0.0, 0.0, -8.0), EnergyVfx.TINT_PURPLE)
+	var drawn: EnergyVfx = null
+	if not beams._beams.is_empty() and not beams._beams[0].is_empty():
+		drawn = beams._beams[0][0] as EnergyVfx
+	_expect(beams._colour == EnergyVfx.TINT_PURPLE
+		and drawn != null
+		and drawn.current_tint() == EnergyVfx.TINT_PURPLE,
+		"Nausicaä reuses the Laser Eyes beams with a purple glow")
 	beams.stop()
 
 	var player_target := PLAYER.instantiate() as OnlinePlayer
@@ -815,84 +769,40 @@ func _check_new_ability_runtime() -> void:
 	add_child(player_target)
 	player_target.set_process(false)
 	player_target.set_physics_process(false)
-	_expect(player_target.begin_lasso(_player)
-		and player_target.is_lassoed(),
-		"Lasso temporarily transfers a player target to host movement")
-	var lasso_definition := ItemDB.ability_definition("lasso")
-	var tether := AbilityLassoTether.create(
-		self, _player, player_target, lasso_definition, NodePath(), true)
-	if tether != null:
-		tether.set_physics_process(false)
-		var first_string_segment := tether._string[0].mesh as CylinderMesh \
-			if not tether._string.is_empty() else null
-		_expect(tether._string.size() == AbilityLassoTether.STRING_SEGMENTS
-			and first_string_segment != null
-			and is_equal_approx(first_string_segment.top_radius,
-				AbilityLassoTether.STRING_RADIUS),
-			"Lasso renders as a thin segmented string instead of a glowing line")
-		var target_at := _player.hand_point(false) \
-			+ _player.global_basis.x.normalized() * 5.0
-		var up := _player.global_basis.y.normalized()
-		var radial := (target_at - _player.hand_point(false)).normalized()
-		var movement := radial.cross(up).normalized() * 20.0
-		player_target.global_position = target_at
-		_player.velocity = Vector3.ZERO
-		tether._velocity = Vector3.ZERO
-		tether._simulate_target(0.05)
-		var without_movement := tether.throw_velocity()
-		player_target.global_position = target_at
-		_player.velocity = movement
-		tether._velocity = Vector3.ZERO
-		tether._simulate_target(0.05)
-		var with_movement := tether.throw_velocity()
-		_expect((with_movement - without_movement).dot(
-			movement.normalized()) > 1.0,
-			"caster movement adds tangential Lasso momentum")
-		tether.queue_free()
-	_player.velocity = Vector3.ZERO
-	player_target.lasso_simulate(
-		Vector3.RIGHT * 0.3, Vector3(9.0, 2.0, 0.0))
-	player_target.end_lasso(Vector3.ZERO)
-	_expect(player_target.can_be_lassoed()
-		and not player_target.is_lassoed(),
-		"Lasso release restores normal player control")
-	player_target.global_position = Vector3(100.0, 0.0, 0.0)
-	var missed_lasso := AbilityLassoTether.create_miss(
-		self, _player, lasso_definition)
-	var miss_ended := [false]
-	if missed_lasso != null:
-		missed_lasso.set_physics_process(false)
-		missed_lasso.miss_finished.connect(
-			func(_tether: AbilityLassoTether) -> void:
-				miss_ended[0] = true)
-		missed_lasso._physics_process(missed_lasso._miss_out * 0.5)
-		var visible_segments := 0
-		for segment: MeshInstance3D in missed_lasso._string:
-			visible_segments += 1 if segment.visible else 0
-		_expect(missed_lasso.is_miss_cast() and visible_segments > 0,
-			"a missed Lasso still fires a visible string into the world")
-		missed_lasso._physics_process(
-			missed_lasso._miss_out + AbilityLassoTether.MISS_HOLD
-				+ AbilityLassoTether.MISS_RETRACT + 0.1)
-	_expect(missed_lasso != null and bool(miss_ended[0])
-		and missed_lasso._miss_done,
-		"a missed Lasso retracts and disappears after failing to grab")
 
-	var player_health_before := player_target.health()
-	var nuke_player_blast := DamageHit.area(
-		player_target.combat_position(), 22.0, 25.0, 1.0)
-	nuke_player_blast.ability_id = "nuke"
-	nuke_player_blast.faction = DamageHit.Faction.ENEMY
-	nuke_player_blast.reaction = DamageHit.Reaction.RAGDOLL
-	nuke_player_blast.world_impulse = Vector3(18.0, 8.0, 0.0)
-	var nuke_player_damage := player_target.apply_damage(nuke_player_blast)
-	_expect(nuke_player_damage > 0.0
-		and player_target.health() < player_health_before
-		and player_target._forced_ragdoll
-		and player_target.velocity.length() > 1.0,
-		"Nuke-style player damage ragdolls and blows the target away")
+	var ally_health := player_target.health()
+	var caster_health := _player.health()
+	_player.global_position = Vector3.ZERO
+	player_target.global_position = Vector3.ZERO
+	AbilityImpact.apply(
+		_player,
+		ItemDB.ability_definition("nuke"),
+		_player.combat_position(),
+		Vector3.UP,
+		{"player_damage": 12.0, "self_launch_speed": 0.0}
+	)
+	_expect(_player.health() < caster_health,
+		"Nuke explosion damages its caster")
+	_expect(is_equal_approx(player_target.health(), ally_health),
+		"Nuke explosion does not damage other coop players")
+	_player.stats.set_health(_player.maximum_health())
+	_player._clear_ragdoll()
+	_player.velocity = Vector3.ZERO
 	player_target._clear_ragdoll()
 	player_target.stats.set_health(player_target.maximum_health())
+
+	var disk_health := _player.health()
+	AbilityImpact.apply(
+		_player,
+		ItemDB.ability_definition("starfire"),
+		_player.combat_position(),
+		Vector3.UP,
+		{"player_damage": 8.0}
+	)
+	_expect(_player.health() < disk_health,
+		"Starfire explosion damages its caster")
+	_player.stats.set_health(_player.maximum_health())
+	_player.velocity = Vector3.ZERO
 
 	_player.global_position = Vector3.ZERO
 	player_target.global_position = Vector3(4.0, 0.0, 0.0)
@@ -1046,19 +956,6 @@ func _check_training_dummy() -> void:
 		"ending a carry releases the training dummy")
 	_expect(dummy.begin_lasso(_player) and dummy.is_lassoed(),
 		"the training dummy accepts a physical Lasso")
-	var lasso_tether := AbilityLassoTether.create(
-		self, _player, dummy, ItemDB.ability_definition("lasso"),
-		NodePath(), true)
-	if lasso_tether != null:
-		lasso_tether.set_physics_process(false)
-		lasso_tether._velocity = Vector3.RIGHT * 20.0
-		var before_collision := dummy.health()
-		lasso_tether._damage_combatant(
-			dummy, dummy.combat_position(), 20.0)
-		_expect(dummy.health() < before_collision,
-			"a high-speed Lasso collision damages its captured target")
-		dummy.set("_health", dummy.maximum_health)
-		lasso_tether.queue_free()
 	dummy.end_lasso(Vector3(12.0, 4.0, 0.0))
 	_expect(dummy.can_be_lassoed() and dummy.velocity.length() > 10.0,
 		"Lasso release restores the dummy and preserves throw velocity")

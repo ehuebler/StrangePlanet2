@@ -175,7 +175,7 @@ func _ready() -> void:
 
 
 ## Requests that fail host validation get an explicit answer instead of making
-## the owner spend a cooldown or wait for the Grapple timeout.
+## the owner spend a cooldown while waiting.
 func _check_request_rejections() -> void:
 	var server_player := _server_world._spawned_players.get(
 		_owner_id) as OnlinePlayer
@@ -217,19 +217,6 @@ func _check_request_rejections() -> void:
 	for projectile: AbilityProjectile in [owner_projectile, server_projectile]:
 		if is_instance_valid(projectile):
 			projectile.queue_free()
-
-	_owner_player._ability_grapple_id = "grapple"
-	_owner_player._ability_grapple_pending_left = (
-		OnlinePlayer.GRAPPLE_REQUEST_TIMEOUT)
-	_owner_player._ability_grapple_request_sequence += 1
-	var grapple_request := _owner_player._ability_grapple_request_sequence
-	_owner_player._request_ability_grapple.rpc_id(
-		1, grapple_request, true, false, "grapple",
-		"Planet/MissingGrappleTarget", _owner_player.global_position)
-	var grapple_rejected := await _wait_until(
-		_owner_grapple_rejected, RPC_FRAMES)
-	_expect(grapple_rejected,
-		"host rejection immediately clears a pending Grapple")
 
 
 ## A crater asked for by a client is the host's to grant, and once granted it is
@@ -477,7 +464,7 @@ func _check_new_ability_networking() -> void:
 
 	# Keep Bigfoot outside the blast while checking the caster-only Nuke rule, and
 	# well outside rather than just beyond the rim: a boss clipped by the edge of
-	# this is still picking itself up when the lasso checks below want to grab it.
+	# this is still picking itself up when later checks want a standing target.
 	# Taken from the authored radius so widening the blast does not quietly move
 	# the boss back inside it.
 	var clear_of_blast := Vector3.RIGHT * (
@@ -492,18 +479,21 @@ func _check_new_ability_networking() -> void:
 	var nuke_flora_before := _cover(_owner_world).absorbed.size()
 	AbilityImpact.apply(
 		server_player, ItemDB.ability_definition("nuke"),
-		server_player.combat_position(), Vector3.UP)
+		server_player.combat_position(), Vector3.UP,
+		{"player_damage": 8.0})
 	var self_launch_shared := await _wait_until(
 		func() -> bool:
 			return server_player._forced_ragdoll \
 				and _owner_player._forced_ragdoll,
 		RPC_FRAMES)
 	_expect(self_launch_shared
-		and is_equal_approx(server_player.health(), health_before)
-		and is_equal_approx(_owner_player.health(), health_before)
+		and server_player.health() < health_before
+		and _owner_player.health() < health_before
 		and server_player.velocity.length() > 1.0
 		and _owner_player.velocity.length() > 1.0,
-		"Nuke self-launch ragdolls its caster on both peers without self-damage")
+		"Nuke self-launch ragdolls its caster on both peers and deals self-damage")
+	server_player.stats.set_health(server_player.maximum_health())
+	_owner_player.stats.set_health(_owner_player.maximum_health())
 	var flora_shared := await _wait_until(
 		func() -> bool:
 			return _cover(_owner_world).absorbed.size() > nuke_flora_before,
@@ -541,127 +531,11 @@ func _check_new_ability_networking() -> void:
 	server_player.velocity = Vector3.ZERO
 	_owner_player.velocity = Vector3.ZERO
 
-	# A quick committed Grapple click can be released before this round trip
-	# completes. The Ability keeps it pending; this real request proves the host
-	# then accepts the matching close boss on both copies.
-	var owner_grapple_at := _owner_player.camera.global_position \
-		+ _owner_player.look_direction() * 2.2 \
-		- _owner_boss.global_basis.y * 1.58
-	var server_grapple_at := server_player.camera.global_position \
-		+ server_player.look_direction() * 2.2 \
-		- _server_boss.global_basis.y * 1.58
-	_owner_boss.global_position = owner_grapple_at
-	_server_boss.global_position = server_grapple_at
-	var grapple_sent := _owner_player.begin_ability_grapple(
-		"grapple", ItemDB.stats_of("grapple"))
-	var grapple_shared := await _wait_until(
-		func() -> bool:
-			return _owner_player.grapple_active() \
-				and server_player.grapple_active(),
-		RPC_FRAMES)
-	_expect(grapple_sent and grapple_shared
-		and not _owner_boss.can_be_grappled()
-		and not _server_boss.can_be_grappled(),
-		"Grapple host approval captures a nearby boss on every peer")
-	_owner_player.cancel_ability_grapple()
-	var grapple_released := await _wait_until(
-		func() -> bool:
-			return not _owner_player.grapple_active_or_pending() \
-				and not server_player.grapple_active_or_pending() \
-				and _owner_boss.can_be_grappled() \
-				and _server_boss.can_be_grappled(),
-		RPC_FRAMES)
-	_expect(grapple_released,
-		"cancelling the Grapple restores its target on every peer")
-
-	# Aim both peer copies at the matching boss and let the real request path
-	# create one host-simulated and one presentation-only tether.
-	var owner_boss_at := _owner_player.camera.global_position \
-		+ _owner_player.look_direction() * 8.0 \
-		- _owner_boss.global_basis.y * 1.58
-	var server_boss_at := server_player.camera.global_position \
-		+ server_player.look_direction() * 8.0 \
-		- _server_boss.global_basis.y * 1.58
-	_owner_boss.global_position = owner_boss_at
-	_server_boss.global_position = server_boss_at
-	var lasso_sent := _owner_player.begin_ability_lasso(
-		"lasso", ItemDB.stats_of("lasso"))
-	var lasso_shared := await _wait_until(_lasso_shared, RPC_FRAMES)
-	var owner_tether := _lasso_under(_owner_world)
-	var server_tether := _lasso_under(_server_world)
-	_expect(lasso_sent and lasso_shared
-		and owner_tether != null and server_tether != null
-		and not owner_tether.simulates and server_tether.simulates
-		and is_equal_approx(_server_boss.lasso_mass(), 8.0),
-		"Lasso replication leaves physical boss motion with the host")
-	_owner_player.release_ability_lasso()
-	var lasso_released := await _wait_until(
-		func() -> bool:
-			return not _owner_boss.is_lassoed() \
-				and not _server_boss.is_lassoed() \
-				and not _owner_player.ability_lasso_active_or_pending() \
-				and not server_player.ability_lasso_active_or_pending(),
-		RPC_FRAMES)
-	_expect(lasso_released,
-		"Lasso release restores Bigfoot on every peer")
-
 	# Move the boss clear before resolving the delayed blast.
 	_server_boss.global_position = Vector3(100.0, 0.0, 0.0)
 	_owner_boss.global_position = Vector3(100.0, 0.0, 0.0)
-	await _wait_until(
-		func() -> bool:
-			return _lasso_under(_owner_world) == null \
-				and _lasso_under(_server_world) == null,
-		RPC_FRAMES)
-	var missed_lasso_sent := _owner_player.begin_ability_lasso(
-		"lasso", ItemDB.stats_of("lasso"))
-	var missed_lasso_shared := await _wait_until(
-		func() -> bool:
-			var owner_miss := _lasso_under(_owner_world)
-			var server_miss := _lasso_under(_server_world)
-			return owner_miss != null and server_miss != null \
-				and owner_miss.is_miss_cast() \
-				and server_miss.is_miss_cast(),
-		RPC_FRAMES)
-	var owner_miss := _lasso_under(_owner_world)
-	var server_miss := _lasso_under(_server_world)
-	_expect(missed_lasso_sent and missed_lasso_shared
-		and owner_miss != null and server_miss != null
-		and owner_miss.target == null and server_miss.target == null
-		and owner_miss._string.size() == AbilityLassoTether.STRING_SEGMENTS
-		and server_miss._string.size() == AbilityLassoTether.STRING_SEGMENTS,
-		"a no-target Lasso cast replicates its travelling string to every peer")
-	var missed_lasso_gone := await _wait_until(
-		func() -> bool:
-			return not _owner_player.ability_lasso_active_or_pending() \
-				and not server_player.ability_lasso_active_or_pending() \
-				and _lasso_under(_owner_world) == null \
-				and _lasso_under(_server_world) == null,
-		RPC_FRAMES)
-	_expect(missed_lasso_gone,
-		"a replicated Lasso miss retracts without grabbing a target")
-
 	var eyes := _owner_player.eye_points()
 	var from: Vector3 = (eyes[0] + eyes[1]) * 0.5
-	var missed_request := _owner_player.fire_ability_delayed_blast(
-		"nausicaa", from, _owner_player.aim_direction(from))
-	var terrain_miss_rejected := await _wait_until(
-		func() -> bool:
-			return _owner_player.ability_delayed_blast_request_state(
-				missed_request) == OnlinePlayer.ProjectileRequestState.REJECTED,
-		RPC_FRAMES)
-	_expect(terrain_miss_rejected,
-		"Nausicaä cannot paint props or empty air when no terrain was struck")
-
-	# The harness keeps both peer worlds in one physics space. Silence the
-	# presentation copy so the host ray reaches its own terrain copy.
-	var muted_players := _mute_other_player_collisions(
-		_owner_world, null)
-	muted_players.merge(_mute_other_player_collisions(
-		_server_world, server_player), true)
-	var server_ground := _add_nausicaa_terrain(_server_world, server_player)
-	await get_tree().physics_frame
-
 	var first_request := _owner_player.fire_ability_delayed_blast(
 		"nausicaa", from, _owner_player.aim_direction(from))
 	var first_approved := await _wait_until(
@@ -688,12 +562,16 @@ func _check_new_ability_networking() -> void:
 		RPC_FRAMES)
 	var owner_warnings := _delayed_blasts_under(_owner_world)
 	var server_warnings := _delayed_blasts_under(_server_world)
+	var tip_span := 0.0
+	if not owner_warnings.is_empty():
+		tip_span = owner_warnings[0].from.distance_to(owner_warnings[0].at)
 	_expect(first_approved and first_shared and second_approved and trail_shared
 		and not owner_warnings[0].simulates
 		and server_warnings[0].simulates
+		and is_equal_approx(tip_span, CrawlerRules.NAUSICAA_RANGE)
 		and _owner_player.laser_beams()._colour \
 			== ItemDB.ability_definition("nausicaa").tint,
-		"Nausicaä replicates its blue painted trail while only the host can detonate it")
+		"Nausicaä paints the beam tip in empty air and only the host detonates it")
 	var owner_explosions := _explosion_count(_owner_world)
 	var server_explosions := _explosion_count(_server_world)
 	var first_ordered := false
@@ -724,9 +602,6 @@ func _check_new_ability_networking() -> void:
 		RPC_FRAMES)
 	_expect(chain_shared and second_ordered,
 		"Nausicaä advances the host-published explosion along the trail")
-	server_ground.queue_free()
-	for muted: OnlinePlayer in muted_players:
-		muted.collision_layer = int(muted_players[muted])
 
 	var wall_request := _owner_player.place_ability_wall("wall")
 	var wall_approved := await _wait_until(
@@ -868,24 +743,6 @@ func _projectile_copies_spawned_for(id: String) -> bool:
 		and _projectile_of(_server_world, id) != null
 
 
-func _lasso_shared() -> bool:
-	var server_player := _server_world._spawned_players.get(
-		_owner_id) as OnlinePlayer
-	return _owner_boss != null and _server_boss != null \
-		and _owner_boss.is_lassoed() and _server_boss.is_lassoed() \
-		and _owner_player.ability_lasso_active() \
-		and server_player != null and server_player.ability_lasso_active()
-
-
-func _lasso_under(world: GameWorld) -> AbilityLassoTether:
-	if world == null:
-		return null
-	for child: Node in world.get_children():
-		if child is AbilityLassoTether:
-			return child as AbilityLassoTether
-	return null
-
-
 func _delayed_blasts_under(world: GameWorld) -> Array[AbilityDelayedBlast]:
 	var found: Array[AbilityDelayedBlast] = []
 	if world == null:
@@ -896,43 +753,6 @@ func _delayed_blasts_under(world: GameWorld) -> Array[AbilityDelayedBlast]:
 	return found
 
 
-func _mute_other_player_collisions(world: GameWorld,
-		caster: OnlinePlayer) -> Dictionary:
-	var saved := {}
-	for value: Variant in world._spawned_players.values():
-		var player := value as OnlinePlayer
-		if player == null or player == caster:
-			continue
-		saved[player] = player.collision_layer
-		player.collision_layer = 0
-	return saved
-
-
-## A terrain face for this rendering-free harness. Real Planet chunk colliders
-## have the same ownership relationship: their StaticBody3D is a direct child
-## of Planet, which is how Nausicaä distinguishes ground from a prop or actor.
-func _add_nausicaa_terrain(world: GameWorld,
-		player: OnlinePlayer) -> StaticBody3D:
-	var planet := world.get_node("Planet") as Planet
-	var body := StaticBody3D.new()
-	body.name = "NausicaTerrain"
-	body.collision_layer = 1
-	var collider := CollisionShape3D.new()
-	var box := BoxShape3D.new()
-	box.size = Vector3(20.0, 20.0, 0.25)
-	collider.shape = box
-	body.add_child(collider)
-	planet.add_child(body)
-	var eyes := player.eye_points()
-	var from: Vector3 = (eyes[0] + eyes[1]) * 0.5
-	var along := player.aim_direction(from).normalized()
-	var up := Vector3.UP if absf(along.dot(Vector3.UP)) < 0.9 \
-		else Vector3.RIGHT
-	body.global_transform = Transform3D(
-		Basis.looking_at(along, up), from + along * 8.0)
-	return body
-
-
 func _explosion_count(world: GameWorld) -> int:
 	var count := 0
 	if world == null:
@@ -941,12 +761,6 @@ func _explosion_count(world: GameWorld) -> int:
 		if child is EnergyExplosion and not child.is_queued_for_deletion():
 			count += 1
 	return count
-
-
-func _owner_grapple_rejected() -> bool:
-	return _owner_player != null \
-		and not _owner_player.grapple_active_or_pending() \
-		and _owner_player._ability_grapple_id.is_empty()
 
 
 func _parry_state_shared() -> bool:

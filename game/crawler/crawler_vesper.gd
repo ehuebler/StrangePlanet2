@@ -14,16 +14,15 @@ const INK := Color(0.16, 0.06, 0.20)
 var _aim_left := 0.0
 var _fire_left := 0.0
 var _locked := Vector3.INF
-var _line: MeshInstance3D
-var _line_mesh: ImmediateMesh
-var _line_mat: StandardMaterial3D
+var _line: EnergyVfx
 
 
 func _ready() -> void:
-	_base_health = 70.0
-	_base_damage = 16.0
+	_base_health = 6.0
+	_base_damage = 10.0
 	_base_speed = 38.0
 	_faces_motion = true
+	_uses_model_front = true
 	super._ready()
 
 
@@ -33,12 +32,15 @@ func _build_body() -> void:
 	box.size = Vector3(WIDTH, HEIGHT, WIDTH * 0.8)
 	shape.shape = box
 	add_child(shape)
-	BODY.build(self, 4, HEIGHT, INK, BODY.load_paint(PAINT_PATH))
-	_line_mesh = ImmediateMesh.new()
-	_line = MeshInstance3D.new()
+	var packed := CrawlerDemonModels.scene(wild_kind())
+	if packed != null:
+		_attach_skinned(packed, HEIGHT)
+	else:
+		BODY.build(self, 4, HEIGHT, INK, BODY.load_paint(PAINT_PATH))
+	_line = EnergyVfx.make(EnergyVfx.Kind.BEAM_STREAMS, EnergyVfx.TINT_PURPLE)
 	_line.name = "VesperBeam"
-	_line.mesh = _line_mesh
-	_line.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_line.visible = false
+	_line.top_level = true
 	add_child(_line)
 
 
@@ -90,12 +92,16 @@ func _desired_clip() -> String:
 	return BODY.CLIP_FLY
 
 
+func _tick_idle(delta: float) -> void:
+	_abort_aim()
+	_patrol(delta, 0.52)
+
+
 func _tick_ai(delta: float) -> void:
 	_fire_left = maxf(_fire_left - delta, 0.0)
 	var player := _hunt_target(delta)
 	if player == null:
-		_abort_aim()
-		_patrol(delta, 0.52)
+		_tick_idle(delta)
 		_draw_beam(0.0)
 		return
 	var at := _combat_position_of(player)
@@ -176,7 +182,7 @@ func _hold_aim(player: Node, desired: Vector3, delta: float) -> void:
 		var up := _up()
 		look -= up * look.dot(up)
 		if look.length_squared() > 0.0001:
-			global_transform.basis = Basis.looking_at(look.normalized(), up)
+			global_transform.basis = _look_basis(look, up)
 	if _aim_left <= 0.0:
 		_release(player)
 		_faces_motion = true
@@ -229,58 +235,13 @@ func _flat_gap(player: Node) -> float:
 
 
 func _draw_beam(share: float) -> void:
-	if _line_mesh == null:
+	if _line == null:
 		return
-	_line_mesh.clear_surfaces()
 	if share <= 0.02 or not _locked.is_finite():
 		_line.visible = false
 		return
-	_line.visible = true
-	var from := combat_position()
-	var to := _locked
-	var thick := lerpf(0.04, 0.38, share)
-	var alpha := lerpf(0.12, 0.92, share * share)
+	var thick := lerpf(0.05, 0.22, share)
 	if share > 0.92:
-		alpha = 1.0
-		thick = 0.52
-	if _line_mat == null:
-		_line_mat = StandardMaterial3D.new()
-		_line_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		_line_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		_line_mat.emission_enabled = true
-		_line_mat.emission = Color(1.0, 0.18, 0.12)
-	_line_mat.albedo_color = Color(1.0, 0.12, 0.10, alpha)
-	_line_mat.emission_energy_multiplier = 1.2 + share * 4.0
-	_line_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, _line_mat)
-	var up := _up()
-	var along := to - from
-	if along.length_squared() < 0.0001:
-		_line_mesh.surface_end()
-		return
-	var right := along.cross(up)
-	if right.length_squared() < 0.0001:
-		right = along.cross(Vector3.RIGHT)
-	right = right.normalized() * thick
-	var lift := along.cross(right).normalized() * thick
-	var a := from + right + lift
-	var b := from - right + lift
-	var c := from - right - lift
-	var d := from + right - lift
-	var e := to + right + lift
-	var f := to - right + lift
-	var g := to - right - lift
-	var h := to + right - lift
-	_quad(a, b, f, e)
-	_quad(b, c, g, f)
-	_quad(c, d, h, g)
-	_quad(d, a, e, h)
-	_line_mesh.surface_end()
-
-
-func _quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> void:
-	_line_mesh.surface_add_vertex(to_local(a))
-	_line_mesh.surface_add_vertex(to_local(b))
-	_line_mesh.surface_add_vertex(to_local(c))
-	_line_mesh.surface_add_vertex(to_local(a))
-	_line_mesh.surface_add_vertex(to_local(c))
-	_line_mesh.surface_add_vertex(to_local(d))
+		thick = 0.28
+	_line.set_tint(EnergyVfx.TINT_PURPLE)
+	_line.place_beam(combat_position(), _locked, thick)

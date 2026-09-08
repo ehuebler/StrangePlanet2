@@ -66,24 +66,15 @@ func render_live_city(patch_id: int) -> bool:
 	if held != null:
 		_cities.erase(bake_id)
 		held.free()
-	LagTracker.note("city", "E generate start patch %d" % bake_id)
-	var started := Time.get_ticks_msec()
 	var generator := PatchCityGenerator.new()
 	var plan := generator.generate(planet.shape, partition, patch_id)
 	if plan.districts.is_empty():
-		LagTracker.note("city", "E generate patch %d empty in %d ms"
-			% [patch_id, Time.get_ticks_msec() - started])
 		return false
 	var city := PatchCity.new()
 	city.apply(plan, planet.shape)
 	add_child(city)
 	_cities[bake_id] = city
-	print("patch_city: %s — %d districts, loop %d pts"
-		% [plan.patch_name, plan.districts.size(), plan.loop.size()])
-	var ok := _finish_live_city(city, planet)
-	LagTracker.note("city", "E generate %s %s in %d ms"
-		% [plan.patch_name, "ok" if ok else "fail", Time.get_ticks_msec() - started])
-	return ok
+	return _finish_live_city(city, planet)
 
 
 func render_yard_city(patch_id: int) -> bool:
@@ -97,24 +88,15 @@ func render_yard_city(patch_id: int) -> bool:
 	if held != null:
 		_cities.erase(bake_id)
 		held.free()
-	LagTracker.note("city", "Q yard generate start patch %d" % bake_id)
-	var started := Time.get_ticks_msec()
 	var generator := PatchCityGenerator.new()
 	var plan := generator.generate(planet.shape, partition, patch_id)
 	if plan.districts.is_empty():
-		LagTracker.note("city", "Q yard generate patch %d empty in %d ms"
-			% [patch_id, Time.get_ticks_msec() - started])
 		return false
 	var city := YardCity.new()
 	city.apply(plan, planet.shape)
 	add_child(city)
 	_cities[bake_id] = city
-	print("yard_city: %s — %d districts, loop %d pts"
-		% [plan.patch_name, plan.districts.size(), plan.loop.size()])
-	var ok := _finish_live_city(city, planet)
-	LagTracker.note("city", "Q yard generate %s %s in %d ms"
-		% [plan.patch_name, "ok" if ok else "fail", Time.get_ticks_msec() - started])
-	return ok
+	return _finish_live_city(city, planet)
 
 
 func place_baked_city(patch_id: int, refresh_maps := true) -> bool:
@@ -133,8 +115,6 @@ func place_baked_city(patch_id: int, refresh_maps := true) -> bool:
 			return false
 		_cities.erase(bake_id)
 		held.free()
-	LagTracker.note("city", "J place baked start %s" % patch_name)
-	var started := Time.get_ticks_msec()
 	var baked := STORE.instantiate_phase(
 		bake_id, PatchCity.PHASE_PAINTED, planet.shape, patch_name,
 		STORE.LAYOUT_FIRST_PLANET, planet)
@@ -143,11 +123,6 @@ func place_baked_city(patch_id: int, refresh_maps := true) -> bool:
 	baked.from_bake = true
 	_cities[bake_id] = baked
 	baked.clear_flora()
-	print("patch_city: placed baked %s — %d places  %d ms"
-		% [baked.plan.patch_name, baked.places.size(),
-			Time.get_ticks_msec() - started])
-	LagTracker.note("city", "J placed baked %s in %d ms"
-		% [baked.plan.patch_name, Time.get_ticks_msec() - started])
 	if refresh_maps:
 		_refresh_city_maps()
 	ensure_crawler_waypoints()
@@ -232,10 +207,8 @@ func place_all_baked_cities() -> int:
 	var planet := get_parent() as Planet
 	if planet == null or planet.shape == null:
 		return 0
-	var started := Time.get_ticks_msec()
 	var placed := 0
 	var skipped := 0
-	LagTracker.note("city", "K place all baked start")
 	var seen: Dictionary = {}
 	for patch in partition.patches:
 		var key := _city_key(patch.id)
@@ -251,10 +224,6 @@ func place_all_baked_cities() -> int:
 	if placed > 0:
 		_refresh_city_maps()
 		ensure_crawler_waypoints()
-	print("land_patches: placed %d baked cities, %d skipped  %.1f s"
-		% [placed, skipped, (Time.get_ticks_msec() - started) / 1000.0])
-	LagTracker.note("city", "K place all baked done %d ok %d skip in %d ms"
-		% [placed, skipped, Time.get_ticks_msec() - started])
 	return placed
 
 
@@ -272,16 +241,6 @@ func _advance_live_city(city: PatchCity, planet: Planet) -> bool:
 		if city.phase == PatchCity.PHASE_PAVED:
 			city.reparent(planet)
 			city.clear_flora()
-			print("patch_city: paved %s" % city.plan.patch_name)
-		elif city.phase == PatchCity.PHASE_MAPPED:
-			print("patch_city: mapped %s — %d places"
-				% [city.plan.patch_name, city.places.size()])
-		elif city.phase == PatchCity.PHASE_BUILT:
-			print("patch_city: built %s"
-				% city.plan.patch_name)
-		elif city.phase == PatchCity.PHASE_PAINTED:
-			print("patch_city: painted %s"
-				% city.plan.patch_name)
 		_refresh_city_maps()
 		return true
 	return false
@@ -301,17 +260,56 @@ func city_for_patch(patch_id: int) -> PatchCity:
 
 
 func patch_id_named(wanted: String) -> int:
+	var exact := patch_id_named_exact(wanted)
+	if exact >= 0:
+		return exact
 	var clean := wanted.strip_edges().to_lower()
 	if clean.is_empty() or not ensure_ready():
 		return -1
-	var prefix := -1
 	for patch in partition.patches:
-		var name := patch.name.strip_edges().to_lower()
-		if name == clean:
+		if patch.name.strip_edges().to_lower().begins_with(clean):
 			return patch.id
-		if prefix < 0 and name.begins_with(clean):
-			prefix = patch.id
-	return prefix
+	return -1
+
+
+func patch_id_named_exact(wanted: String) -> int:
+	var clean := wanted.strip_edges().to_lower()
+	if clean.is_empty() or not ensure_ready():
+		return -1
+	for patch in partition.patches:
+		if patch.name.strip_edges().to_lower() == clean:
+			return patch.id
+	return -1
+
+
+## Keep cell of a first-cut territory — the leftover after compass children.
+func rest_cell_named(territory_name: String) -> int:
+	if not ensure_ready():
+		return -1
+	var clean := territory_name.strip_edges()
+	for home in partition.territories:
+		if home.name == clean:
+			return partition.first_cell_of(home.id)
+	return patch_id_named_exact(clean)
+
+
+func compass_cell_named(territory_name: String, compass: String) -> int:
+	var wanted := "%s %s" % [
+		territory_name.strip_edges(),
+		compass.strip_edges(),
+	]
+	var found := patch_id_named_exact(wanted)
+	if found >= 0:
+		return found
+	if not ensure_ready():
+		return -1
+	var recipe := territory_name.strip_edges()
+	var suffix := compass.strip_edges().to_lower()
+	for patch in partition.patches:
+		if patch.recipe_name == recipe \
+				and patch.name.to_lower().ends_with(suffix):
+			return patch.id
+	return -1
 
 
 func patch_named(wanted: String):
@@ -376,7 +374,27 @@ func surface_transform_for_direction(direction: Vector3, clearance := 1.2) -> Tr
 	return _surface_transform_at(planet, direction, clearance)
 
 
+func crawler_start_patch_id() -> int:
+	if CrawlerRun.active():
+		var at := crawler_spawn_transform(0.0)
+		if at.origin.length_squared() > 1.0:
+			return patch_id_at(at.origin)
+	var patch_id := rest_cell_named(CrawlerRules.START_PATCH)
+	if patch_id < 0:
+		patch_id = patch_id_named(CrawlerRules.START_PATCH)
+	return patch_id
+
+
 func crawler_spawn_transform(clearance := 1.2) -> Transform3D:
+	if CrawlerRun.active():
+		var seated := surface_transform_for_direction(CrawlerRun.spawn_direction(), clearance)
+		if seated.origin.length_squared() > 1.0:
+			return seated
+	var patch_id := crawler_start_patch_id()
+	if patch_id >= 0 and not CrawlerRun.active():
+		var seated := high_surface_transform_for_patch(patch_id, clearance)
+		if seated.origin.length_squared() > 1.0:
+			return seated
 	return surface_transform_for_direction(CrawlerRules.spawn_direction(), clearance)
 
 
@@ -738,9 +756,7 @@ func _surface_transform_at(planet: Planet, direction: Vector3, clearance: float)
 func keeps_mobs_out(at: Vector3) -> bool:
 	if not at.is_finite():
 		return false
-	if is_inside_tree() and CrawlerCityRingScript.blocks_near_any(get_tree(), at):
-		return true
-	if is_inside_tree() and CrawlerSpawnPad.blocks_near_any(get_tree(), at):
+	if is_inside_tree() and CrawlerCityRingScript.clears_patch_mobs_any(get_tree(), at):
 		return true
 	for held in all_cities():
 		var city := held as PatchCity
@@ -892,13 +908,6 @@ func _rebuild() -> void:
 	visible = _enabled
 	if is_instance_valid(_borders):
 		_borders.visible = _enabled
-	print("land_patches: %d cells in %d territories, %.0f km² buildable, %d border edges"
-		% [
-			partition.patches.size(),
-			partition.territories.size(),
-			partition.buildable_area / 1_000_000.0,
-			partition.border_edge_count(),
-		])
 
 
 func _build_borders(planet: Planet) -> void:

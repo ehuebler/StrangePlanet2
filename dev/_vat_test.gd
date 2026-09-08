@@ -25,6 +25,9 @@ func _ready() -> void:
 	NetworkManager.is_host = true
 	NetworkManager.players[1] = {"name": "VAT Test", "peer_id": 1}
 	NetworkManager.state = NetworkManager.SessionState.IN_GAME
+	# This harness checks the grass VAT contract on streamed instances. Play
+	# bakes that layer onto terrain chunks and leaves stream_fill off.
+	GroundCover.stream_fill = true
 	var world := WORLD.instantiate()
 	add_child(world)
 	for _frame in 80:
@@ -71,6 +74,7 @@ func _ready() -> void:
 		_flowers.grown(), _grass.grown(), _fish.fish_transforms().size(),
 		_grass.tiles()])
 	print("VAT_TEST_RESULT %s" % ("FAIL" if _failed else "PASS"))
+	GroundCover.stream_fill = false
 	get_tree().quit(1 if _failed else 0)
 
 

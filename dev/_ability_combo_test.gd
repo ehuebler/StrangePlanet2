@@ -292,9 +292,9 @@ func _small_cases() -> Array:
 			"hat": CrawlerProgress.HAT_ID,
 			"expect_damage": true,
 		}),
-		_case("hero_punch_fool_cape", {
+		_case("hero_punch_fool_hat", {
 			"slots": [_slot("hero_punch")],
-			"cape": CrawlerProgress.CAPE_FOOL,
+			"hat": CrawlerProgress.HAT_FOOL,
 			"expect_damage": true,
 		}),
 		_case("overdrive_toxic_then_laser", {

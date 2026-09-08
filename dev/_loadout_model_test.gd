@@ -19,14 +19,19 @@ func _ready() -> void:
 	_check_player_camera_rim()
 	_check_organic_camera_rim()
 	_check_starter_inventory()
+	_check_hat_gem_ownership()
 	_check_rack_migration()
+	_check_skin_migration()
 	_check_graphics_toggles()
 	_check_god_rays_shaders()
 	_check_god_rays_veil()
 	_check_sunset_tint()
+	_check_starfield_isotropy()
 	_check_night_ground_glow()
 	_check_steam_lobby_contract()
 	_check_player_designer_contract()
+	_check_cape_cloth()
+	_check_home_preview_fill()
 	_check_meta_upgrades()
 	_check_achievements()
 	_restore_settings()
@@ -69,6 +74,26 @@ func _check_player_camera_rim() -> void:
 		"ordinary items do not inherit the Character 3 rim")
 	_expect(dark > 0.0 and dark < light and light < 1.0,
 		"player camera rim uses a narrow Color Ramp equivalent")
+	_expect(SurfaceSkin.outline_color({}).is_equal_approx(SurfaceSkin.CAMERA_RIM_COLOR),
+		"missing outline tint keeps the authored green rim")
+	var rim_override := Color(1.0, 0.12, 0.28)
+	SurfaceSkin.set_rim_color(material, rim_override)
+	var tinted_rim: Variant = material.get_shader_parameter(&"camera_rim_color")
+	_expect(tinted_rim is Color and (tinted_rim as Color).is_equal_approx(rim_override),
+		"outline tint recolours the player camera rim")
+	SurfaceSkin.set_rim_color(ordinary, rim_override)
+	var ordinary_rim: Variant = ordinary.get_shader_parameter(&"camera_rim_color")
+	_expect(ordinary_rim is Color and (ordinary_rim as Color).is_equal_approx(Color.BLACK),
+		"outline tint does not light an ordinary item rim")
+	_expect(SurfaceSkin.outline_color({
+			SurfaceSkin.TINT_OUTLINE: rim_override,
+		}).is_equal_approx(rim_override),
+		"outline tint accepts a Color already in the look")
+	var stored := SurfaceSkin.outline_color({
+		SurfaceSkin.TINT_OUTLINE: "ff1e47",
+	})
+	_expect(stored.r > 0.9 and stored.g < 0.2 and stored.b > 0.2,
+		"saved outline tint parses from the look dictionary")
 
 
 func _check_organic_camera_rim() -> void:
@@ -203,10 +228,14 @@ func _check_container_filters() -> void:
 
 
 func _check_player_designer_contract() -> void:
+	CrawlerMeta.begin_test({})
 	var equipment := ItemContainer.new(ItemDB.SLOT_ORDER.size())
 	for index in ItemDB.SLOT_ORDER.size():
 		equipment.set_filter(index, ItemDB.SLOT_ORDER[index])
-	var catalogue := ItemContainer.new(3, ["c3_hair", "sword", "c3_party_hat"])
+	var catalogue := ItemContainer.new(
+		5,
+		["c3_hair", "sword", "c3_party_hat", "crawler_plain_cape", "crawler_fool_hat"]
+	)
 
 	var panel := PlayerDesignerPanel.new()
 	panel.configure(
@@ -220,13 +249,97 @@ func _check_player_designer_contract() -> void:
 	add_child(panel)
 	panel.size = Vector2(720.0, 560.0)
 	panel._layout_background()
+	CrtType.dress_tree(panel)
 	_expect(panel.find_child("DesignerTabs", true, false) != null
 		and panel.find_child("DesignerEquippedSlots", true, false) != null
 		and panel.find_child("DesignerSkinPicker", true, false) != null
 		and panel.find_child("DesignerColourWheel", true, false) != null
+		and panel.find_child("DesignerTintSelector", true, false) != null
+		and panel.find_child("DesignerOutlineSelector", true, false) != null
 		and panel.find_child("DesignerCharacter_settler", true, false) != null
-		and panel.find_child("DesignerHatColourWheel", true, false) != null,
+		and panel.find_child("DesignerHatColourWheel", true, false) != null
+		and panel.find_child("DesignerCapeColourWheel", true, false) != null,
 		"player designer has red Character controls")
+	var noct_face := panel.find_child(
+		"DesignerCharacterFace", true, false) as TextureRect
+	var noct_title := panel.find_child(
+		"DesignerCharacterTitle", true, false) as Label
+	var face_crt := CrtType.host_of(noct_face)
+	_expect(panel.find_child("DesignerCharacter_pioneer", true, false) == null
+			and noct_title != null and noct_title.text == "NOCT"
+			and noct_face != null and noct_face.texture != null
+			and face_crt != null and face_crt.chromatic() > 0.5,
+		"character selector offers one Noct tile with a CRT face")
+	var noct_trait := panel.find_child(
+		"DesignerCharacterTrait", true, false) as Label
+	var noct_ability := panel.find_child(
+		"DesignerCharacterAbility", true, false) as TextureRect
+	var noct_juke := panel.find_child(
+		"DesignerCharacterJuke", true, false) as TextureRect
+	_expect(noct_trait != null and noct_trait.text.contains("2%"),
+		"Noct tile shows the per-level damage trait")
+	_expect(noct_ability != null and noct_ability.texture != null,
+		"Noct tile shows a laser eyes starting-ability icon")
+	var juke_host := CrtType.host_of(noct_juke)
+	var ability_host := CrtType.host_of(noct_ability)
+	_expect(noct_juke != null and noct_juke.texture != null
+			and juke_host != null and ability_host != null
+			and juke_host.get_parent() == ability_host.get_parent()
+			and juke_host.get_index() < ability_host.get_index(),
+		"Noct tile shows a juke icon beside laser eyes")
+	var banner := false
+	for node: Node in panel.find_children("*", "Label", true, false):
+		var copy := node as Label
+		if copy != null and copy.text.contains("LOCKED HATS COST GEMS"):
+			banner = true
+	_expect(not banner, "hats catalogue has no hold-to-equip banner")
+	var apparel_frame := panel.find_child(
+		"DesignerApparelCatalogueFrame", true, false) as Control
+	var hat_tint := panel.find_child(
+		"DesignerHatTintFrame", true, false) as Control
+	var cape_frame := panel.find_child(
+		"DesignerCapeCatalogueFrame", true, false) as Control
+	var cape_tint := panel.find_child(
+		"DesignerCapeTintFrame", true, false) as Control
+	var hero_tint := panel.find_child(
+		"DesignerAppearanceFrame", true, false) as Control
+	_expect(apparel_frame != null and hat_tint != null
+			and is_equal_approx(apparel_frame.size_flags_stretch_ratio, 3.0)
+			and is_equal_approx(hat_tint.size_flags_stretch_ratio, 1.0)
+			and cape_frame != null and cape_tint != null
+			and is_equal_approx(cape_frame.size_flags_stretch_ratio, 3.0)
+			and is_equal_approx(cape_tint.size_flags_stretch_ratio, 1.0)
+			and hero_tint != null
+			and is_equal_approx(hero_tint.size_flags_stretch_ratio, 1.0),
+		"hat, cape, and character tint strips share the lower quarter")
+	var tint_mode := panel.find_child(
+		"DesignerTintSelector", true, false) as Button
+	var outline_mode := panel.find_child(
+		"DesignerOutlineSelector", true, false) as Button
+	var wheel := panel.find_child(
+		"DesignerColourWheel", true, false) as ColourWheel
+	var caption := panel.find_child(
+		"DesignerTintTarget", true, false) as Label
+	var aimed: Array[String] = []
+	panel.tint_picked.connect(func(target: String, _colour: Color) -> void:
+		aimed.append(target)
+	)
+	_expect(tint_mode != null and outline_mode != null and wheel != null,
+		"character tint strip offers tint and outline selectors")
+	if outline_mode != null and wheel != null:
+		outline_mode.pressed.emit()
+		_expect(caption != null and caption.text.contains("OUTLINE"),
+			"outline selector aims the colour wheel at the player rim")
+		wheel.picked.emit(Color(1.0, 0.2, 0.35))
+	if tint_mode != null and wheel != null:
+		tint_mode.pressed.emit()
+		_expect(caption != null and caption.text.contains("SKIN"),
+			"tint selector returns the colour wheel to the player skin")
+		wheel.picked.emit(Color(0.2, 0.45, 0.9))
+	_expect(aimed.size() == 2
+			and aimed[0] == PlayerDesignerPanel.TINT_OUTLINE
+			and aimed[1] == PlayerDesignerPanel.TINT_BODY,
+		"tint and outline selectors switch what the wheel paints")
 	var designer_name := panel.find_child(
 		"DesignerName", true, false) as LineEdit
 	_expect(designer_name != null
@@ -243,8 +356,10 @@ func _check_player_designer_contract() -> void:
 		"player designer rotates ui_background2")
 
 	panel.show_tab(PlayerDesignerPanel.Tab.APPAREL)
-	_expect(panel.apparel_ids() == PackedStringArray(["c3_hair", "c3_party_hat"]),
-		"player designer catalogue contains hats only")
+	_expect(panel.apparel_ids() == PackedStringArray(["c3_hair"]),
+		"player designer catalogue lists owned hats only")
+	_expect(panel.find_child("DesignerApparel_c3_party_hat", true, false) == null,
+		"locked hats stay out of the character creator")
 	_expect(panel.find_child("SelectedItemDescription", true, false) == null,
 		"player designer apparel has no description panel")
 	var tile := panel.find_child(
@@ -258,32 +373,103 @@ func _check_player_designer_contract() -> void:
 		tile.hold_completed.emit(tile)
 		_expect(equipment.find("c3_hair") < 0,
 			"completed hold on worn apparel unequips it")
-	CrawlerMeta.begin_test({"gems": 0})
-	var locked := panel.find_child(
-		"DesignerApparel_c3_party_hat", true, false) as DesignerApparelTile
-	if locked != null:
-		locked.hold_completed.emit(locked)
-		_expect(equipment.find("c3_party_hat") < 0,
-			"locked hats stay locked without gems")
 	CrawlerMeta.begin_test({"gems": 80})
-	if locked != null:
-		locked.hold_completed.emit(locked)
-		_expect(CrawlerMeta.owns_hat("c3_party_hat"),
-			"holding a locked hat spends gems and unlocks it")
+	panel.toggle_apparel("c3_party_hat")
+	_expect(equipment.find("c3_party_hat") < 0
+			and not CrawlerMeta.owns_hat("c3_party_hat"),
+		"the character creator cannot unlock hats")
+	panel.show_tab(PlayerDesignerPanel.Tab.CAPES)
+	_expect(panel.cape_ids().is_empty()
+			and panel.find_child("DesignerCape_crawler_plain_cape", true, false) == null,
+		"locked capes stay out of the character creator")
+	panel.toggle_apparel("crawler_plain_cape")
+	_expect(equipment.find("crawler_plain_cape") < 0
+			and not CrawlerMeta.owns_cape("crawler_plain_cape"),
+		"the character creator cannot unlock capes")
 	CrawlerMeta.end_test()
 	panel.queue_free()
 
 
+func _check_home_preview_fill() -> void:
+	var home := HomeScreen.new()
+	home._build_camera()
+	var camera := home.find_child("MenuCamera", true, false) as Camera3D
+	var fill := home.find_child("PreviewFillLight", true, false) as SpotLight3D
+	_expect(camera != null and fill != null and fill.get_parent() == camera
+			and fill.light_energy > 0.0
+			and fill.spot_range >= 4.0
+			and not fill.shadow_enabled,
+		"home screen lights the preview from the front")
+	_expect(HomeScreen.preview_fill_energy(0.0) > HomeScreen.preview_fill_energy(1.0)
+			and HomeScreen.preview_fill_energy(0.0) >= 4.0,
+		"home face fill is stronger after the sun is gone")
+	home.free()
+
+
+func _check_cape_cloth() -> void:
+	var cape := CapeCloth.new()
+	add_child(cape)
+	cape._axis_right = Vector3.RIGHT
+	cape._axis_back = Vector3.FORWARD
+	cape._axis_down = Vector3.DOWN
+	for row in range(1, CapeCloth.ROWS):
+		var y := -CapeCloth.LENGTH * float(row) / float(CapeCloth.ROWS - 1)
+		for col in CapeCloth.COLS:
+			var index := cape._index(col, row)
+			cape._pos[index] = Vector3(0.0, y, 0.04)
+			cape._prev[index] = cape._pos[index]
+	cape._cache_pose()
+	for _pass in 12:
+		cape._solve_constraints()
+	var hem := CapeCloth.ROWS - 1
+	var span := cape._pos[cape._index(0, hem)].distance_to(
+		cape._pos[cape._index(CapeCloth.COLS - 1, hem)])
+	_expect(span > CapeCloth.WIDTH * 0.35,
+		"cape constraints uncrumple a folded hem")
+	cape.queue_free()
+
+
 func _check_meta_upgrades() -> void:
-	CrawlerMeta.begin_test({"gems": 80})
-	_expect(CrawlerMeta.gems() == 80,
-		"meta test payload starts with 80 gems")
+	CrawlerMeta.begin_test({"gems": 2000})
+	_expect(CrawlerMeta.gems() == 2000,
+		"meta test payload starts with 2000 gems")
+	_expect(CrawlerMeta.upgrade_price_for_rank(0) == 100
+			and CrawlerMeta.upgrade_price_for_rank(4) == 500
+			and CrawlerMeta.upgrade_price_for_rank(5) == 1000,
+		"home upgrades cost 100, then 200 through 500, then double")
+	_expect(is_equal_approx(CrawlerMeta.gem_drop_chance(0.0), 0.25)
+			and is_equal_approx(CrawlerMeta.gem_drop_chance(80.0), 0.50)
+			and CrawlerMeta.gem_drop_chance(1.0) > 0.25,
+		"kill gems start at 25 percent and luck can raise them to 50")
+	_expect(CrawlerMeta.hat_price("c3_party_hat") == 500
+			and CrawlerMeta.cape_price("crawler_plain_cape") == 1000,
+		"home hats cost 500 gems and capes cost 1000")
 	_expect(CharacterDB.playable_ids().size() >= 6,
 		"character selector offers more than the settler")
+	_expect(str(CharacterDB.character_trait(CharacterDB.DEFAULT_BODY).get("id", ""))
+			== CharacterDB.TRAIT_LEVEL_DAMAGE
+			and CharacterDB.character_trait("pioneer").is_empty(),
+		"Noct has the per-level damage trait and aliases do not inherit it")
+	_expect(is_equal_approx(
+			CharacterDB.level_damage_bonus(CharacterDB.DEFAULT_BODY, 1),
+			CharacterDB.LEVEL_DAMAGE_SHARE)
+			and is_equal_approx(
+			CharacterDB.level_damage_bonus(CharacterDB.DEFAULT_BODY, 5),
+			CharacterDB.LEVEL_DAMAGE_SHARE * 5.0),
+		"Noct gains two percent damage with every level")
+	_expect(CharacterDB.starting_abilities(CharacterDB.DEFAULT_BODY).has("laser_eyes"),
+		"Noct starts with laser eyes")
 	_expect(CrawlerMeta.shop_stats() == PackedStringArray(CrawlerProgress.LEVEL_STATS),
 		"the gem shop lists every in-run player stat")
 	var shop := MetaUpgradesPanel.new()
 	add_child(shop)
+	var grid := shop.find_child("UpgradeStatRows", true, false)
+	_expect(grid is GridContainer and (grid as GridContainer).columns == 2,
+		"Unlocks upgrades sit in a two-column grid")
+	_expect(not (shop.find_child("UpgradeStatScroll", true, false) is ScrollContainer),
+		"Unlocks upgrades do not use a scroll box")
+	_expect(shop.get_combined_minimum_size().y <= 648.0,
+		"Unlocks upgrades fit the 720p framed host without scrolling")
 	for stat_id: String in CrawlerProgress.LEVEL_STATS:
 		_expect(shop.find_child("UpgradeRow_%s" % stat_id, true, false) != null,
 			"gem shop draws a row for %s" % stat_id)
@@ -294,9 +480,28 @@ func _check_meta_upgrades() -> void:
 		"gems buy a permanent health rank")
 	_expect(CrawlerMeta.rank_of(CrawlerProgress.STAT_HEALTH) == 1,
 		"bought health rank is stored")
-	_expect(CrawlerMeta.gems() == 80 - CrawlerMeta.UPGRADE_BASE,
+	_expect(CrawlerMeta.gems() == 2000 - CrawlerMeta.upgrade_price_for_rank(0),
 		"buying a rank spends the listed gem price")
 	var scratch := CrawlerProgress.new()
+	var trait_row: Dictionary = {}
+	if not scratch.hero_stat_rows().is_empty() \
+			and scratch.hero_stat_rows()[0] is Dictionary:
+		trait_row = scratch.hero_stat_rows()[0]
+	_expect(str(trait_row.get("id", "")) == CrawlerProgress.TRAIT_LEVEL_DAMAGE
+			and str(trait_row.get("kind", "")) == "trait"
+			and str(trait_row.get("text", "")).contains("2%"),
+		"player stats open with the Noct level-damage trait")
+	_expect(is_equal_approx(CharacterDB.LEVEL_DAMAGE_SHARE,
+			CrawlerProgress.TRAIT_DAMAGE_PER_LEVEL),
+		"Noct trait numbers stay in agreement")
+	_expect(is_equal_approx(scratch.damage_scale(),
+			1.0 + CrawlerProgress.TRAIT_DAMAGE_PER_LEVEL),
+		"Noct damage starts two percent above the base")
+	scratch.level = 5
+	_expect(is_equal_approx(scratch.damage_scale(),
+			1.0 + CrawlerProgress.TRAIT_DAMAGE_PER_LEVEL * 5.0),
+		"Noct damage grows two percent with each level")
+	scratch.level = 1
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_HEALTH).contains("(+"),
 		"permanent ranks appear beside the base health stat")
 	_expect(is_zero_approx(scratch.dodge_chance()),
@@ -305,8 +510,8 @@ func _check_meta_upgrades() -> void:
 		"gems buy a permanent dodge rank")
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_DODGE).contains("(+"),
 		"permanent dodge ranks appear beside the base dodge stat")
-	_expect(is_equal_approx(scratch.dodge_chance(), CrawlerProgress.DODGE_PER_RANK),
-		"one gem dodge rank is six percent")
+	_expect(is_equal_approx(scratch.dodge_chance(), CrawlerRules.upgrade_boost(1)),
+		"one gem dodge rank is five percent")
 	scratch.ranks[CrawlerProgress.STAT_DODGE] = 20
 	_expect(is_equal_approx(scratch.dodge_chance(), CrawlerProgress.DODGE_MAX),
 		"dodge chance stops at the cap")
@@ -318,8 +523,8 @@ func _check_meta_upgrades() -> void:
 		"gems buy a permanent defense rank")
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_DEFENSE).contains("(+"),
 		"permanent defense ranks appear beside the base defense stat")
-	_expect(is_equal_approx(scratch.defense_share(), CrawlerProgress.DEFENSE_PER_RANK),
-		"one gem defense rank is eight percent")
+	_expect(is_equal_approx(scratch.defense_share(), CrawlerRules.upgrade_boost(1)),
+		"one gem defense rank is five percent")
 	scratch.ranks[CrawlerProgress.STAT_DEFENSE] = 20
 	_expect(is_equal_approx(scratch.defense_share(), CrawlerProgress.DEFENSE_MAX),
 		"defense reduction stops at the cap")
@@ -334,7 +539,9 @@ func _check_meta_upgrades() -> void:
 		"permanent juke ranks appear beside the base cooldown")
 	_expect(scratch.juke_cooldown() < CrawlerProgress.JUKE_COOLDOWN_BASE,
 		"one gem juke rank shortens the dash wait")
-	scratch.ranks[CrawlerProgress.STAT_JUKE] = 20
+	scratch.ranks[CrawlerProgress.STAT_JUKE] = ceili(
+		(CrawlerProgress.JUKE_COOLDOWN_BASE - CrawlerProgress.JUKE_COOLDOWN_MIN)
+		/ CrawlerProgress.JUKE_COOLDOWN_PER_RANK)
 	_expect(is_equal_approx(scratch.juke_cooldown(),
 			CrawlerProgress.JUKE_COOLDOWN_MIN),
 		"juke cooldown stops at the floor")
@@ -360,8 +567,8 @@ func _check_meta_upgrades() -> void:
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_KNOCKBACK).contains("("),
 		"permanent knockback ranks appear beside the base multiplier")
 	_expect(is_equal_approx(scratch.knockback_scale(),
-			1.0 + CrawlerProgress.KNOCKBACK_PER_RANK),
-		"one gem knockback rank is twelve percent")
+			CrawlerRules.upgrade_scale(1)),
+		"one gem knockback rank is five percent")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_KNOCKBACK),
 		"a bought knockback rank can be refunded")
 	_expect(is_equal_approx(scratch.range_scale(), 1.0),
@@ -371,8 +578,8 @@ func _check_meta_upgrades() -> void:
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_RANGE).contains("("),
 		"permanent range ranks appear beside the base multiplier")
 	_expect(is_equal_approx(scratch.range_scale(),
-			1.0 + CrawlerProgress.RANGE_PER_RANK),
-		"one gem range rank is twelve percent")
+			CrawlerRules.upgrade_scale(1)),
+		"one gem range rank is five percent")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_RANGE),
 		"a bought range rank can be refunded")
 	_expect(is_equal_approx(scratch.cast_trim(), 0.0),
@@ -392,8 +599,8 @@ func _check_meta_upgrades() -> void:
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_ELEMENTAL).contains("("),
 		"permanent elemental ranks appear beside the base multiplier")
 	_expect(is_equal_approx(scratch.elemental_scale(),
-			1.0 + CrawlerProgress.ELEMENTAL_PER_RANK),
-		"one gem elemental rank is fourteen percent")
+			CrawlerRules.upgrade_scale(1)),
+		"one gem elemental rank is five percent")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_ELEMENTAL),
 		"a bought elemental rank can be refunded")
 	_expect(CrawlerMeta.buy_rank(CrawlerProgress.STAT_LUCK),
@@ -414,8 +621,8 @@ func _check_meta_upgrades() -> void:
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_GOLD).contains("("),
 		"permanent gold ranks appear beside the base multiplier")
 	_expect(is_equal_approx(scratch.gold_scale(),
-			1.0 + CrawlerProgress.GOLD_GAIN_PER_RANK),
-		"one gem gold rank is twelve percent")
+			CrawlerRules.upgrade_scale(1)),
+		"one gem gold rank is five percent")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_GOLD),
 		"a bought gold rank can be refunded")
 	_expect(is_equal_approx(scratch.xp_scale(), 1.0),
@@ -425,8 +632,8 @@ func _check_meta_upgrades() -> void:
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_XP).contains("("),
 		"permanent XP ranks appear beside the base multiplier")
 	_expect(is_equal_approx(scratch.xp_scale(),
-			1.0 + CrawlerProgress.XP_GAIN_PER_RANK),
-		"one gem XP rank is twelve percent")
+			CrawlerRules.upgrade_scale(1)),
+		"one gem XP rank is five percent")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_XP),
 		"a bought XP rank can be refunded")
 	_expect(is_equal_approx(scratch.gem_scale(), 1.0),
@@ -436,15 +643,120 @@ func _check_meta_upgrades() -> void:
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_GEMS).contains("("),
 		"permanent gem ranks appear beside the base multiplier")
 	_expect(is_equal_approx(scratch.gem_scale(),
-			1.0 + CrawlerProgress.GEM_GAIN_PER_RANK),
-		"one gem gem rank is twelve percent")
+			CrawlerRules.upgrade_scale(1)),
+		"one gem gem rank is five percent")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_GEMS),
 		"a bought gem rank can be refunded")
 	_expect(CrawlerMeta.refund_rank(CrawlerProgress.STAT_HEALTH),
 		"a bought rank can be refunded")
 	_expect(CrawlerMeta.rank_of(CrawlerProgress.STAT_HEALTH) == 0
-		and CrawlerMeta.gems() == 80,
+		and CrawlerMeta.gems() == 2000,
 		"refund restores the gems spent on that rank")
+	var hats := MetaUpgradesPanel.new()
+	hats.opening_tab = MetaUpgradesPanel.Tab.HATS
+	add_child(hats)
+	_expect(hats.find_child("UplocksTab_Hats", true, false) != null
+			and hats.find_child("HatRow_c3_party_hat", true, false) != null
+			and CrawlerMeta.shop_hats().has("c3_party_hat"),
+		"Unlocks Hats tab lists catalogue hats")
+	var hat_buy := hats.find_child(
+		"HatBuy_c3_party_hat", true, false) as Button
+	_expect(hat_buy != null, "Unlocks Hats tab has a buy button")
+	if hat_buy != null:
+		hat_buy.pressed.emit()
+	_expect(CrawlerMeta.owns_hat("c3_party_hat"),
+		"buying a hat from Unlocks spends gems and unlocks it")
+	hats.queue_free()
+	var carry := CrawlerProgress.new()
+	_expect(not carry.seed_look_hat({"worn": {"hat": "c3_party_hat"}}).is_empty()
+			and carry.worn_hat == "c3_party_hat"
+			and carry.owns_hat("c3_party_hat"),
+		"the creator hat is granted to a new crawler run")
+	CrawlerMeta.begin_test({"gems": 2000, "hats": [CrawlerProgress.HAT_ID]})
+	var gale := CrawlerProgress.new()
+	gale.seed_look_hat({"worn": {"hat": CrawlerProgress.HAT_ID}})
+	_expect(gale.owns_hat(CrawlerProgress.HAT_ID)
+			and gale.hat_effect_rank(CrawlerProgress.FX_FLIGHT) > 0
+			and gale.hat_effect_rank(CrawlerProgress.FX_DEX) > 0,
+		"an equipped city hat carries its effect into the run")
+	CrawlerMeta.begin_test({"gems": 2000})
+	var capes := MetaUpgradesPanel.new()
+	capes.opening_tab = MetaUpgradesPanel.Tab.CAPES
+	add_child(capes)
+	_expect(capes.find_child("UplocksTab_Capes", true, false) != null
+			and capes.find_child("CapeRow_crawler_plain_cape", true, false) != null
+			and CrawlerMeta.shop_capes() == PackedStringArray([
+				"crawler_plain_cape", "crawler_gold_cape"
+			]),
+		"Unlocks Capes tab lists the plain cape and the gold cape")
+	var cape_buy := capes.find_child(
+		"CapeBuy_crawler_plain_cape", true, false) as Button
+	_expect(cape_buy != null, "Unlocks Capes tab has a buy button")
+	if cape_buy != null:
+		cape_buy.pressed.emit()
+	_expect(CrawlerMeta.owns_cape("crawler_plain_cape"),
+		"buying a cape from Unlocks spends gems and unlocks it")
+	capes.queue_free()
+	var players := MetaUpgradesPanel.new()
+	players.opening_tab = MetaUpgradesPanel.Tab.PLAYERS
+	add_child(players)
+	_expect(players.find_child("UplocksTab_Players", true, false) != null
+			and players.find_child("UplocksPlayerHost", true, false) != null
+			and players.find_child("UplocksPlayerHost", true, false).visible
+			and players.find_child("UplocksPlayerHost", true, false).get_child_count() == 0,
+		"Unlocks Players tab is present and empty")
+	players.queue_free()
+	var cloak := CrawlerProgress.new()
+	_expect(not cloak.seed_look_cape({
+				"worn": {"cape": "crawler_plain_cape"}
+			}).is_empty()
+			and cloak.worn_cape == "crawler_plain_cape"
+			and cloak.owns_cape("crawler_plain_cape"),
+		"the creator cape carries into a new crawler run")
+	CrawlerMeta.begin_test({"gems": 2000})
+	_expect(CrawlerMeta.refund_all_hats() == 0
+			and CrawlerMeta.owns_hat("c3_hair"),
+		"refund all hats does nothing when only free hats are owned")
+	_expect(CrawlerMeta.unlock_hat("c3_party_hat")
+			and CrawlerMeta.unlock_cape("crawler_plain_cape"),
+		"gems buy a hat and a cape for refund")
+	var refund_shop := MetaUpgradesPanel.new()
+	add_child(refund_shop)
+	refund_shop.show_tab(MetaUpgradesPanel.Tab.HATS)
+	var refund_btn := refund_shop.find_child(
+		"UpgradeRefundAll", true, false) as Button
+	_expect(refund_btn != null and refund_btn.visible
+			and refund_btn.text.contains("HAT")
+			and not refund_btn.disabled,
+		"Hats tab offers refund all")
+	refund_btn.pressed.emit()
+	_expect(not CrawlerMeta.owns_hat("c3_party_hat")
+			and CrawlerMeta.owns_hat("c3_hair")
+			and CrawlerMeta.owns_cape("crawler_plain_cape"),
+		"hat refund all returns bought hats and keeps free hair")
+	_expect(CrawlerMeta.gems() == 2000 - CrawlerMeta.CAPE_GEM_PRICE,
+		"hat refund all returns hat gems only")
+	refund_shop.show_tab(MetaUpgradesPanel.Tab.CAPES)
+	refund_btn = refund_shop.find_child("UpgradeRefundAll", true, false) as Button
+	_expect(refund_btn != null and refund_btn.visible
+			and refund_btn.text.contains("CAPE")
+			and not refund_btn.disabled,
+		"Capes tab offers refund all")
+	refund_btn.pressed.emit()
+	_expect(not CrawlerMeta.owns_cape("crawler_plain_cape")
+			and CrawlerMeta.gems() == 2000,
+		"cape refund all returns cape gems")
+	refund_shop.show_tab(MetaUpgradesPanel.Tab.PLAYERS)
+	refund_btn = refund_shop.find_child("UpgradeRefundAll", true, false) as Button
+	_expect(refund_btn != null and refund_btn.visible and refund_btn.disabled
+			and refund_btn.text.contains("PLAYER"),
+		"Players tab offers refund all")
+	refund_shop.show_tab(MetaUpgradesPanel.Tab.STATS)
+	refund_btn = refund_shop.find_child("UpgradeRefundAll", true, false) as Button
+	_expect(refund_btn != null and refund_btn.visible
+			and refund_btn.text.contains("UPGRADE"),
+		"Unlocks tab still offers refund all upgrades")
+	refund_shop.queue_free()
 	CrawlerMeta.end_test()
 
 
@@ -546,6 +858,12 @@ func _check_character_schema() -> void:
 	_expect(CharacterDB.racked_items(old_look, 3) \
 		== CharacterDB.hotbar_items(old_look, 3),
 		"racked_items remains a compatibility alias")
+	_expect(str(defaults["skin"]) == "noct_crimson",
+		"the settler default look is Noct Crimson")
+	_expect(CharacterDB.skin_ids(CharacterDB.DEFAULT_BODY).has("noct_crimson")
+			and CharacterDB.skin_texture(
+				CharacterDB.DEFAULT_BODY, "noct_crimson") != null,
+		"Noct Crimson is a selectable settler texture")
 
 
 func _check_starter_inventory() -> void:
@@ -576,11 +894,9 @@ func _check_starter_inventory() -> void:
 			continue
 		_expect(not owned.has(worn_id), "starter does not wear a backpack duplicate")
 		owned[worn_id] = true
-	_expect(owned.has("c3_hair") and owned.has("c3_party_hat"),
-		"starter keeps the worn hair and carried party hat")
+	_expect(owned.has("c3_hair") and not owned.has("c3_party_hat"),
+		"starter keeps free hair and drops an unbought catalogue hat")
 	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
-		if item_id == "c3_party_hat":
-			continue
 		_expect(not owned.has(item_id),
 			"fresh starter leaves %s locked for gems" % item_id)
 	_expect(backpack.size() <= CharacterDB.BACKPACK_SLOTS,
@@ -615,8 +931,9 @@ func _check_starter_inventory() -> void:
 		_expect(repaired.has("c3_hair"),
 			"empty revision-%d save recovers Settler Hair" % old_revision)
 		for item_id: String in CharacterDB.SETTLER_HEADWEAR:
-			_expect(repaired.count(item_id) == 1,
-				"empty revision-%d save recovers %s" % [old_revision, item_id])
+			_expect(not repaired.has(item_id),
+				"empty revision-%d save leaves %s locked for gems" % [
+					old_revision, item_id])
 		_expect(repaired.size() <= CharacterDB.BACKPACK_SLOTS,
 			"empty revision-%d save stays inside the backpack" % old_revision)
 		for item_id: String in ItemDB.weapon_ids():
@@ -638,8 +955,8 @@ func _check_starter_inventory() -> void:
 		and not (partial_look["backpack"] as Array).has("c3_goggles"),
 		"partial older wardrobe preserves removed apparel")
 	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
-		_expect((partial_look["backpack"] as Array).has(item_id),
-			"revision-three wardrobe receives %s" % item_id)
+		_expect(not (partial_look["backpack"] as Array).has(item_id),
+			"revision-three wardrobe leaves %s locked for gems" % item_id)
 	_expect(not (partial_look["hotbar"] as Array).has("sword")
 		and not (partial_look["hotbar"] as Array).has("laser_rifle"),
 		"revision-three wardrobe does not receive weapons")
@@ -658,16 +975,77 @@ func _check_starter_inventory() -> void:
 	hairless_look["hotbar"] = ["sword", "laser_rifle", ""]
 	hairless_look["backpack"] = ["c3_party_hat"]
 	CharacterDB._seed_starter_inventory(hairless_look)
-	_expect((hairless_look["backpack"] as Array).has("c3_party_hat")
-		and (hairless_look["backpack"] as Array).has("c3_hair"),
+	_expect((hairless_look["backpack"] as Array).has("c3_hair"),
 		"revision-four partial wardrobe receives missing Settler Hair")
-	_expect(not (hairless_look["backpack"] as Array).has("c3_tunic")
+	_expect(not (hairless_look["backpack"] as Array).has("c3_party_hat")
+		and not (hairless_look["backpack"] as Array).has("c3_tunic")
 		and not (hairless_look["backpack"] as Array).has("c3_boots"),
-		"hair repair does not resurrect unrelated removed apparel")
+		"hair repair does not resurrect unbought catalogue hats")
 	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
-		_expect((hairless_look["backpack"] as Array).has(item_id),
-			"revision-four wardrobe receives %s" % item_id)
+		_expect(not (hairless_look["backpack"] as Array).has(item_id),
+			"revision-four wardrobe leaves %s locked for gems" % item_id)
 	SettingsManager._config = saved_config
+
+
+func _check_hat_gem_ownership() -> void:
+	var dumped: Array = []
+	for item_id: String in CharacterDB.SETTLER_HEADWEAR:
+		dumped.append(item_id)
+	for item_id: String in CharacterDB.SETTLER_HEADWEAR_MORE:
+		dumped.append(item_id)
+	dumped.append("crawler_gale_hat")
+	CrawlerMeta.begin_test({"hats": dumped})
+	_expect(CrawlerMeta.owns_hat("c3_party_hat"),
+		"a grant dump still lists catalogue hats before forget")
+	_expect(CrawlerMeta.forget_granted_catalogue_hats(),
+		"a complete free-hat grant dump is forgotten")
+	_expect(not CrawlerMeta.owns_hat("c3_party_hat"),
+		"granted catalogue hats are not gem-owned")
+	_expect(CrawlerMeta.owns_hat("crawler_gale_hat"),
+		"hats bought outside the grant dump stay owned")
+	_expect(CrawlerMeta.owns_hat("c3_hair"),
+		"free starter hair stays owned")
+
+	CrawlerMeta.begin_test({"hats": ["c3_party_hat", "crawler_gale_hat"]})
+	_expect(not CrawlerMeta.forget_granted_catalogue_hats()
+			and CrawlerMeta.owns_hat("c3_party_hat"),
+		"a short bought hat list is not treated as a grant dump")
+
+	CrawlerMeta.begin_test({})
+	CrawlerMeta.note_owned_apparel({
+		"worn": {"hat": "c3_party_hat"},
+		"backpack": ["c3_party_hat"],
+	})
+	_expect(not CrawlerMeta.owns_hat("c3_party_hat"),
+		"wearing or carrying a hat does not unlock it")
+	CrawlerMeta.note_owned_apparel({
+		"worn": {"cape": "crawler_plain_cape"},
+	})
+	_expect(CrawlerMeta.owns_cape("crawler_plain_cape"),
+		"wearing a cape still notes cape ownership")
+
+	var saved_config: ConfigFile = SettingsManager._config
+	SettingsManager._config = ConfigFile.new()
+	SettingsManager._config.set_value(
+		"appearance", "starter_inventory_revision", 8)
+	CrawlerMeta.begin_test({"hats": dumped})
+	var dumped_look := CharacterDB.default_look()
+	dumped_look["worn"] = {"hat": "c3_party_hat"}
+	dumped_look["backpack"] = ["c3_party_hat", "crawler_gale_hat"]
+	CharacterDB._seed_starter_inventory(dumped_look)
+	_expect(not CrawlerMeta.owns_hat("c3_party_hat")
+			and CrawlerMeta.owns_hat("crawler_gale_hat"),
+		"revision eight forgets the hat grant dump and keeps bought hats")
+	_expect(not (dumped_look["backpack"] as Array).has("c3_party_hat")
+			and (dumped_look["backpack"] as Array).has("crawler_gale_hat")
+			and str((dumped_look["worn"] as Dictionary).get("hat", "")).is_empty(),
+		"revision eight removes unbought dump hats from the look")
+	_expect(int(SettingsManager._config.get_value(
+		"appearance", "starter_inventory_revision", 0))
+		== CharacterDB.STARTER_INVENTORY_REVISION,
+		"hat ownership repair advances the starter revision")
+	SettingsManager._config = saved_config
+	CrawlerMeta.end_test()
 
 
 func _check_rack_migration() -> void:
@@ -696,6 +1074,25 @@ func _check_rack_migration() -> void:
 	manager.free()
 
 
+func _check_skin_migration() -> void:
+	var manager := GameSettingsManager.new()
+	manager._config = ConfigFile.new()
+	manager._config.set_value("appearance", "skin", "luke")
+	manager._config.set_value("appearance", "default_skin_revision", 1)
+	_expect(manager._migrate_default_skin(),
+		"the previous default triggers a skin migration")
+	_expect(str(manager._config.get_value("appearance", "skin", "")) == "noct_crimson",
+		"Luke becomes Noct Crimson once")
+	_expect(not manager._migrate_default_skin(), "skin migration is idempotent")
+	manager._config.set_value("appearance", "skin", "clean_robotic")
+	manager._config.set_value("appearance", "default_skin_revision", 1)
+	_expect(manager._migrate_default_skin()
+			and str(manager._config.get_value("appearance", "skin", "")) \
+				== "clean_robotic",
+		"an explicit later skin choice is left alone")
+	manager.free()
+
+
 ## The two atmosphere toggles, as schema rather than as a picture.
 ##
 ## Here rather than in one of the rendering harnesses because none of it needs a
@@ -708,6 +1105,7 @@ func _check_graphics_toggles() -> void:
 	_expect(graphics.get("atmospheric_scattering", null) == true,
 		"atmospheric scattering ships on")
 	_expect(graphics.get("god_rays", null) == true, "god rays ship on")
+	_expect(graphics.get("ui_glitch", null) == true, "UI glitch ships on")
 
 	# A settings.cfg written before either effect existed. The default-fill path
 	# has to hand it both keys without touching the choices already in it.
@@ -721,6 +1119,8 @@ func _check_graphics_toggles() -> void:
 		"legacy settings receive the scattering key")
 	_expect(manager._config.get_value("graphics", "god_rays", null) == true,
 		"legacy settings receive the god rays key")
+	_expect(manager._config.get_value("graphics", "ui_glitch", null) == true,
+		"legacy settings receive the UI glitch key")
 	_expect(manager._config.get_value("graphics", "vsync", true) == false
 		and int(manager._config.get_value("graphics", "render_distance", 1)) == 2,
 		"filling the new keys leaves existing choices alone")
@@ -812,6 +1212,16 @@ func _check_sunset_tint() -> void:
 	_expect(disabled.is_equal_approx(base),
 		"disabling atmospheric scattering restores the fixed sun glow")
 	cycle.free()
+
+
+func _check_starfield_isotropy() -> void:
+	var code := FileAccess.get_file_as_string(
+		"res://shaders/vivid/vivid_space.gdshader")
+	_expect(code.contains("vec3 star_frame(vec3 direction, vec3 seed)")
+			and code.contains("star_layer(direction, star_densities.x, star_size, star_fill,")
+			and code.contains("vec3(0.22, 1.00, 0.48)")
+			and code.contains("vec3(0.41, 0.87, 0.23)"),
+		"star layers sit in different frames so cube-grid rings do not stack")
 
 
 ## Compiles both god-rays stages and reads back the compiler's own verdict.

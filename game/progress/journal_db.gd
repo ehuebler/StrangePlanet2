@@ -68,6 +68,17 @@ const ENTRIES := {
 		"auto_gems": 10,
 		"global_level": 5,
 	},
+	"first_boss": {
+		"kind": "achievement",
+		"category": "Combat",
+		"title": "First Boss",
+		"summary": "Slay your first crawler boss.",
+		"detail": "Defeat The Giving Tree. One hundred global XP lands "
+			+ "immediately, and ten gems wait to be claimed from Achievements.",
+		"reward": "100 XP, 10 gems",
+		"gems": 10,
+		"xp": 100,
+	},
 	"first_city": {
 		"kind": "achievement",
 		"category": "Exploration",

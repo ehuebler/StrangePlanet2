@@ -11,8 +11,11 @@ const FLIGHTLESS := &"flightless"
 const POISON := &"poison"
 const CHARM := &"charm"
 const FREEZE := &"freeze"
+const SLOW := &"slow"
 const SHOCK := &"shock"
 const MAX_DURATION := 3600.0
+const SLOW_MAX := 5.0
+const SLOW_SCALE := 0.5
 const CHARM_PULSE := 0.45
 const SHOCK_LOCK := 0.22
 const SHOCK_MOVE := 0.78
@@ -34,6 +37,10 @@ const DEFINITIONS := {
 	FREEZE: {
 		"title": "Frozen",
 		"description": "Unable to move or attack.",
+	},
+	SLOW: {
+		"title": "Slow",
+		"description": "Movement is reduced.",
 	},
 	SHOCK: {
 		"title": "Shocked",
@@ -59,7 +66,13 @@ static func is_known(id: StringName) -> bool:
 	return DEFINITIONS.has(id)
 
 
+func is_empty() -> bool:
+	return _remaining.is_empty()
+
+
 func has(id: StringName) -> bool:
+	if _remaining.is_empty():
+		return false
 	return float(_remaining.get(id, 0.0)) > 0.0
 
 
@@ -78,7 +91,17 @@ func shock_locked() -> bool:
 
 
 func movement_locked() -> bool:
+	if _remaining.is_empty():
+		return false
 	return has(FREEZE) or shock_locked()
+
+
+func move_scale() -> float:
+	if movement_locked():
+		return 0.0
+	if has(SLOW):
+		return SLOW_SCALE
+	return 1.0
 
 
 func consume_pulse(id: StringName, interval: float) -> bool:
@@ -97,19 +120,27 @@ func consume_shock_pulse() -> bool:
 	return true
 
 
-## Adds or refreshes an effect. The longer authored duration wins. Strength, when
-## supplied, keeps the higher of the two intensities.
-func apply_status(id: StringName, duration: float, intensity := 0.0) -> bool:
+## Adds or refreshes an effect. The longer authored duration wins unless
+## [param add] is set, which stacks time. Slow always caps at [constant SLOW_MAX].
+## Strength, when supplied, keeps the higher of the two intensities.
+func apply_status(id: StringName, duration: float, intensity := 0.0,
+		add := false) -> bool:
 	if not is_known(id) or not is_finite(duration) or duration <= 0.0:
 		return false
 	var next := minf(duration, MAX_DURATION)
 	var before := remaining(id)
+	if add:
+		next = before + next
+	else:
+		next = maxf(before, next)
+	if id == SLOW:
+		next = minf(next, SLOW_MAX)
 	var next_strength := maxf(strength(id), intensity) \
 		if is_finite(intensity) else strength(id)
 	if before >= next and is_equal_approx(next_strength, strength(id)):
 		return false
 	var fresh := before <= 0.0
-	_remaining[id] = maxf(before, next)
+	_remaining[id] = next
 	if next_strength > 0.0:
 		_strength[id] = next_strength
 	if fresh:

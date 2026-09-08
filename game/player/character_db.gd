@@ -16,11 +16,15 @@ const HOTBAR_SLOTS := 3
 const ABILITY_SLOTS := 4
 const BACKPACK_SLOTS := 36
 ## One-time ownership seed. Revision five repairs the known partial-wardrobe
-## state where Settler Hair alone was never granted. Revision six grants the
-## first twenty-five settler hats. Revision seven grants the next batch. Other
-## missing pieces remain finite ownership: once this revision is recorded,
-## dropped apparel stays gone.
-const STARTER_INVENTORY_REVISION := 8
+## state where Settler Hair alone was never granted. Revisions six and seven
+## once granted the settler hat catalogue for free. Revision nine forgets
+## those dumps so the character picker matches gem unlocks the way capes do.
+## Other missing pieces remain finite ownership: once this revision is
+## recorded, dropped apparel stays gone.
+const STARTER_INVENTORY_REVISION := 9
+## Noct grows stronger just by surviving. Other bodies do not inherit this.
+const TRAIT_LEVEL_DAMAGE := "noct_level_damage"
+const LEVEL_DAMAGE_SHARE := 0.02
 
 ## Headwear added after the original settler wardrobe. Granted once by revision
 ## six without resurrecting garments a player already dropped.
@@ -44,10 +48,14 @@ const SETTLER_HEADWEAR_MORE := [
 ]
 
 ## Paint schemes laid over a body without changing its mesh, skeleton or
-## measurements. A skin is kept separate from `body`: all three painted designs
+## measurements. A skin is kept separate from `body`: the painted designs
 ## use the same settler and the same wardrobe, so treating them as bodies would
 ## duplicate every physical field and make apparel compatibility lie.
 const SKINS := {
+	"noct_crimson": {
+		"title": "Noct Crimson",
+		"texture": "res://assets/runtime/characters/character_3_noct_crimson.png",
+	},
 	"luke": {
 		"title": "Luke",
 		"texture": "res://assets/runtime/characters/luke.png",
@@ -65,7 +73,15 @@ const SKINS := {
 const BODIES := {
 	"settler": {
 		"title": "Settler",
+		"selector_title": "NOCT",
 		"playable": true,
+		"starting_abilities": ["laser_eyes"],
+		"trait": {
+			"id": "noct_level_damage",
+			"title": "Noct",
+			"short": "+2% DMG / LV",
+			"description": "Gain 2% damage with every level.",
+		},
 		"scene": "res://assets/runtime/characters/player_character_3.glb",
 		"height": 1.6,
 		"eye_height": 1.45,
@@ -77,7 +93,8 @@ const BODIES := {
 			"crawler_kit_hat", "crawler_missile_hat", "crawler_mine_hat",
 			"crawler_vampire_hat", "crawler_phase_hat", "crawler_ordinance_hat",
 			"crawler_rubber_hat", "crawler_learned_hat", "crawler_juke_hat",
-			"crawler_plain_cape", "crawler_fool_cape",
+			"crawler_repeater_hat", "crawler_fool_hat", "crawler_bazaar_hat",
+			"crawler_plain_cape", "crawler_gold_cape",
 			"c3_party_hat", "c3_bunny_ears", "c3_top_hat", "c3_crown", "c3_beanie",
 			"c3_cowboy_hat", "c3_propeller_cap", "c3_flower_crown", "c3_antlers",
 			"c3_halo", "c3_wizard_hat", "c3_sombrero", "c3_newsboy_cap", "c3_helmet",
@@ -91,7 +108,7 @@ const BODIES := {
 			"c3_space_helmet", "c3_cake_hat", "c3_leaf_wreath", "c3_mohawk",
 		],
 		# First is the fallback for an old settings file with no skin key.
-		"skins": ["luke", "clean_robotic", "integrated_robotic"],
+		"skins": ["noct_crimson", "luke", "clean_robotic", "integrated_robotic"],
 		# Mixamo clips retargeted onto this skeleton. Existing locomotion
 		# names stay on the body .glb; these are extra names only.
 		"extra_animations": [
@@ -164,6 +181,36 @@ static func has_body(id: String) -> bool:
 
 static func title(id: String) -> String:
 	return String(_field(id, "title", id))
+
+
+## Label on the home-screen character tile. Own-body only, so template
+## aliases do not steal Noct's name.
+static func selector_title(id: String) -> String:
+	var titled := str(_own_field(id, "selector_title", ""))
+	return titled if not titled.is_empty() else title(id)
+
+
+## Character-specific passive. Template bodies do not inherit it.
+static func character_trait(id: String) -> Dictionary:
+	var raw: Variant = _own_field(id, "trait", {})
+	return (raw as Dictionary).duplicate(true) if raw is Dictionary else {}
+
+
+static func starting_abilities(id: String) -> PackedStringArray:
+	var raw: Variant = _own_field(id, "starting_abilities", [])
+	var out := PackedStringArray()
+	for entry: Variant in raw:
+		var ability_id := str(entry)
+		if not ability_id.is_empty() and ability_id not in out:
+			out.append(ability_id)
+	return out
+
+
+static func level_damage_bonus(id: String, level: int) -> float:
+	var special := character_trait(id)
+	if str(special.get("id", "")) != TRAIT_LEVEL_DAMAGE:
+		return 0.0
+	return LEVEL_DAMAGE_SHARE * float(maxi(level, 0))
 
 
 static func scene_path(id: String) -> String:
@@ -256,6 +303,21 @@ static func skin_texture(body_id: String, skin_id: String) -> Texture2D:
 	return load(path) as Texture2D if not path.is_empty() else null
 
 
+## Front-head island from the body albedo, for selector tiles.
+static func face_texture(body_id: String, skin_id := "") -> Texture2D:
+	var source := skin_texture(body_id, sanitize_skin(body_id, skin_id))
+	if source == null:
+		return null
+	var atlas := AtlasTexture.new()
+	atlas.atlas = source
+	var size := source.get_size()
+	atlas.region = Rect2(
+		size * Vector2(0.012, 0.016),
+		size * Vector2(0.236, 0.248)
+	)
+	return atlas
+
+
 ## Item ids that belong on this body, in the order the editor lists them.
 static func apparel_ids(id: String) -> PackedStringArray:
 	var raw: Variant = _field(id, "apparel", [])
@@ -274,8 +336,21 @@ static func apparel_fits(body_id: String, item_id: String) -> bool:
 	return model != item_id and wardrobe.has(model)
 
 
+## Hats revision six and seven granted into the backpack. The character
+## picker must not treat that dump as gem ownership.
+static func granted_catalogue_hats() -> PackedStringArray:
+	var out := PackedStringArray()
+	for item_id: String in SETTLER_HEADWEAR:
+		if not out.has(item_id):
+			out.append(item_id)
+	for item_id: String in SETTLER_HEADWEAR_MORE:
+		if not out.has(item_id):
+			out.append(item_id)
+	return out
+
+
 ## Hats every new save owns without a gem spend. Extra catalogue hats are
-## unlocked from the home-screen Hats tab.
+## unlocked from the home-screen Unlocks Hats and Capes tabs.
 static func free_apparel_ids(body_id: String) -> PackedStringArray:
 	var out := PackedStringArray()
 	var wardrobe := apparel_ids(body_id)
@@ -293,7 +368,7 @@ static func sanitize_body(id: String) -> String:
 
 ## Look dictionary written by the home-screen editor and read when a body is
 ## previewed or spawned. `skin` is a texture scheme allowed by that body, `worn`
-## is slot → item id and `tints` is "body" or a slot → HTML colour, both sparse.
+## is slot → item id and `tints` is "body", "outline", or a slot → HTML colour, both sparse.
 ## Hotbar, abilities and backpack are positional. `rack` mirrors hotbar while old
 ## pages and harnesses still use that name.
 static func default_look() -> Dictionary:
@@ -347,15 +422,15 @@ static func load_look() -> Dictionary:
 	if tint_raw is Dictionary:
 		look["tints"] = (tint_raw as Dictionary).duplicate(true)
 	_seed_starter_inventory(look)
+	CrawlerMeta.forget_granted_catalogue_hats()
+	_drop_unowned_catalogue_hats(look)
 	CrawlerMeta.note_owned_apparel(look)
 	return look
 
 
-## Gives a new character its finite starter wardrobe and weapons once. Later
-## revisions also repair older marked-complete states where the whole compatible
-## wardrobe is absent. Owning even one compatible garment proves the wardrobe
-## was established, so missing individual pieces stay missing except for the
-## revision-five Settler Hair rollout repair below.
+## Gives a new character its finite starter wardrobe once. Later revisions
+## repair older marked-complete states where even the free hats are absent.
+## Catalogue hats after that are gem unlocks, not another free grant.
 static func _seed_starter_inventory(look: Dictionary) -> void:
 	if SettingsManager == null:
 		return
@@ -394,62 +469,71 @@ static func _seed_starter_inventory(look: Dictionary) -> void:
 			hotbar[index] = ""
 
 	var body_id := sanitize_body(str(look.get("body", DEFAULT_BODY)))
-	var wardrobe := apparel_ids(body_id)
-	# Fresh saves own only the free starter hats. The rest of the catalogue is
-	# a gem unlock on the home screen. Older revision markers still repair the
-	# historical free-wardrobe rollouts so existing profiles keep what they had.
-	if revision < 1:
-		for item_id: String in free_apparel_ids(body_id):
-			if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
-				continue
-			backpack.append(item_id)
-			owned[item_id] = true
-	elif revision >= 1:
-		var should_seed := true
-		for item_id: String in wardrobe:
-			if owned.has(item_id):
-				should_seed = false
-				break
+	# Fresh saves and empty older markers own only the free starter hats.
+	# Revisions six and seven used to dump the settler hat catalogue here.
+	if revision < 8:
+		var should_seed := revision < 1
+		if not should_seed:
+			should_seed = true
+			for item_id: String in apparel_ids(body_id):
+				if owned.has(item_id):
+					should_seed = false
+					break
 		if should_seed:
-			for item_id: String in wardrobe:
+			for item_id: String in free_apparel_ids(body_id):
 				if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
 					continue
 				backpack.append(item_id)
 				owned[item_id] = true
-	# Revision four treated any one owned garment as proof that the whole starter
-	# wardrobe had been granted. That preserved genuinely dropped items, but it
-	# also preserved the specific broken rollout now seen in existing profiles:
-	# goggles, tunic and boots present while Settler Hair never existed. Repair
-	# that known item once without manufacturing every other absent garment.
-	if revision >= 1 and revision < 5 and body_id == "settler" \
-			and not owned.has("c3_hair") and backpack.size() < BACKPACK_SLOTS:
-		backpack.append("c3_hair")
-		owned["c3_hair"] = true
-	if revision >= 1 and revision < 6 and body_id == "settler":
-		for item_id: String in SETTLER_HEADWEAR:
-			if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
-				continue
-			backpack.append(item_id)
-			owned[item_id] = true
-	if revision >= 1 and revision < 7 and body_id == "settler":
-		for item_id: String in SETTLER_HEADWEAR_MORE:
-			if owned.has(item_id) or backpack.size() >= BACKPACK_SLOTS:
-				continue
-			backpack.append(item_id)
-			owned[item_id] = true
+		if revision >= 1 and revision < 5 and body_id == "settler" \
+				and not owned.has("c3_hair") and backpack.size() < BACKPACK_SLOTS:
+			backpack.append("c3_hair")
+			owned["c3_hair"] = true
 	look["hotbar"] = hotbar
 	look["rack"] = hotbar.duplicate()
 	look["backpack"] = backpack
+	CrawlerMeta.forget_granted_catalogue_hats()
+	_drop_unowned_catalogue_hats(look)
+	var worn: Dictionary = {}
+	var worn_clean: Variant = look.get("worn", {})
+	if worn_clean is Dictionary:
+		worn = (worn_clean as Dictionary).duplicate()
 	SettingsManager.set_setting(
 		&"appearance", &"hotbar", hotbar.duplicate(), false)
 	SettingsManager.set_setting(
 		&"appearance", &"rack", hotbar.duplicate(), false)
 	SettingsManager.set_setting(
-		&"appearance", &"backpack", backpack.duplicate(), false)
+		&"appearance", &"worn", worn.duplicate(), false)
+	var saved_backpack: Array = look.get("backpack", []) as Array
+	SettingsManager.set_setting(
+		&"appearance", &"backpack", saved_backpack.duplicate(), false)
 	SettingsManager.set_setting(
 		&"appearance", &"starter_inventory_revision",
 		STARTER_INVENTORY_REVISION, false)
 	SettingsManager.save_settings()
+
+
+## Removes catalogue hats that are not free and were never bought with gems.
+static func _drop_unowned_catalogue_hats(look: Dictionary) -> void:
+	var worn_raw: Variant = look.get("worn", {})
+	var worn: Dictionary = {}
+	if worn_raw is Dictionary:
+		worn = (worn_raw as Dictionary).duplicate()
+	var hat_id := str(worn.get("hat", ""))
+	if not hat_id.is_empty() and not CrawlerMeta.owns_hat(hat_id):
+		worn.erase("hat")
+	look["worn"] = worn
+	var backpack: Array = []
+	var backpack_raw: Variant = look.get("backpack", [])
+	if _is_item_sequence(backpack_raw):
+		for item_variant: Variant in backpack_raw:
+			var item_id := str(item_variant)
+			if item_id.is_empty():
+				continue
+			if ItemDB.slot_of(item_id) == "hat" and not CrawlerMeta.owns_hat(item_id):
+				continue
+			backpack.append(item_id)
+	look["backpack"] = backpack
 
 
 static func save_look(look: Dictionary) -> void:
@@ -554,6 +638,15 @@ static func _trimmed_array(items: PackedStringArray) -> Array:
 	while not out.is_empty() and str(out.back()).is_empty():
 		out.pop_back()
 	return out
+
+
+static func _own_field(id: String, key: String, fallback: Variant) -> Variant:
+	if not has_body(id):
+		return fallback
+	var body: Variant = BODIES.get(id, {})
+	if body is Dictionary and (body as Dictionary).has(key):
+		return (body as Dictionary)[key]
+	return fallback
 
 
 ## Reads a field off any body this file knows about, playable or not — which is

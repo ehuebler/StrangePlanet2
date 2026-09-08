@@ -25,6 +25,13 @@ const BLACK := Color(0.0, 0.0, 0.0, 0.76)
 
 var container: ItemContainer
 var index := 0
+## Portrait / HUD override so a tile can show without a loadout container.
+var forced_item_id := "":
+	set(value):
+		if forced_item_id == value:
+			return
+		forced_item_id = value
+		queue_redraw()
 var interactive := true
 var draggable := true
 var accepts_drops := true
@@ -50,6 +57,9 @@ var _hovered := false
 var _drop_target := false
 var _drag_live := false
 var _fallback_glyph: RedMenuGlyph
+var _icon_rect: TextureRect
+var _badge_label: Label
+var _rim: RedGlowPanel
 
 
 func _init() -> void:
@@ -68,6 +78,20 @@ func _init() -> void:
 	_fallback_glyph.offset_bottom = -13.0
 	_fallback_glyph.visible = false
 	add_child(_fallback_glyph)
+	_icon_rect = TextureRect.new()
+	_icon_rect.name = "ItemIcon"
+	_icon_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_icon_rect.visible = false
+	add_child(_icon_rect)
+	_badge_label = Label.new()
+	_badge_label.name = "ItemBadge"
+	_badge_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_badge_label.add_theme_font_size_override(&"font_size", 11)
+	_badge_label.visible = false
+	add_child(_badge_label)
+	_ensure_rim()
 
 
 func set_edge(edge: float) -> void:
@@ -82,6 +106,14 @@ func set_edge(edge: float) -> void:
 	queue_redraw()
 
 
+func use_soft_fx() -> void:
+	set_meta(&"crt_soft_glitch", true)
+	if _icon_rect != null:
+		CrtType.mark_soft_icon(_icon_rect)
+	if _fallback_glyph != null:
+		CrtType.mark_soft_icon(_fallback_glyph)
+
+
 func bind(to_container: ItemContainer, at_index: int) -> void:
 	container = to_container
 	index = at_index
@@ -89,6 +121,8 @@ func bind(to_container: ItemContainer, at_index: int) -> void:
 
 
 func item_id() -> String:
+	if not forced_item_id.is_empty():
+		return forced_item_id
 	return container.get_item(index) if container != null else ""
 
 
@@ -215,20 +249,48 @@ func _drag_preview() -> Control:
 
 
 func _draw() -> void:
+	_sync_rim()
 	var edge := minf(size.x, size.y)
 	var frame := clampf(edge * 0.06, 1.5, 3.0)
-	var bloom := clampf(edge * 0.08, 1.5, 3.0)
 	var outer := Rect2(Vector2.ZERO, size).grow(-frame)
-	# A few translucent strokes read as bloom without a rounded shader or a
-	# texture atlas, and retain perfectly sharp corners at every resolution.
-	draw_rect(outer.grow(bloom), Color(RED, 0.12), false, bloom * 2.0)
-	draw_rect(outer.grow(bloom * 0.5), Color(RED, 0.28), false, bloom)
+	var id := item_id()
+	if id.is_empty():
+		_sync_fallback("", false)
+		_sync_icon("", null)
+		_draw_placeholder()
+	else:
+		var icon := CrawlerCatalog.texture_for(id)
+		var has_icon := icon != null
+		_sync_fallback(id, not has_icon)
+		_sync_icon(id, icon)
+		if not has_icon:
+			draw_rect(outer.grow(-_icon_inset() - 2.0), Color(ItemDB.tint(id), 0.22))
+	_sync_badge()
+	if blocked:
+		_draw_block_x()
+
+
+func _ensure_rim() -> void:
+	if _rim != null:
+		return
+	_rim = RedGlowPanel.add_to(self)
+	_rim.fill_color = BLACK
+	_rim.border_color = Color(RED, 0.98)
+	_rim.border_width = 2.0
+	_rim.glow_intensity = 1.05
+	_rim.glow_spread = 3.0
+	_rim.glow_layers = 3
+
+
+func _sync_rim() -> void:
+	_ensure_rim()
+	var edge := minf(size.x, size.y)
+	var bloom := clampf(edge * 0.08, 1.5, 3.0)
 	var fill := BLACK
 	if equipped:
 		fill = Color(0.16, 0.12, 0.01, 0.92)
 	if selected and not equipped:
 		fill = Color(0.02, 0.17, 0.06, 0.9)
-	draw_rect(outer, fill)
 	var rim := (
 		GREEN if _drop_target
 		else YELLOW if equipped
@@ -236,25 +298,14 @@ func _draw() -> void:
 		else RED
 	)
 	var rim_w := 2.0 if edge < 40.0 else 3.0
-	draw_rect(outer, Color(rim, 0.98), false,
-		rim_w if (_hovered or _drop_target or selected or equipped) else maxf(rim_w - 1.0, 1.0))
-
-	var id := item_id()
-	if id.is_empty():
-		_sync_fallback("", false)
-		_draw_placeholder()
-	else:
-		var icon := CrawlerCatalog.texture_for(id)
-		var inner := outer.grow(-_icon_inset())
-		var has_icon := icon != null
-		_sync_fallback(id, not has_icon)
-		if has_icon:
-			draw_texture_rect(icon, inner, false, _icon_modulate(id))
-		else:
-			draw_rect(inner.grow(-2.0), Color(ItemDB.tint(id), 0.22))
-	_draw_badge()
-	if blocked:
-		_draw_block_x()
+	if not (_hovered or _drop_target or selected or equipped):
+		rim_w = maxf(rim_w - 1.0, 1.0)
+	_rim.fill_color = fill
+	_rim.border_color = Color(rim, 0.98)
+	_rim.border_width = rim_w
+	_rim.glow_spread = bloom
+	_rim.glow_intensity = 1.2 if (_hovered or _drop_target or selected or equipped) \
+		else 1.0
 
 
 func _icon_modulate(id: String) -> Color:
@@ -333,11 +384,34 @@ func _draw_block_x() -> void:
 	draw_line(c, d, Color(RED, 0.96), width, true)
 
 
-func _draw_badge() -> void:
-	if badge.is_empty():
+func _sync_icon(id: String, icon: Texture2D) -> void:
+	if _icon_rect == null:
 		return
-	var font := get_theme_default_font()
-	if font == null:
+	var has := icon != null and not id.is_empty()
+	_icon_rect.texture = icon if has else null
+	_icon_rect.visible = has
+	if has:
+		_icon_rect.modulate = _icon_modulate(id)
+	var inset := _icon_inset() + clampf(minf(size.x, size.y) * 0.06, 1.5, 3.0)
+	var target: Control = CrtType.host_of(_icon_rect)
+	if target == null:
+		target = _icon_rect
+	target.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	target.offset_left = inset
+	target.offset_top = inset
+	target.offset_right = -inset
+	target.offset_bottom = -inset
+
+
+func _sync_badge() -> void:
+	if _badge_label == null:
 		return
-	draw_string(font, Vector2(7.0, 16.0), badge,
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, 11, YELLOW if equipped else RED)
+	_badge_label.text = badge
+	_badge_label.visible = not badge.is_empty()
+	_badge_label.add_theme_color_override(
+		&"font_color", YELLOW if equipped else RED)
+	var target: Control = CrtType.host_of(_badge_label)
+	if target == null:
+		target = _badge_label
+	target.position = Vector2(7.0, 2.0)
+	target.size = Vector2(maxf(size.x - 10.0, 8.0), 16.0)

@@ -74,6 +74,7 @@ var _reject: Label
 var _mod_slots: Array[RedItemSlot] = []
 var _drag_live := false
 var _hovered := false
+var _rim: RedGlowPanel
 
 
 func _ready() -> void:
@@ -309,6 +310,7 @@ func _rebuild_mods(hosted: CrawlerCard) -> void:
 		slot.name = "CrawlerMod_%d_%d" % [index, mod_index]
 		slot.set_edge(_mod_edge())
 		slot.placeholder = ""
+		slot.use_soft_fx()
 		if rack != null and mod_index < rack.size():
 			slot.bind(rack, mod_index)
 			slot.interactive = true
@@ -513,6 +515,17 @@ func _apply_block_mark() -> void:
 	_apply_style()
 
 
+func _ensure_rim() -> void:
+	if _rim != null:
+		return
+	_rim = RedGlowPanel.add_to(self)
+	_rim.fill_color = Color.TRANSPARENT
+	_rim.border_width = 2.0
+	_rim.glow_intensity = 1.15
+	_rim.glow_spread = 6.0
+	_rim.glow_layers = 4
+
+
 func _apply_style() -> void:
 	var reject := _should_reject()
 	var fill := Color(0.0, 0.16, 0.045, 0.92) if selected or _hovered else BLACK
@@ -522,8 +535,8 @@ func _apply_style() -> void:
 		rim = RED
 	var box := StyleBoxFlat.new()
 	box.bg_color = fill
-	box.border_color = Color(rim, 0.98)
-	box.set_border_width_all(2)
+	box.border_color = Color.TRANSPARENT
+	box.set_border_width_all(0)
 	box.set_corner_radius_all(0)
 	var pad := 5.0 if compact else 8.0
 	box.content_margin_left = pad
@@ -531,6 +544,9 @@ func _apply_style() -> void:
 	box.content_margin_right = pad
 	box.content_margin_bottom = pad
 	add_theme_stylebox_override(&"panel", box)
+	_ensure_rim()
+	_rim.border_color = Color(rim, 0.98)
+	_rim.glow_intensity = 1.35 if selected or _hovered else 1.15
 	if _number != null:
 		_number.add_theme_color_override(
 			&"font_color", GREEN if selected else RED_BRIGHT

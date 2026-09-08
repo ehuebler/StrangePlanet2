@@ -6,7 +6,8 @@ extends Control
 ##
 ## Colony deaths keep the world running underneath and offer a respawn. Crawler
 ## deaths end the run unless a ticket is on the ledger: GAME OVER, a summary,
-## and a trip back to the home screen.
+## and a trip back to the home screen. In co-op a living teammate leaves the
+## fallen player DOWNED — hold E to get them up — until the last body drops.
 ##
 ## The world keeps running underneath — in company it has to, and alone a frozen
 ## ragdoll reads as a crash — so this is an overlay over live play rather than a
@@ -34,8 +35,10 @@ const MIN_RECAP_SCROLL := 72.0
 const XP_FILL_TIME := 1.65
 const TITLE := "YOU DIED"
 const GAME_OVER_TITLE := "GAME OVER"
+const DOWNED_TITLE := "DOWNED"
 const HOME_LABEL := "HOME"
 const RESPAWN_LABEL := "RESPAWN"
+const WAITING_COPY := "A teammate can hold E to revive you."
 const BACKDROP := Color(0.05, 0.005, 0.008, 0.62)
 ## Used when the host could not name what killed you. Lives here rather than on
 ## the player so this screen never has to reach back at the thing that opens it.
@@ -46,6 +49,8 @@ var _summary_text := ""
 var _title_text := TITLE
 var _button_text := RESPAWN_LABEL
 var _sends_home := false
+var _hide_button := false
+var _downed := false
 var _recap := {}
 var _title: Label
 var _notice: Label
@@ -93,10 +98,26 @@ func present_crawler(
 	_summary_text = summary
 	_title_text = GAME_OVER_TITLE
 	_sends_home = not can_respawn
+	_hide_button = false
+	_downed = false
+	_asked = false
 	_button_text = RESPAWN_LABEL if can_respawn else HOME_LABEL
 	_recap = recap.duplicate(true)
 	_apply_copy()
 	_begin_xp_fill()
+
+
+func present_downed(cause: String, can_respawn: bool) -> void:
+	set_notice(cause)
+	_summary_text = WAITING_COPY
+	_title_text = DOWNED_TITLE
+	_sends_home = false
+	_downed = true
+	_hide_button = not can_respawn
+	_asked = false
+	_button_text = RESPAWN_LABEL
+	_recap = {}
+	_apply_copy()
 
 
 func notice_text() -> String:
@@ -113,6 +134,10 @@ func summary_text() -> String:
 
 func sends_home() -> bool:
 	return _sends_home
+
+
+func is_downed() -> bool:
+	return _downed
 
 
 func recap() -> Dictionary:
@@ -152,6 +177,8 @@ func _process(delta: float) -> void:
 			_xp_shown = _xp_to
 			_xp_done = true
 		_paint_xp(t >= 1.0)
+	if _shown <= FADE_IN + 0.35:
+		_fit_plate()
 	if _asked or _button == null or not _button.disabled:
 		return
 	if _shown >= ARM_DELAY:
@@ -183,7 +210,7 @@ func _build() -> void:
 	_plate.glow_spread = 14.0
 	_plate.glow_layers = 5
 	_plate.mouse_behavior = RedGlowPanel.MouseBehavior.STOP
-	_plate.clip_contents = true
+	_plate.clip_contents = false
 	centre.add_child(_plate)
 
 	var pad := MarginContainer.new()
@@ -197,7 +224,9 @@ func _build() -> void:
 
 	_column = VBoxContainer.new()
 	_column.name = "Column"
-	_column.alignment = BoxContainer.ALIGNMENT_CENTER
+	_column.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_column.add_theme_constant_override(&"separation", COL_SEP)
 	_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pad.add_child(_column)
@@ -246,6 +275,8 @@ func _build() -> void:
 	_recap_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_recap_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_recap_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_recap_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_recap_scroll.size_flags_stretch_ratio = 1.0
 	_recap_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
 	column.add_child(_recap_scroll)
 
@@ -260,6 +291,9 @@ func _build() -> void:
 	var button_lane := CenterContainer.new()
 	button_lane.name = "ButtonLane"
 	button_lane.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button_lane.custom_minimum_size = Vector2(220.0, 52.0)
+	button_lane.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	button_lane.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	column.add_child(button_lane)
 
 	_button = Button.new()
@@ -288,6 +322,12 @@ func _apply_copy() -> void:
 	if _button != null:
 		_button.text = _button_text
 		_button.name = "HomeButton" if _sends_home else "RespawnButton"
+		_button.visible = not _hide_button
+		var lane := _button.get_parent() as Control
+		if lane != null:
+			lane.visible = not _hide_button
+		if not _hide_button and _shown >= ARM_DELAY:
+			_button.disabled = _asked
 
 
 func _fill_recap() -> void:
@@ -392,38 +432,68 @@ func _fit_plate() -> void:
 		view = get_viewport_rect().size if is_inside_tree() else Vector2(1280.0, 720.0)
 	if view.x < 2.0 or view.y < 2.0:
 		view = Vector2(1280.0, 720.0)
-	var max_w := minf(RECAP_PLATE_SIZE.x, maxf(view.x - VIEW_MARGIN * 2.0, 320.0))
-	var max_h := maxf(view.y - VIEW_MARGIN * 2.0, 280.0)
+	var glow := _plate.glow_spread
+	var inset := VIEW_MARGIN + glow
+	var max_w := minf(RECAP_PLATE_SIZE.x, maxf(view.x - inset * 2.0, 320.0))
+	var max_h := maxf(view.y - inset * 2.0, 240.0)
+	var inner_w := maxf(max_w - float(PAD_X * 2), 160.0)
+	if _notice != null:
+		_notice.custom_minimum_size.x = inner_w
+	if _summary != null:
+		_summary.custom_minimum_size.x = inner_w
 	var recap_open := _recap_host != null and _recap_host.visible
 	if _recap_scroll != null:
 		_recap_scroll.visible = recap_open
-	if not recap_open:
-		var wanted := RUN_PLATE_SIZE if not _summary_text.is_empty() else PLATE_SIZE
-		_plate.custom_minimum_size = Vector2(minf(wanted.x, max_w), minf(wanted.y, max_h))
-		if _recap_scroll != null:
-			_recap_scroll.custom_minimum_size = Vector2.ZERO
-		return
-	var used := float(PAD_Y * 2)
-	var visible := 0
+	if _column != null:
+		_column.alignment = (
+			BoxContainer.ALIGNMENT_BEGIN if recap_open
+			else BoxContainer.ALIGNMENT_CENTER
+		)
+	var chrome := float(PAD_Y * 2)
+	var button_h := 0.0
+	var rows := 0
 	if _column != null:
 		for child: Node in _column.get_children():
 			var row := child as Control
 			if row == null or not row.visible:
 				continue
-			visible += 1
+			rows += 1
 			if row == _recap_scroll:
 				continue
-			used += row.get_combined_minimum_size().y
-	used += float(COL_SEP * maxi(visible - 1, 0))
-	var recap_want := _recap_host.get_combined_minimum_size().y
-	var recap_h := recap_want
-	var plate_h := used + recap_h
-	if plate_h > max_h:
-		recap_h = maxf(max_h - used, MIN_RECAP_SCROLL)
-		plate_h = max_h
+			var h := _row_height(row)
+			if row.name == "ButtonLane":
+				button_h = h
+			else:
+				chrome += h
+	chrome += float(COL_SEP * maxi(rows - 1, 0))
+	if button_h <= 0.0:
+		button_h = 52.0
+	if not recap_open:
+		var wanted := RUN_PLATE_SIZE if not _summary_text.is_empty() else PLATE_SIZE
+		var h := minf(maxf(wanted.y, chrome + button_h), max_h)
+		_plate.custom_minimum_size = Vector2(minf(wanted.x, max_w), h)
+		if _recap_scroll != null:
+			_recap_scroll.custom_minimum_size = Vector2.ZERO
+			_recap_scroll.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		return
+	var plate_h := minf(RECAP_PLATE_SIZE.y, max_h)
+	var leftover := maxf(plate_h - chrome - button_h, 0.0)
+	if leftover < MIN_RECAP_SCROLL and chrome + button_h + MIN_RECAP_SCROLL <= max_h:
+		leftover = MIN_RECAP_SCROLL
+		plate_h = chrome + leftover + button_h
 	if _recap_scroll != null:
-		_recap_scroll.custom_minimum_size = Vector2(0.0, recap_h)
-	_plate.custom_minimum_size = Vector2(max_w, plate_h)
+		_recap_scroll.custom_minimum_size = Vector2(0.0, leftover)
+		_recap_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_plate.custom_minimum_size = Vector2(max_w, minf(chrome + leftover + button_h, max_h))
+
+
+func _row_height(row: Control) -> float:
+	if row == null:
+		return 0.0
+	var host := CrtType.host_of(row)
+	if host != null:
+		return maxf(host.get_combined_minimum_size().y, host.size.y)
+	return maxf(row.get_combined_minimum_size().y, row.size.y)
 
 
 func _begin_xp_fill() -> void:

@@ -33,6 +33,8 @@ static func cached(id: String) -> Texture2D:
 	var texture: Texture2D = _cache.get(id, null)
 	if texture != null:
 		return texture
+	if CrawlerCatalog.catalog_id(id) == CrawlerProgress.STAT_JUKE:
+		return CrawlerCatalog.icon(CrawlerProgress.STAT_JUKE)
 	if CrawlerCatalog.is_token(id):
 		return _cache.get(CrawlerCatalog.catalog_id(id), null)
 	return null
@@ -70,6 +72,12 @@ func request(ids: Array) -> void:
 		var id := CrawlerCatalog.catalog_id(String(id_variant))
 		if id.is_empty() or _cache.has(id) or _queue.has(id):
 			continue
+		if id == CrawlerProgress.STAT_JUKE:
+			var instant := ItemDB.ability_icon(id)
+			if instant != null:
+				_cache[id] = instant
+				icon_ready.emit(id, instant)
+				continue
 		_queue.append(id)
 	if not _draining:
 		_drain()

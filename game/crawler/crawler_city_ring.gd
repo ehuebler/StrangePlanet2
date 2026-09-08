@@ -77,11 +77,12 @@ func _register_flora() -> void:
 		walk = walk.get_parent()
 	if direction.length_squared() < 0.25:
 		direction = world_up()
-	var reach := _radius
-	if _village != null:
-		reach = maxf(reach, BuildingFloraClear.mesh_radius(_village))
 	BuildingFloraClear.register(
-		str(get_instance_id()), direction, reach, planet_radius)
+		str(get_instance_id()),
+		direction,
+		CrawlerRules.SITE_CLEAR_RADIUS,
+		planet_radius,
+		0.0)
 
 
 func radius() -> float:
@@ -152,6 +153,35 @@ func contains_player(player: Node) -> bool:
 	return player is Node3D and contains_point((player as Node3D).global_position)
 
 
+func in_site_clear(at: Vector3) -> bool:
+	return CrawlerRules.in_site_clear(global_position, at)
+
+
+func clears_patch_mobs_at(at: Vector3, players: Array = []) -> bool:
+	if contains_point(at):
+		return true
+	if not in_site_clear(at):
+		return false
+	var crowd := players
+	if crowd.is_empty() and is_inside_tree():
+		crowd = living_players(get_tree())
+	return CrawlerRules.all_players_inside_city(crowd, self)
+
+
+static func living_players(tree: SceneTree) -> Array:
+	var found: Array = []
+	if tree == null:
+		return found
+	for node_variant: Variant in tree.get_nodes_in_group("network_players"):
+		var player := node_variant as Node3D
+		if player == null or not is_instance_valid(player):
+			continue
+		if player.has_method(&"is_dead") and bool(player.call(&"is_dead")):
+			continue
+		found.append(player)
+	return found
+
+
 func city_key() -> String:
 	if not key_override.strip_edges().is_empty():
 		return key_override.strip_edges()
@@ -197,6 +227,17 @@ static func blocks_near_any(tree: SceneTree, point: Vector3) -> bool:
 	for zone_variant: Variant in tree.get_nodes_in_group(GROUP):
 		var zone := zone_variant as CrawlerCityRing
 		if zone != null and zone.blocks_near(point):
+			return true
+	return false
+
+
+static func clears_patch_mobs_any(tree: SceneTree, point: Vector3) -> bool:
+	if tree == null or not point.is_finite():
+		return false
+	var players := living_players(tree)
+	for zone_variant: Variant in tree.get_nodes_in_group(GROUP):
+		var zone := zone_variant as CrawlerCityRing
+		if zone != null and zone.clears_patch_mobs_at(point, players):
 			return true
 	return false
 
@@ -392,6 +433,8 @@ func _ensure_waypoint() -> Landmark:
 		add_child(mark)
 	if CrawlerRules.starts_visible(site_id):
 		mark.unlock_waypoint()
+	else:
+		CrawlerRules.apply_crawler_waypoint_tint(mark)
 	if mark.is_inside_tree() and planet != null:
 		mark.place()
 	return mark

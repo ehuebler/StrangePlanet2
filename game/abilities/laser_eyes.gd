@@ -147,7 +147,7 @@ func _aim_beams() -> Dictionary:
 	player.laser_beams().aim_many(
 		origins[0], origins[1], targets, _beam_tint(), _beam_width(),
 		_wobble_amount(), _follow_mode(), CrawlerReach.far_cast(stats),
-		paths if CrawlerHoming.uses_path(stats) else [])
+		paths if CrawlerHoming.uses_path(stats) else [], _beam_invert())
 	return {"eyes": origins, "at": at, "landed": landing["landed"]}
 
 
@@ -352,6 +352,10 @@ func _beam_tint() -> Color:
 	return LaserBeams.COLOR
 
 
+func _beam_invert() -> bool:
+	return false
+
+
 func _follow_mode() -> int:
 	return LaserBeams.FOLLOW_EYES
 
@@ -467,7 +471,8 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 				draw_paths.append(points)
 	shooter.laser_beams().aim_many(
 		left_eye, right_eye, targets, _tint_for(id), beam_width, wobble,
-		_follow_for(id), CrawlerReach.far_cast(stats), draw_paths)
+		_follow_for(id), CrawlerReach.far_cast(stats), draw_paths,
+		_invert_for(id))
 	var per_tick := float(stats.get("damage", 0.0))
 	if shooter != null and CrawlerRules.active() \
 			and shooter.has_method(&"crawler_damage_scale"):
@@ -479,7 +484,9 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 	if radius < 0.0:
 		radius = float(stats.get("radius", 0.4))
 	var impact_radius := IMPACT_RADIUS
-	if stats.has("impact_radius"):
+	if id == "kame":
+		impact_radius = radius
+	elif stats.has("impact_radius"):
 		impact_radius = float(stats.get("impact_radius", IMPACT_RADIUS))
 	elif beam_width > 1.0:
 		impact_radius *= beam_width
@@ -570,15 +577,22 @@ static func _apply_one(shooter: OnlinePlayer, id: String, stats: Dictionary,
 		return
 	if not shooter.laser_beams().take_scorch(at, SCORCH_SPACING):
 		return
-	world_planet.scorches.scorch(
-		at, facing, SCORCH_RADIUS * maxf(beam_width, 1.0), 0.85)
+	var soot := radius if id == "kame" \
+		else SCORCH_RADIUS * maxf(beam_width, 1.0)
+	world_planet.scorches.scorch(at, facing, soot, 0.85)
 
 
 static func _tint_for(id: String) -> Color:
 	if id == "kame":
 		var definition := ItemDB.ability_definition(id)
-		return definition.tint if definition != null else Color(0.24, 0.71, 1.0)
+		return definition.tint if definition != null else EnergyVfx.TINT_BLUE
+	if id == "nausicaa":
+		return EnergyVfx.TINT_PURPLE
 	return LaserBeams.COLOR
+
+
+static func _invert_for(id: String) -> bool:
+	return id == "kame"
 
 
 static func _follow_for(id: String) -> int:

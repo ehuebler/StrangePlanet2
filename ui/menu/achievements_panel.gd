@@ -61,6 +61,13 @@ func _build() -> void:
 		&"panel",
 		_style(Color(0.0, 0.0, 0.0, 0.42), Color(RED_BRIGHT, 0.92), 2, 14.0)
 	)
+	var rim := RedGlowPanel.add_to(frame)
+	rim.fill_color = Color.TRANSPARENT
+	rim.border_color = Color(RED_BRIGHT, 0.92)
+	rim.border_width = 2.0
+	rim.glow_intensity = 1.25
+	rim.glow_spread = 8.0
+	rim.glow_layers = 4
 	add_child(frame)
 
 	var shell := VBoxContainer.new()

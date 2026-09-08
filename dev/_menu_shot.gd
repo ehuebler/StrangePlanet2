@@ -99,6 +99,12 @@ func _report_preview() -> void:
 	if preview == null:
 		push_error("_menu_shot: no preview character on the home screen")
 		return
+	var fill := _home.find_child("PreviewFillLight", true, false) as SpotLight3D
+	if fill == null or fill.light_energy <= 0.0 \
+			or fill.get_parent() == null \
+			or fill.get_parent().name != "MenuCamera":
+		push_error("_menu_shot: home preview is missing a front fill light")
+		return
 	var animator := preview.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	var skeleton := preview.find_child("Skeleton3D", true, false) as Skeleton3D
 	var hips := CharacterRig.find_bone(skeleton, &"Hips")
@@ -257,7 +263,10 @@ func _run_home_new_game_flow() -> void:
 		push_error("_menu_shot: themed Start Game button is missing")
 		return
 	if sandbox == null or upgrades == null or achievements == null:
-		push_error("_menu_shot: Sandbox, Upgrades, or Achievements home actions are missing")
+		push_error("_menu_shot: Sandbox, Unlocks, or Achievements home actions are missing")
+		return
+	if _home.find_child("HomeHats", true, false) != null:
+		push_error("_menu_shot: Hats is still a home action")
 		return
 	var online := _home.find_child("HomeOnline", true, false) as Button
 	var start_host := _home_action_host(start)
@@ -275,7 +284,7 @@ func _run_home_new_game_flow() -> void:
 	if online_host != null and (
 			sandbox_rect.position.x < online_host.get_global_rect().end.x
 			or upgrades_rect.position.x < sandbox_rect.end.x):
-		push_error("_menu_shot: Sandbox is not left of Upgrades after Online")
+		push_error("_menu_shot: Sandbox is not left of Unlocks after Online")
 	var row_one := _home.find_child("HomeMenuRow1", true, false)
 	var row_two := _home.find_child("HomeMenuRow2", true, false)
 	var plate := start.get_theme_stylebox(&"normal")
@@ -287,19 +296,34 @@ func _run_home_new_game_flow() -> void:
 		push_error("_menu_shot: home actions still draw a boxed plate")
 	if start_host.material == null or not (start_host.material is ShaderMaterial):
 		push_error("_menu_shot: home actions have no CRT type material")
-	print("_menu_shot: home actions start='%s' sandbox='%s' upgrades='%s'" % [
+	print("_menu_shot: home actions start='%s' sandbox='%s' unlocks='%s'" % [
 		start.text, sandbox.text, upgrades.text
 	])
+	if upgrades.text.to_upper() != "UNLOCKS":
+		push_error("_menu_shot: Unlocks home action is still labeled Uplocks")
 	upgrades.pressed.emit()
 	await _wait(0.25)
 	var shop := _home.find_child("MetaUpgradesPanel", true, false) as Control
 	var gems := _home.find_child("HomeGemCounter", true, false) as Control
 	if shop == null or gems == null or not gems.visible:
-		push_error("_menu_shot: Upgrades did not open the gem shop")
+		push_error("_menu_shot: Unlocks did not open the gem shop")
 		return
+	var hats_tab := shop.find_child("UplocksTab_Hats", true, false) as Button
+	if hats_tab == null:
+		push_error("_menu_shot: Unlocks is missing the Hats tab")
 	await _capture("menu_home_upgrades")
 	if _home._pose_view(HomeScreen.View.UPGRADES) != HomeScreen.View.ONLINE:
-		push_error("_menu_shot: Upgrades does not pan to the Online planet pose")
+		push_error("_menu_shot: Unlocks does not pan to the Online planet pose")
+	if hats_tab != null:
+		hats_tab.pressed.emit()
+		await _wait(0.25)
+	var hat_shop := _home.find_child("MetaUpgradesPanel", true, false) as Control
+	if hat_shop == null or hat_shop.find_child("UplocksHatRows", true, false) == null \
+			or gems == null or not gems.visible:
+		push_error("_menu_shot: Unlocks Hats tab did not open the gem hat shop")
+	if _home._pose_view(HomeScreen.View.HATS) != HomeScreen.View.ONLINE:
+		push_error("_menu_shot: Unlocks Hats does not pan to the Online planet pose")
+	await _capture("menu_home_hats")
 	achievements.pressed.emit()
 	await _wait(0.25)
 	var board := _home.find_child("AchievementsPanel", true, false) as Control
@@ -564,7 +588,6 @@ func _report_red_bounds(menu: GameMenu, page_name: String) -> void:
 	for node_name: String in [
 		"ContentFrame",
 		"BottomSelector",
-		"AdminButton",
 		"SessionActions",
 	]:
 		var control := menu.find_child(node_name, true, false) as Control
@@ -601,6 +624,10 @@ func _run_character_bodies() -> void:
 	_report_designer_fit(page)
 	var saved := CharacterDB.load_look()
 	var body_id := CharacterDB.sanitize_body(saved["body"])
+	if _press("Noct Crimson"):
+		await _wait(0.35)
+		await _capture("menu_character_noct_crimson")
+		print("_menu_shot: texture picked %s" % CharacterDB.load_look()["skin"])
 	if _press("Integrated Robotic"):
 		await _wait(0.35)
 		await _capture("menu_character_integrated_robotic")

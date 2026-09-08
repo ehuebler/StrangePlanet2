@@ -12,6 +12,7 @@ var _player: OnlinePlayer
 
 class _HatDummy extends Node3D:
 	var taken := 0.0
+	var reflected := 0.0
 
 	func _ready() -> void:
 		add_to_group(DamageHit.COMBATANT_GROUP)
@@ -38,6 +39,9 @@ class _HatDummy extends Node3D:
 
 	func is_charmed() -> bool:
 		return false
+
+	func receive_reflected_damage(amount: float, _source_peer: int) -> void:
+		reflected += amount
 
 
 func _ready() -> void:
@@ -106,7 +110,8 @@ func _ready() -> void:
 	await _check_level_tiles()
 	await _check_hud_slots()
 	await _check_city_hats()
-	_check_fool_cape()
+	_check_fool_hat()
+	_check_gold_cape()
 	_check_city_bank()
 
 
@@ -124,7 +129,8 @@ func _ready() -> void:
 
 func _check_catalog() -> void:
 	_expect(CrawlerRules.START_CITIES == 0, "crawler does not seed a built city")
-	_expect(CrawlerRules.START_PATCH == "Tide Margin 4", "crawler starts on Tide Margin 4")
+	_expect(CrawlerRules.START_PATCH == "Tide Margin 4",
+		"Relay 07 stays on the Tide Margin 4 rest cell")
 	_expect(is_equal_approx(CrawlerRules.SPAWN_LATITUDE_DEG, 3.09)
 			and is_equal_approx(CrawlerRules.SPAWN_LONGITUDE_DEG, -1.28),
 		"spawn sits at 3.09 N, 1.28 W")
@@ -143,6 +149,10 @@ func _check_catalog() -> void:
 		"city latitude matches the plate")
 	_expect(absf(rad_to_deg(atan2(city_dir.x, city_dir.z)) - 4.78) < 0.02,
 		"city longitude matches the plate")
+	_expect(CrawlerRules.CITY_CRESCENT_PATCH == "Far Beacon 4 Northwest",
+		"Crescent Market sits on Far Beacon 4 Northwest")
+	_expect(CrawlerRules.CITY_LEE_PATCH == "Wind Gap 4",
+		"the second later city sits on the Wind Gap 4 rest cell")
 	_expect(CrawlerRules.CITY_SITE_TITLE == "Neon Fjord",
 		"the first city is Neon Fjord")
 	_expect(CrawlerRules.CITY_CRESCENT_TITLE == "Crescent Market"
@@ -151,10 +161,15 @@ func _check_catalog() -> void:
 	_expect(CrawlerRules.starts_visible(CrawlerRules.CITY_SITE_ID),
 		"Neon Fjord is the opening waypoint")
 	_expect(not CrawlerRules.starts_visible(CrawlerRules.START_SITE_ID),
-		"Tide Margin waits until you walk in")
+		"Tide Margin waits until you enter Neon Fjord")
 	_expect(not CrawlerRules.starts_visible(CrawlerRules.CITY_CRESCENT_SITE_ID)
 			and not CrawlerRules.starts_visible(CrawlerRules.CITY_LEE_SITE_ID),
 		"later cities wait until you enter Neon Fjord")
+	_expect(is_equal_approx(CrawlerRules.CITY_MAP_DELAY, 1.0)
+			and CrawlerRules.first_city_map_ids().has(CrawlerRules.START_SITE_ID)
+			and CrawlerRules.first_city_map_ids().has(
+				CrawlerRules.CITY_CRESCENT_SITE_ID),
+		"Neon Fjord lights Tide Margin and Crescent after a second")
 	_expect(ResourceLoader.exists(CrawlerCityRing.VILLAGE_MODEL),
 		"Neon Fjord village is in the project")
 	_expect(ResourceLoader.exists(CrawlerRules.CRESCENT_VILLAGE),
@@ -180,6 +195,9 @@ func _check_catalog() -> void:
 		"Relay 07 is the Tide Margin spawn")
 	_expect(BuildingFoundation.EMBED > 0.0, "building stems bite into the ground")
 	_expect(BuildingFloraClear.PAD_METRES == 10.0, "flora keeps 10 metres off buildings")
+	_expect(CrawlerRules.SITE_CLEAR_RADIUS == 100.0
+			and CrawlerRules.START_FLORA_RADIUS == 1.0,
+		"sites clear 100 m of flora; the teleporter clears 1 m")
 	_expect(CrawlerCatalog.has("laser_eyes"), "catalog lists laser eyes")
 	_expect(CrawlerCatalog.has("kame"), "catalog lists kame")
 	_expect(CrawlerCatalog.has("nausicaa"), "catalog lists nausicaa")
@@ -372,9 +390,9 @@ func _check_catalog() -> void:
 			and CrawlerCatalog.host_abilities("toxic").has("hero_punch")
 			and CrawlerCatalog.host_abilities("toxic").has("meteor_punch"),
 		"toxic hosts beams, shockwaves, projectiles, fields, punches, and wall")
-	_expect(not CrawlerCatalog.host_abilities("toxic").has("lasso")
-			and not CrawlerCatalog.host_abilities("shock").has("grapple"),
-		"elemental mods do not host grapple or lasso")
+	_expect(not CrawlerCatalog.has("lasso")
+			and not CrawlerCatalog.has("grapple"),
+		"grapple and lasso are no longer catalog abilities")
 	_expect(CrawlerCatalog.host_abilities("multi").has("laser_eyes")
 			and CrawlerCatalog.host_abilities("multi").has("starfire")
 			and CrawlerCatalog.host_abilities("multi").has("roar")
@@ -383,9 +401,8 @@ func _check_catalog() -> void:
 			and CrawlerCatalog.host_abilities("multi").has("meteor_punch")
 			and CrawlerCatalog.host_abilities("multi").has("hero_punch"),
 		"multi shot hosts beams, shots, walls, blasts, fields, and punches")
-	_expect(not CrawlerCatalog.host_abilities("multi").has("lasso")
-			and not CrawlerCatalog.host_abilities("multi").has("grapple"),
-		"multi shot does not host grapple or lasso")
+	_expect(not CrawlerCatalog.host_abilities("multi").has("overdrive"),
+		"multi shot does not host overdrive as a typed host")
 	_expect(CrawlerCatalog.host_abilities("reach").has("laser_eyes")
 			and CrawlerCatalog.host_abilities("reach").has("kame")
 			and CrawlerCatalog.host_abilities("reach").has("nausicaa")
@@ -402,9 +419,7 @@ func _check_catalog() -> void:
 			and not CrawlerCatalog.host_abilities("reach").has("static_field")
 			and not CrawlerCatalog.host_abilities("reach").has("wall")
 			and not CrawlerCatalog.host_abilities("reach").has("meteor_punch")
-			and not CrawlerCatalog.host_abilities("reach").has("hero_punch")
-			and not CrawlerCatalog.host_abilities("reach").has("lasso")
-			and not CrawlerCatalog.host_abilities("reach").has("grapple"),
+			and not CrawlerCatalog.host_abilities("reach").has("hero_punch"),
 		"reach does not host fields, shockwaves, walls, or physical attacks")
 	_expect(CrawlerCatalog.host_abilities("bounce").has("laser_eyes")
 			and CrawlerCatalog.host_abilities("bounce").has("kame")
@@ -422,9 +437,7 @@ func _check_catalog() -> void:
 			and not CrawlerCatalog.host_abilities("bounce").has("static_field")
 			and not CrawlerCatalog.host_abilities("bounce").has("wall")
 			and not CrawlerCatalog.host_abilities("bounce").has("meteor_punch")
-			and not CrawlerCatalog.host_abilities("bounce").has("hero_punch")
-			and not CrawlerCatalog.host_abilities("bounce").has("lasso")
-			and not CrawlerCatalog.host_abilities("bounce").has("grapple"),
+			and not CrawlerCatalog.host_abilities("bounce").has("hero_punch"),
 		"bounce does not host fields, shockwaves, walls, or physical attacks")
 	_expect(CrawlerCatalog.host_abilities("impact_cast").has("laser_eyes")
 			and CrawlerCatalog.host_abilities("impact_cast").has("kame")
@@ -442,9 +455,7 @@ func _check_catalog() -> void:
 			and not CrawlerCatalog.host_abilities("impact_cast").has("static_field")
 			and not CrawlerCatalog.host_abilities("impact_cast").has("wall")
 			and not CrawlerCatalog.host_abilities("impact_cast").has("meteor_punch")
-			and not CrawlerCatalog.host_abilities("impact_cast").has("hero_punch")
-			and not CrawlerCatalog.host_abilities("impact_cast").has("lasso")
-			and not CrawlerCatalog.host_abilities("impact_cast").has("grapple"),
+			and not CrawlerCatalog.host_abilities("impact_cast").has("hero_punch"),
 		"impact cast does not host fields, shockwaves, walls, or physical attacks")
 	_expect(CrawlerCatalog.host_abilities("homing").has("laser_eyes")
 			and CrawlerCatalog.host_abilities("homing").has("kame")
@@ -462,10 +473,8 @@ func _check_catalog() -> void:
 		"homing hosts beams, projectiles, and punches")
 	_expect(not CrawlerCatalog.host_abilities("homing").has("roar")
 			and not CrawlerCatalog.host_abilities("homing").has("static_field")
-			and not CrawlerCatalog.host_abilities("homing").has("wall")
-			and not CrawlerCatalog.host_abilities("homing").has("lasso")
-			and not CrawlerCatalog.host_abilities("homing").has("grapple"),
-		"homing does not host fields, shockwaves, walls, or hooks")
+			and not CrawlerCatalog.host_abilities("homing").has("wall"),
+		"homing does not host fields, shockwaves, or walls")
 	_expect(CrawlerCatalog.host_abilities("big").is_empty(),
 		"generic mods have no host badge")
 	_expect(CrawlerCatalog.host_types("wobble") == PackedStringArray(["beam"]),
@@ -576,9 +585,8 @@ func _check_effects() -> void:
 			and CrawlerCatalog.compatible("linger", "meteor_punch")
 			and CrawlerCatalog.compatible("linger", "hero_punch"),
 		"linger fits beams, shockwaves, shots, fields, and punches")
-	_expect(not CrawlerCatalog.compatible("linger", "wall")
-			and not CrawlerCatalog.compatible("linger", "lasso"),
-		"linger does not fit wall or lasso")
+	_expect(not CrawlerCatalog.compatible("linger", "wall"),
+		"linger does not fit wall")
 	_expect(CrawlerCatalog.compatible("big", "static_field")
 			and CrawlerCatalog.compatible("big", "healing_field"),
 		"big fits field abilities")
@@ -622,9 +630,6 @@ func _check_effects() -> void:
 			and CrawlerCatalog.compatible("charm", "hero_punch")
 			and CrawlerCatalog.compatible("shock", "overdrive"),
 		"elemental mods fit damage hosts and overdrive")
-	_expect(not CrawlerCatalog.compatible("toxic", "lasso")
-			and not CrawlerCatalog.compatible("ice", "grapple"),
-		"elemental mods do not fit grapple or lasso")
 	_expect(CrawlerCatalog.compatible("multi", "laser_eyes")
 			and CrawlerCatalog.compatible("multi", "kame")
 			and CrawlerCatalog.compatible("multi", "nausicaa")
@@ -642,9 +647,6 @@ func _check_effects() -> void:
 			and CrawlerCatalog.compatible("multi", "meteor_punch")
 			and CrawlerCatalog.compatible("multi", "hero_punch"),
 		"multi shot fits beams, shots, walls, blasts, fields, and punches")
-	_expect(not CrawlerCatalog.compatible("multi", "lasso")
-			and not CrawlerCatalog.compatible("multi", "grapple"),
-		"multi shot does not fit grapple or lasso")
 	_expect(CrawlerCatalog.compatible("reach", "laser_eyes")
 			and CrawlerCatalog.compatible("reach", "kame")
 			and CrawlerCatalog.compatible("reach", "nausicaa")
@@ -662,9 +664,7 @@ func _check_effects() -> void:
 			and not CrawlerCatalog.compatible("reach", "healing_field")
 			and not CrawlerCatalog.compatible("reach", "wall")
 			and not CrawlerCatalog.compatible("reach", "meteor_punch")
-			and not CrawlerCatalog.compatible("reach", "hero_punch")
-			and not CrawlerCatalog.compatible("reach", "lasso")
-			and not CrawlerCatalog.compatible("reach", "grapple"),
+			and not CrawlerCatalog.compatible("reach", "hero_punch"),
 		"reach does not fit fields, shockwaves, walls, or physical attacks")
 	_expect(CrawlerCatalog.compatible("bounce", "laser_eyes")
 			and CrawlerCatalog.compatible("bounce", "kame")
@@ -683,9 +683,7 @@ func _check_effects() -> void:
 			and not CrawlerCatalog.compatible("bounce", "healing_field")
 			and not CrawlerCatalog.compatible("bounce", "wall")
 			and not CrawlerCatalog.compatible("bounce", "meteor_punch")
-			and not CrawlerCatalog.compatible("bounce", "hero_punch")
-			and not CrawlerCatalog.compatible("bounce", "lasso")
-			and not CrawlerCatalog.compatible("bounce", "grapple"),
+			and not CrawlerCatalog.compatible("bounce", "hero_punch"),
 		"bounce does not fit fields, shockwaves, walls, or physical attacks")
 	_expect(CrawlerCatalog.compatible("impact_cast", "laser_eyes")
 			and CrawlerCatalog.compatible("impact_cast", "kame")
@@ -704,9 +702,7 @@ func _check_effects() -> void:
 			and not CrawlerCatalog.compatible("impact_cast", "healing_field")
 			and not CrawlerCatalog.compatible("impact_cast", "wall")
 			and not CrawlerCatalog.compatible("impact_cast", "meteor_punch")
-			and not CrawlerCatalog.compatible("impact_cast", "hero_punch")
-			and not CrawlerCatalog.compatible("impact_cast", "lasso")
-			and not CrawlerCatalog.compatible("impact_cast", "grapple"),
+			and not CrawlerCatalog.compatible("impact_cast", "hero_punch"),
 		"impact cast does not fit fields, shockwaves, walls, or physical attacks")
 	_expect(CrawlerCatalog.compatible("homing", "laser_eyes")
 			and CrawlerCatalog.compatible("homing", "kame")
@@ -725,10 +721,8 @@ func _check_effects() -> void:
 	_expect(not CrawlerCatalog.compatible("homing", "roar")
 			and not CrawlerCatalog.compatible("homing", "static_field")
 			and not CrawlerCatalog.compatible("homing", "healing_field")
-			and not CrawlerCatalog.compatible("homing", "wall")
-			and not CrawlerCatalog.compatible("homing", "lasso")
-			and not CrawlerCatalog.compatible("homing", "grapple"),
-		"homing does not fit fields, shockwaves, walls, or hooks")
+			and not CrawlerCatalog.compatible("homing", "wall"),
+		"homing does not fit fields, shockwaves, or walls")
 	_expect(CrawlerCatalog.compatible("bubble", "meteor_punch")
 			and CrawlerCatalog.compatible("bubble", "hero_punch"),
 		"bubble fits the punches")
@@ -875,9 +869,6 @@ func _check_tokens() -> void:
 	_expect(ItemDB.accepts("%s:wall" % CrawlerCatalog.FILTER_MOD,
 			CrawlerCatalog.make_modifier("toxic").token()),
 		"wall mod slot accepts toxic")
-	_expect(not ItemDB.accepts("%s:lasso" % CrawlerCatalog.FILTER_MOD,
-			CrawlerCatalog.make_modifier("toxic").token()),
-		"lasso mod slot refuses toxic")
 
 
 func _check_starter() -> void:
@@ -918,7 +909,7 @@ func _check_starter() -> void:
 		"starter bag does not give a free mod")
 	var stats := _player.crawler_kit.resolved_stats(0)
 	_expect(is_equal_approx(float(stats.get("damage", 0.0)), CrawlerRules.LASER_DAMAGE),
-		"starter laser eyes deal 50 per second")
+		"starter laser eyes deal 1 per second")
 	_expect(str(stats.get("damage_unit", "")) == "/s",
 		"starter laser eyes list damage as a rate")
 	_expect(is_equal_approx(float(stats.get("cooldown", 0.0)), CrawlerRules.LASER_COOLDOWN),
@@ -1004,7 +995,7 @@ func _check_controller() -> void:
 		"the live beam uses the upgraded range")
 	_expect(ability._pulse_mode(), "crawler laser eyes fire in pulses")
 	_expect(is_equal_approx(
-			CrawlerRules.LASER_DAMAGE * LaserEyes.DAMAGE_STEP, 5.0),
+			CrawlerRules.LASER_DAMAGE * LaserEyes.DAMAGE_STEP, 0.1),
 		"each beam tick is a tenth of the per-second damage")
 	_expect(ability.press(), "holding starts a pulse")
 	ability.tick(0.05)
@@ -1163,8 +1154,9 @@ func _check_starfire_upgrades() -> void:
 	_expect(_player.crawler_kit.upgrade_card(card.uid, "damage"),
 		"starfire damage can be upgraded")
 	var harder := _player.crawler_kit.stats_for(card)
-	_expect(float(harder.get("damage", 0.0)) > CrawlerRules.STARFIRE_DAMAGE,
-		"damage upgrades raise the disk hit")
+	_expect(is_equal_approx(float(harder.get("damage", 0.0)),
+			CrawlerRules.STARFIRE_DAMAGE * CrawlerRules.upgrade_scale(1)),
+		"the first damage rank is a five percent boost")
 	_expect(float(harder.get("impact", 0.0)) > CrawlerRules.STARFIRE_IMPACT,
 		"damage upgrades also raise the burst")
 	_expect(_player.crawler_kit.upgrade_card(card.uid, "cooldown"),
@@ -1208,8 +1200,8 @@ func _check_light_bolt() -> void:
 		"light bolt sells the usual combat stats plus particle speed")
 	_expect(CrawlerProgress.ability_stock().has("light_bolt"),
 		"the stall sells light bolt")
-	_expect(CrawlerProgress.ability_price("light_bolt") == 38,
-		"light bolt costs thirty-eight")
+	_expect(CrawlerProgress.ability_price("light_bolt") == 25,
+		"light bolt costs twenty-five")
 	var granted := _player.crawler_kit.grant(
 		CrawlerCatalog.make_ability("light_bolt").to_dict())
 	_expect(bool(granted.get("ok", false)), "light bolt can be granted")
@@ -1288,8 +1280,8 @@ func _check_icicle() -> void:
 		"icicle sells particle stats plus cold")
 	_expect(CrawlerProgress.ability_stock().has("icicle"),
 		"the stall sells icicle")
-	_expect(CrawlerProgress.ability_price("icicle") == 40,
-		"icicle costs forty")
+	_expect(CrawlerProgress.ability_price("icicle") == 25,
+		"icicle costs twenty-five")
 	var granted := _player.crawler_kit.grant(
 		CrawlerCatalog.make_ability("icicle").to_dict())
 	_expect(bool(granted.get("ok", false)), "icicle can be granted")
@@ -1314,12 +1306,12 @@ func _check_icicle() -> void:
 	var freeze_hold := 0.0
 	var frost_dps := 0.0
 	for entry: Dictionary in payload:
-		if String(entry.get("id", "")) == String(CombatStatuses.FREEZE):
+		if String(entry.get("id", "")) == String(CombatStatuses.SLOW):
 			freeze_hold = float(entry.get("duration", 0.0))
 			frost_dps = float(entry.get("strength", 0.0))
 	_expect(freeze_hold >= CrawlerRules.ICICLE_COLD
 			and frost_dps >= CrawlerRules.ICICLE_COLD_DAMAGE,
-		"icicle natively applies cold damage and freeze")
+		"icicle natively applies cold damage and slow")
 	_expect(_player.crawler_kit.upgrade_card(card.uid, "cold"),
 		"cold can be upgraded")
 	var colder := _player.crawler_kit.stats_for(card)
@@ -1353,7 +1345,7 @@ func _check_icicle() -> void:
 	var iced := CrawlerElements.payload(_player, "icicle", paired)
 	var iced_hold := 0.0
 	for entry: Dictionary in iced:
-		if String(entry.get("id", "")) == String(CombatStatuses.FREEZE):
+		if String(entry.get("id", "")) == String(CombatStatuses.SLOW):
 			iced_hold = float(entry.get("duration", 0.0))
 	_expect(CrawlerReach.far_cast(paired) >= CrawlerRules.REACH_FAR_CAST
 			and float(paired.get("range", 0.0))
@@ -1367,10 +1359,10 @@ func _check_icicle() -> void:
 			and not CrawlerCatalog.compatible("wobble", "icicle")
 			and not CrawlerCatalog.compatible("clip", "icicle"),
 		"projectile mods fit icicle, beam and clip mods do not")
-	_expect(CrawlerRules.upgrade_stat_title("cold", "icicle") == "Cold"
+	_expect(CrawlerRules.upgrade_stat_title("cold", "icicle") == "Slow"
 			and CrawlerRules.upgrade_stat_title("speed", "icicle")
 				== "Particle Speed",
-		"icicle names the cold and particle speed upgrades")
+		"icicle names the slow and particle speed upgrades")
 
 
 func _check_teleport() -> void:
@@ -1381,8 +1373,8 @@ func _check_teleport() -> void:
 		"teleport sells particle stats except damage, plus swap")
 	_expect(CrawlerProgress.ability_stock().has("teleport"),
 		"the stall sells teleport")
-	_expect(CrawlerProgress.ability_price("teleport") == 42,
-		"teleport costs forty-two")
+	_expect(CrawlerProgress.ability_price("teleport") == 25,
+		"teleport costs twenty-five")
 	_expect(CrawlerRules.upgrade_max_rank("teleport", "swap") == 1,
 		"swap is on or off")
 	var granted := _player.crawler_kit.grant(
@@ -1439,8 +1431,8 @@ func _check_fus() -> void:
 		"fus sells particle combat stats")
 	_expect(CrawlerProgress.ability_stock().has("fus"),
 		"the stall sells fus")
-	_expect(CrawlerProgress.ability_price("fus") == 36,
-		"fus costs thirty-six")
+	_expect(CrawlerProgress.ability_price("fus") == 25,
+		"fus costs twenty-five")
 	_expect(CrawlerRules.is_particle_ability("fus")
 			and not CrawlerRules.is_roar_ability("fus")
 			and not CrawlerRules.is_field_ability("fus"),
@@ -1539,9 +1531,9 @@ func _check_fus() -> void:
 				and (child as AbilityProjectile).definition != null \
 				and (child as AbilityProjectile).definition.ability_id == "fus":
 			cone = child as AbilityProjectile
-	_expect(cone != null and is_instance_valid(cone._shock)
-			and cone._shock.visible,
-		"fus launches a visible meteor-shock cone")
+	_expect(cone != null and is_instance_valid(cone._cone_beam)
+			and cone._cone_beam.kind == EnergyVfx.Kind.BEAM_STREAMS,
+		"fus launches a visible white stream beam")
 	if cone != null:
 		cone.queue_free()
 	ability.release()
@@ -1652,7 +1644,7 @@ func _check_hero_punch() -> void:
 			["damage", "cooldown", "size", "range", "knockback", "slots"]),
 		"hero punch sells damage, cooldown, size, range, knockback, and slots")
 	_expect(CrawlerProgress.ability_stock().has("hero_punch")
-			and CrawlerProgress.ability_price("hero_punch") == 32,
+			and CrawlerProgress.ability_price("hero_punch") == 25,
 		"the ability stall sells hero punch")
 	_expect(_player.crawler_kit.shop_grant("hero_punch"),
 		"the stall can grant hero punch")
@@ -1738,7 +1730,7 @@ func _check_overdrive() -> void:
 			== "Overdrive time",
 		"overdrive duration is the buff time")
 	_expect(CrawlerProgress.ability_stock().has("overdrive")
-			and CrawlerProgress.ability_price("overdrive") == 36,
+			and CrawlerProgress.ability_price("overdrive") == 25,
 		"the ability stall sells overdrive")
 	_expect(_player.crawler_kit.shop_grant("overdrive"),
 		"the stall can grant overdrive")
@@ -1987,10 +1979,14 @@ func _check_big_ranks() -> void:
 	var rank1 := float(_player.crawler_kit.stats_for(star).get("size", 0.0))
 	_expect(is_equal_approx(rank1, CrawlerRules.big_size_scale(1)),
 		"the first big upgrade raises host size")
-	_expect(rank1 > rank0 * 1.15, "early big ranks already jump")
+	_expect(is_equal_approx(rank1, rank0 + CrawlerRules.upgrade_boost(1)),
+		"the first big upgrade adds five percent on top of the starting 25%")
 	_expect(CrawlerProgress.upgrade_price(0, "big")
-			> CrawlerProgress.upgrade_price(0),
-		"big upgrades cost more than a regular store rank")
+			== CrawlerProgress.upgrade_price(0),
+		"the first upgrade rank costs ten gold")
+	_expect(CrawlerProgress.upgrade_price(1)
+			== CrawlerProgress.upgrade_price(0) * 2,
+		"each upgrade rank doubles the gold cost")
 	_expect(CrawlerProgress.upgrade_price(9, "big")
 			> CrawlerProgress.upgrade_price(4, "big") * 3,
 		"late big upgrades get much more expensive")
@@ -2287,7 +2283,7 @@ func _check_elemental_mods() -> void:
 			and CrawlerProgress.shop_stock().has("charm")
 			and CrawlerProgress.shop_stock().has("ice"),
 		"the stall sells the elemental mods")
-	_expect(CrawlerProgress.card_price("toxic") == 22, "toxic costs twenty-two")
+	_expect(CrawlerProgress.card_price("toxic") == 10, "toxic costs ten")
 	_expect(_player.crawler_kit.shop_grant("toxic"), "the stall can grant toxic")
 	var first: CrawlerCard = null
 	for card: CrawlerCard in _player.crawler_kit.owned_cards():
@@ -2450,7 +2446,7 @@ func _check_multi_shot() -> void:
 		"physical extras stack in front of the first hit")
 	_expect(CrawlerProgress.shop_stock().has("multi"),
 		"the stall sells multi shot")
-	_expect(CrawlerProgress.card_price("multi") == 22, "multi shot costs twenty-two")
+	_expect(CrawlerProgress.card_price("multi") == 10, "multi shot costs ten")
 	_expect(_player.crawler_kit.shop_grant("multi"), "the stall can grant multi shot")
 	var card: CrawlerCard = null
 	for owned: CrawlerCard in _player.crawler_kit.owned_cards():
@@ -2485,8 +2481,6 @@ func _check_multi_shot() -> void:
 		"field copy mentions the delayed recast")
 	_expect(CrawlerCatalog.description_of("multi", "meteor_punch").contains("meteor"),
 		"meteor copy mentions stacked shocks")
-	_expect(CrawlerCatalog.description_of("multi", "lasso").contains("does not fit"),
-		"lasso refuses multi shot")
 	_player.crawler_kit.shop_grant("wobble")
 	var wobble: CrawlerCard = null
 	for owned: CrawlerCard in _player.crawler_kit.owned_cards():
@@ -2530,13 +2524,11 @@ func _check_reach() -> void:
 	_expect(is_equal_approx(CrawlerRules.reach_range_mul(0),
 			CrawlerRules.REACH_RANGE_MUL)
 			and is_equal_approx(CrawlerRules.reach_range_mul(1),
-				CrawlerRules.REACH_RANGE_MUL + CrawlerRules.REACH_RANGE_PER_RANK)
+				CrawlerRules.mod_scale(1))
 			and is_equal_approx(
 				CrawlerRules.reach_range_mul(CrawlerRules.REACH_MAX_RANK),
-				CrawlerRules.REACH_RANGE_MUL
-					+ CrawlerRules.REACH_RANGE_PER_RANK
-					* float(CrawlerRules.REACH_MAX_RANK)),
-		"reach range starts at 1.28x and grows each rank")
+				CrawlerRules.mod_scale(CrawlerRules.REACH_MAX_RANK)),
+		"reach range starts at 1.25x and adds the 5/10/20 curve on top")
 	_expect(is_equal_approx(CrawlerRules.far_cast_meters(0),
 			CrawlerRules.REACH_FAR_CAST)
 			and CrawlerRules.far_cast_meters(1)
@@ -2557,7 +2549,7 @@ func _check_reach() -> void:
 			"roar", PackedStringArray(["reach"]), {}).has("far_cast"),
 		"reach does not flag shockwaves")
 	_expect(CrawlerProgress.shop_stock().has("reach"), "the stall sells reach")
-	_expect(CrawlerProgress.card_price("reach") == 22, "reach costs twenty-two")
+	_expect(CrawlerProgress.card_price("reach") == 10, "reach costs ten")
 	_expect(_player.crawler_kit.shop_grant("reach"), "the stall can grant reach")
 	var card: CrawlerCard = null
 	for owned: CrawlerCard in _player.crawler_kit.owned_cards():
@@ -2597,8 +2589,6 @@ func _check_reach() -> void:
 		"shockwave copy refuses reach")
 	_expect(CrawlerCatalog.description_of("reach", "wall").contains("does not fit"),
 		"wall copy refuses reach")
-	_expect(CrawlerCatalog.description_of("reach", "lasso").contains("does not fit"),
-		"lasso refuses reach")
 	_player.crawler_kit.shop_grant("wobble")
 	_player.crawler_kit.shop_grant("multi")
 	var wobble: CrawlerCard = null
@@ -2682,7 +2672,7 @@ func _check_bounce() -> void:
 			"roar", PackedStringArray(["bounce"]), {}).has("bounce"),
 		"bounce does not flag shockwaves")
 	_expect(CrawlerProgress.shop_stock().has("bounce"), "the stall sells bounce")
-	_expect(CrawlerProgress.card_price("bounce") == 22, "bounce costs twenty-two")
+	_expect(CrawlerProgress.card_price("bounce") == 10, "bounce costs ten")
 	_expect(_player.crawler_kit.shop_grant("bounce"), "the stall can grant bounce")
 	var card: CrawlerCard = null
 	for owned: CrawlerCard in _player.crawler_kit.owned_cards():
@@ -2714,8 +2704,6 @@ func _check_bounce() -> void:
 		"shockwave copy refuses bounce")
 	_expect(CrawlerCatalog.description_of("bounce", "wall").contains("does not fit"),
 		"wall copy refuses bounce")
-	_expect(CrawlerCatalog.description_of("bounce", "lasso").contains("does not fit"),
-		"lasso refuses bounce")
 	_player.crawler_kit.shop_grant("bubble")
 	_player.crawler_kit.shop_grant("wobble")
 	var bubble: CrawlerCard = null
@@ -2791,8 +2779,6 @@ func _check_impact_cast() -> void:
 			and CrawlerImpactCast.can_echo("hero_punch")
 			and not CrawlerImpactCast.can_echo("teleport")
 			and not CrawlerImpactCast.can_echo("overdrive")
-			and not CrawlerImpactCast.can_echo("grapple")
-			and not CrawlerImpactCast.can_echo("lasso")
 			and not CrawlerImpactCast.can_echo("wall"),
 		"impact cast copies combat abilities and skips movement tools")
 	var along := CrawlerImpactCast.random_along(Vector3.UP)
@@ -2807,8 +2793,8 @@ func _check_impact_cast() -> void:
 		"impact cast does not flag shockwaves")
 	_expect(CrawlerProgress.shop_stock().has("impact_cast"),
 		"the stall sells impact cast")
-	_expect(CrawlerProgress.card_price("impact_cast") == 22,
-		"impact cast costs twenty-two")
+	_expect(CrawlerProgress.card_price("impact_cast") == 10,
+		"impact cast costs ten")
 	_expect(_player.crawler_kit.shop_grant("impact_cast"),
 		"the stall can grant impact cast")
 	var card: CrawlerCard = null
@@ -2866,6 +2852,18 @@ func _check_impact_cast() -> void:
 		"copied stats strip impact cast so the echo cannot nest")
 	_expect(_player.crawler_kit.ammo_left(nuke) == ammo_before,
 		"listing a copy does not spend the guest magazine")
+	CrawlerImpactCast._last_msec.clear()
+	var site_a := Vector3(0.0, 0.0, 0.0)
+	var site_b := Vector3(4.0, 0.0, 0.0)
+	_expect(CrawlerImpactCast._ready(_player, "laser_eyes", "mini_nuke", site_a)
+			and CrawlerImpactCast._ready(_player, "laser_eyes", "mini_nuke", site_b),
+		"impact cast accepts every split beam site in one pulse")
+	var site_key := "%s:%s:%s:%s" % [
+		_player.get_instance_id(), "laser_eyes", "mini_nuke",
+		CrawlerImpactCast._site_cell(site_a)]
+	CrawlerImpactCast._last_msec[site_key] = Time.get_ticks_msec() - 50
+	_expect(not CrawlerImpactCast._ready(_player, "laser_eyes", "mini_nuke", site_a),
+		"the same site still waits out the gap")
 	_expect(CrawlerCatalog.description_of("impact_cast", "laser_eyes").contains("other equipped"),
 		"beam copy mentions the other abilities")
 	_expect(CrawlerCatalog.description_of("impact_cast", "starfire").contains("impact"),
@@ -2907,13 +2905,11 @@ func _check_homing() -> void:
 	_expect(is_equal_approx(CrawlerRules.homing_steer(0),
 			CrawlerRules.HOMING_STEER_BASE)
 			and is_equal_approx(CrawlerRules.homing_steer(1),
-				CrawlerRules.HOMING_STEER_BASE
-				+ CrawlerRules.HOMING_STEER_PER_RANK)
+				CrawlerRules.HOMING_STEER_BASE * CrawlerRules.upgrade_scale(1))
 			and is_equal_approx(CrawlerRules.homing_range(0),
 				CrawlerRules.HOMING_RANGE_BASE)
 			and is_equal_approx(CrawlerRules.homing_range(1),
-				CrawlerRules.HOMING_RANGE_BASE
-				+ CrawlerRules.HOMING_RANGE_PER_RANK),
+				CrawlerRules.HOMING_RANGE_BASE * CrawlerRules.upgrade_scale(1)),
 		"homing starts at 4.5 pull / 8 m and upgrades both")
 	_expect(CrawlerRules.upgrade_max_rank("homing", "homing")
 			== CrawlerRules.HOMING_MAX_RANK
@@ -2977,8 +2973,8 @@ func _check_homing() -> void:
 		"homing does not flag shockwaves or walls")
 	_expect(CrawlerProgress.shop_stock().has("homing"),
 		"the stall sells homing")
-	_expect(CrawlerProgress.card_price("homing") == 22,
-		"homing costs twenty-two")
+	_expect(CrawlerProgress.card_price("homing") == 10,
+		"homing costs ten")
 	_expect(_player.crawler_kit.shop_grant("homing"),
 		"the stall can grant homing")
 	var card: CrawlerCard = null
@@ -3294,6 +3290,13 @@ func _check_kame() -> void:
 	var kame := _player.ability_controller().ability_in(1) as Kame
 	_expect(kame != null and not kame._pulse_mode(),
 		"kame is a single burst, not a pulse train")
+	_expect(is_equal_approx(kame._beam_width(),
+			CrawlerRules.KAME_RADIUS / LaserBeams.RADIUS)
+			and kame._beam_width() > 4.5,
+		"the drawn kame is the combat radius, not a capped basketball")
+	_expect(is_equal_approx(kame._scar_scale() * LaserEyes.SCAR_RADIUS,
+			CrawlerRules.KAME_RADIUS),
+		"the kame trench matches the beam")
 	if kame == null:
 		return
 	_expect(kame.press(), "kame starts the burst")
@@ -3336,6 +3339,8 @@ func _check_kame() -> void:
 		"size upgrades thicken the kame beam")
 	_expect(float(grown.get("beam_width", 0.0)) > CrawlerRules.KAME_BEAM_WIDTH,
 		"size upgrades widen the drawn kame beam")
+	_expect(float(grown.get("radius", 0.0)) / LaserBeams.RADIUS > 4.5,
+		"size upgrades draw a kame thicker than the old visual cap")
 	_expect(_player.crawler_kit.upgrade_card(card.uid, "knockback"),
 		"kame knockback can be upgraded")
 	_expect(float(_player.crawler_kit.stats_for(card).get("knockback", 0.0))
@@ -3394,7 +3399,7 @@ func _check_nausicaa() -> void:
 			and CrawlerRules.NAUSICAA_COOLDOWN > CrawlerRules.LASER_COOLDOWN
 			and CrawlerRules.NAUSICAA_DELAY > 0.0
 			and CrawlerRules.NAUSICAA_RADIUS > 0.45,
-		"nausicaa is a short delayed terrain sweep")
+		"nausicaa is a short delayed beam sweep")
 	_expect(CrawlerProgress.ability_stock().has("nausicaa")
 			and CrawlerProgress.ability_price("nausicaa") > 0,
 		"the ability stall sells nausicaa")
@@ -3714,14 +3719,18 @@ func _check_field_cast(card: CrawlerCard) -> void:
 	_player.global_position = Vector3(4.0, 2.0, 1.0)
 	_expect(ability.press(), "a field starts the stand-still")
 	_expect(_player.field_casting(), "the stand-still roots the caster")
+	_expect(not _field_volumes().is_empty(), "the sphere starts with the stand")
 	ability.tick(maxf(wait - 0.05, 0.0))
-	_expect(_field_volumes().is_empty(), "the sphere waits out the stand")
+	_expect(_player.field_casting() and not _field_volumes().is_empty(),
+		"the sphere stays up while the caster is rooted")
 	ability.tick(0.10)
-	_expect(not _field_volumes().is_empty(), "the sphere appears after the stand")
+	_expect(not _player.field_casting() and not _field_volumes().is_empty(),
+		"the root ends after the stand and the sphere stays")
 	ability.cancel()
 	_free_fields()
 	_player.global_position = Vector3(4.0, 2.0, 1.0)
 	_expect(ability.press(), "a second cast can start")
+	_expect(not _field_volumes().is_empty(), "a second cast summons immediately")
 	_player.global_position += Vector3(CrawlerRules.FIELD_CAST_BREAK + 0.5, 0.0, 0.0)
 	ability.tick(0.05)
 	_expect(not ability.is_held() and _field_volumes().is_empty(),
@@ -4148,9 +4157,19 @@ func _check_hero_page() -> void:
 	_expect(page.find_child("CrawlerInventorySlots", true, false) != null,
 		"hero page builds the inventory grid")
 	var bag_scroll := page.find_child("CrawlerInventoryScroll", true, false) as ScrollContainer
+	var side := page.find_child("CrawlerSideColumn", true, false)
+	var bag_frame := page.find_child("CrawlerInventoryFrame", true, false)
 	_expect(bag_scroll != null, "mod tiles sit in a scroll")
 	_expect(bag_scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_AUTO,
 		"the bag scrolls instead of growing the page")
+	_expect(side != null and bag_frame != null and bag_frame.get_parent() == side,
+		"mod inventory sits under the description on the right")
+	var ability_scroll := page.find_child(
+		"CrawlerAbilityScroll", true, false) as ScrollContainer
+	_expect(ability_scroll != null
+			and ability_scroll.vertical_scroll_mode
+				== ScrollContainer.SCROLL_MODE_DISABLED,
+		"three ability rows fit without a scrollbar")
 	var bag_grid := page.find_child("CrawlerInventorySlots", true, false)
 	_expect(bag_grid != null and bag_grid.get_parent() == bag_scroll,
 		"the inventory grid is the scroll child")
@@ -4170,6 +4189,22 @@ func _check_hero_page() -> void:
 	var bag_one := page.find_child("CrawlerBag_1", true, false) as RedItemSlot
 	_expect(bag_one != null and bag_one.item_id().is_empty(),
 		"starter bag does not seat laser eyes")
+	CrtType.watch(page)
+	CrtType.dress_tree(page)
+	var bag_icon := bag_one.find_child("ItemIcon", true, false) as TextureRect
+	var bag_crt := CrtType.host_of(bag_icon)
+	_expect(bag_crt != null and bag_crt.chromatic() < 0.5,
+		"hero bag mod icons drop chromatic aberration")
+	_expect(bag_crt != null and bag_crt.glitch > 0.0
+			and bag_crt.glitch < CrtType.MENU_TYPE_GLITCH,
+		"hero bag mod tiles keep a lighter tear")
+	var seated_mod := eyes.mod_slots()[0] if not eyes.mod_slots().is_empty() else null
+	var seated_icon := seated_mod.find_child("ItemIcon", true, false) as TextureRect \
+		if seated_mod != null else null
+	var seated_crt := CrtType.host_of(seated_icon)
+	_expect(seated_crt != null and seated_crt.chromatic() < 0.5
+			and seated_crt.glitch < CrtType.MENU_TYPE_GLITCH,
+		"ability-card mod icons drop chromatic aberration")
 	var body := page.find_child("CrawlerDescriptionBody", true, false) as Label
 	_expect(body != null, "hero page has a description box")
 	eyes.picked.emit(eyes)
@@ -4228,19 +4263,18 @@ func _check_hero_page() -> void:
 		"upgraded laser eyes show the boost beside the base")
 	var stats_toggle := page.find_child("StatsToggle", true, false) as Button
 	var stats_frame := page.find_child("StatsFrame", true, false) as Control
-	_expect(stats_toggle != null and stats_frame != null
-			and not stats_frame.visible,
-		"hero stats start hidden")
-	stats_toggle.pressed.emit()
-	_expect(stats_frame.visible, "stats button opens the live readout")
+	_expect(stats_toggle == null and stats_frame != null and stats_frame.visible
+			and stats_frame.find_parent("CharacterFrame") != null
+			and stats_frame.find_parent("CharacterStage") == null,
+		"hero stats sit under the portrait")
 	_expect(page.find_child("StatsScroll", true, false) != null,
-		"the stats overlay scrolls so every row stays reachable")
+		"the stats panel scrolls so every row stays reachable")
 	for stat_id: String in CrawlerProgress.STAT_ORDER:
 		var row := page.find_child("Stat_%s" % stat_id, true, false) as Control
 		var value := page.find_child("Stat_%s_Value" % stat_id, true, false) as Label
 		_expect(row != null and row.visible and value != null
 				and not value.text.is_empty(),
-			"stats button lists live %s" % stat_id)
+			"hero stats list live %s" % stat_id)
 	var health_value := page.find_child("Stat_health_Value", true, false) as Label
 	_expect(health_value != null and not health_value.text.contains("("),
 		"base player health has no boost yet")
@@ -4256,7 +4290,7 @@ func _check_hero_page() -> void:
 	_expect(health_value != null and health_value.text.contains("(+"),
 		"homescreen gem ranks join in-run health in parentheses")
 	CrawlerMeta.begin_test()
-	_player.award_crawler_kill(1, "", Vector3.ZERO)
+	_player.award_crawler_kill(1, "", Vector3.ZERO, 0.0)
 	_expect(CrawlerMeta.gems() == CrawlerMeta.kill_gems(1),
 		"killing a crawler mob grants persistent gems")
 	var bag := page.find_child("CrawlerBag_0", true, false) as RedItemSlot
@@ -4334,13 +4368,69 @@ func _check_hero_page() -> void:
 			and not star_tile.rejects_held_mod()
 			and eyes_reject != null and not eyes_reject.visible,
 		"X marks hide when the held card is an ability")
+	_player.crawler_progress.grant_hat(CrawlerProgress.HAT_LEARNED, true)
+	_player.crawler_progress.grant_cape(CrawlerProgress.CAPE_GOLD, true)
+	_player.refresh_crawler_look()
+	page.refresh()
+	var hat_slot := page.find_child("HatSlot", true, false) as RedItemSlot
+	var cape_slot := page.find_child("CapeSlot", true, false) as RedItemSlot
+	var juke_slot := page.find_child("JukeSlot", true, false) as RedItemSlot
+	var desc_title := page.find_child("CrawlerDescriptionTitle", true, false) as Label
+	_expect(hat_slot != null and hat_slot.item_id() == CrawlerProgress.HAT_LEARNED,
+		"hero portrait wears the learned cap")
+	_expect(cape_slot != null and cape_slot.item_id() == CrawlerProgress.CAPE_GOLD,
+		"hero portrait wears the gold cape")
+	_expect(juke_slot != null and juke_slot.item_id() == CrawlerProgress.STAT_JUKE
+			and juke_slot.badge == "JUKE",
+		"hero portrait shows the juke tile at the lower left")
+	if hat_slot != null:
+		hat_slot.picked.emit(hat_slot)
+	_expect(hat_slot != null and hat_slot.selected,
+		"clicking the worn hat selects its portrait tile")
+	_expect(desc_title != null and desc_title.text.contains("LEARNED"),
+		"clicking the worn hat titles the description panel")
+	_expect(body.text.contains("fourth ability")
+			and body.text.to_upper().contains("EFFECTS"),
+		"clicking the worn hat lists its description and effects")
+	if cape_slot != null:
+		cape_slot.picked.emit(cape_slot)
+	_expect(cape_slot != null and cape_slot.selected
+			and (hat_slot == null or not hat_slot.selected),
+		"clicking the worn cape selects its portrait tile")
+	_expect(desc_title != null and desc_title.text.contains("GOLD"),
+		"clicking the worn cape titles the description panel")
+	_expect(body.text.contains("Q")
+			and body.text.to_upper().contains("EFFECTS"),
+		"clicking the worn cape lists its description and effects")
+	if juke_slot != null:
+		juke_slot.picked.emit(juke_slot)
+	_expect(juke_slot != null and juke_slot.selected
+			and (hat_slot == null or not hat_slot.selected)
+			and (cape_slot == null or not cape_slot.selected),
+		"clicking juke selects its portrait tile")
+	_expect(desc_title != null and desc_title.text.contains("JUKE"),
+		"clicking juke titles the description panel")
+	_expect(body.text.contains("F")
+			and body.text.to_upper().contains("EFFECTS"),
+		"clicking juke lists its description and effects")
+	page.select_token(eyes_token)
+	_expect((hat_slot == null or not hat_slot.selected)
+			and (cape_slot == null or not cape_slot.selected)
+			and (juke_slot == null or not juke_slot.selected)
+			and body.text.to_upper().contains("BEAM"),
+		"selecting an ability returns the description panel to that card")
 	page.queue_free()
 	var dropped := DroppedCrawlerCard.new()
 	dropped.configure(1, {"id": "laser_eyes", "mods": []})
 	add_child(dropped)
 	_expect(dropped.find_child("CardVisual", true, false) != null,
 		"dropped ability becomes a world tile")
+	_expect(DroppedWorldMotion.HOVER_HEIGHT <= 0.5
+			and dropped.find_child("PickupBeacon", true, false) != null
+			and dropped.find_child("BeaconCore", true, false) != null,
+		"dropped tiles sit on the ground over a local god-ray")
 	dropped.global_position = Vector3(0.0, 3.2, 0.0)
+	dropped.begin_settle()
 	dropped.begin_settle_to(Vector3(0.0, 0.3, 0.0))
 	var start_y := dropped.global_position.y
 	dropped._process(0.35)
@@ -4348,15 +4438,21 @@ func _check_hero_page() -> void:
 		"dropped tiles fall toward the ground")
 	dropped._process(1.0)
 	_expect(is_equal_approx(dropped.global_position.y, 0.3),
-		"dropped tiles settle on the ground")
+		"dropped tiles settle on the ground site")
+	var card_visual := dropped.find_child("CardVisual", true, false) as Node3D
+	_expect(card_visual != null
+			and not is_zero_approx(card_visual.rotation.y)
+			and absf(card_visual.position.y) > 0.02,
+		"settled tiles keep spinning and bobbing")
 	dropped.queue_free()
 	var hat := DroppedCrawlerHat.new()
 	hat.configure(2, CrawlerProgress.HAT_MISSILE)
 	add_child(hat)
 	_expect(hat.find_child("HatVisual", true, false) != null
 			and hat.find_child("HatGlow", true, false) != null
-			and hat.find_child("HatLamp", true, false) != null,
-		"dropped hats show a glowing spinning model")
+			and hat.find_child("HatLamp", true, false) != null
+			and hat.find_child("PickupBeacon", true, false) != null,
+		"dropped hats show a glowing spinning model over a local god-ray")
 	hat.queue_free()
 
 
@@ -4371,15 +4467,16 @@ func _check_sandbox_cheats() -> void:
 			and not CrawlerRules.sandbox_no_mobs()
 			and not CrawlerRules.sandbox_infinite_gold(),
 		"sandbox starts invincible and fast")
-	_expect(CrawlerProgress.ability_stock().has("grapple")
-			and CrawlerProgress.ability_stock().has("lasso")
-			and CrawlerProgress.ability_stock().has("laser_eyes")
+	_expect(CrawlerProgress.ability_stock().has("laser_eyes")
 			and CrawlerProgress.shop_stock().has("wobble"),
 		"sandbox store keeps every catalog ability and mod")
 	_player._waypoints_wanted = true
 	_player._apply_tilde_overlay()
 	_expect(_player._coordinates_wanted,
 		"sandbox tilde shows patches and names")
+	if _player._land_patches != null:
+		_expect(_player._land_patches.visible,
+			"sandbox tilde draws patch boundaries")
 	var extra := Landmark.new()
 	extra.title = "Vacationer's Landing"
 	extra.waypoint = true
@@ -4458,13 +4555,22 @@ func _check_sandbox_cheats() -> void:
 	await get_tree().process_frame
 	CrawlerRules.clear_sandbox_cheats()
 	NetworkManager.session_options["mode"] = saved_mode
-	_expect(not CrawlerProgress.ability_stock().has("grapple")
-			and not CrawlerProgress.ability_stock().has("lasso"),
-		"crawler store still hides unused abilities")
+	_expect(not CrawlerCatalog.has("grapple")
+			and not CrawlerCatalog.has("lasso"),
+		"grapple and lasso stay out of the catalog")
 	_player.crawler_progress.gold = saved_gold
 	_player.crawler_progress.remember()
 	_player._apply_crawler_limits()
 	_player._flight_fuel = 1.0
+	_player._waypoints_wanted = true
+	_player._apply_tilde_overlay()
+	_expect(not _player._coordinates_wanted,
+		"crawler tilde hides patches and names")
+	if _player._land_patches != null:
+		_expect(not _player._land_patches.visible,
+			"crawler tilde hides patch boundaries")
+	_player._waypoints_wanted = false
+	_player._apply_tilde_overlay()
 
 
 func _check_teammate_waypoint() -> void:
@@ -4503,6 +4609,7 @@ func _check_teammate_waypoint() -> void:
 
 func _check_city_shop_hours() -> void:
 	var saved_mode := str(NetworkManager.session_options.get("mode", "crawler"))
+	var saved_session := CrawlerProgress.session_payload.duplicate(true)
 	NetworkManager.session_options["mode"] = "crawler"
 	var progress := CrawlerProgress.new()
 	progress.statue_seed = 91031
@@ -4526,10 +4633,26 @@ func _check_city_shop_hours() -> void:
 	_expect(progress.open_shops_for("city").has("hats")
 			and progress.open_shops_for("city").has("abilities"),
 		"a new run still forces first-city hat and ability stalls")
+	progress.set_shops_unlimited(true)
+	_expect(progress.open_shops_for("city").size() == CrawlerProgress.SHOP_IDS.size()
+			and progress.open_shops_for("22").size() == CrawlerProgress.SHOP_IDS.size(),
+		"infinite stores open every stall")
+	progress.set_shops_unlimited(false)
+	_expect(CrawlerProgress.hat_stock().has(CrawlerProgress.HAT_BAZAAR),
+		"the hat stall stocks the bazaar fedora")
+	var held_hat := progress.worn_hat
+	progress.grant_hat(CrawlerProgress.HAT_BAZAAR, true)
+	_expect(progress.wearing_bazaar_hat() and progress.shops_are_unlimited()
+			and progress.open_shops_for("22").size() == CrawlerProgress.SHOP_IDS.size(),
+		"the bazaar fedora opens every stall while worn")
+	progress.note_worn(held_hat)
+	_expect(not progress.shops_are_unlimited(),
+		"taking the fedora off returns ordinary shop hours")
 	NetworkManager.session_options["mode"] = "sandbox"
 	_expect(progress.open_shops_for("city").size() == CrawlerProgress.SHOP_IDS.size(),
 		"sandbox keeps every stall open")
 	NetworkManager.session_options["mode"] = "crawler"
+	CrawlerProgress.session_payload = saved_session
 	var ring := CrawlerCityRing.new()
 	ring.configure(-1, Transform3D.IDENTITY)
 	add_child(ring)
@@ -4539,6 +4662,12 @@ func _check_city_shop_hours() -> void:
 	menu.configure(_player)
 	add_child(menu)
 	await get_tree().process_frame
+	var tab_row_1 := menu.find_child("StoreTabRow1", true, false) as HBoxContainer
+	var tab_row_2 := menu.find_child("StoreTabRow2", true, false) as HBoxContainer
+	_expect(tab_row_1 != null and tab_row_1.get_child_count() == 6,
+		"the first store tab row holds six stalls")
+	_expect(tab_row_2 != null and tab_row_2.get_child_count() == 6,
+		"the second store tab row holds six stalls")
 	var inv_stamp := menu.find_child("StoreTabClosed_inventory", true, false) as Label
 	var rest_stamp := menu.find_child("StoreTabClosed_reststop", true, false) as Label
 	var hat_stamp := menu.find_child("StoreTabClosed_hats", true, false) as Label
@@ -4558,6 +4687,15 @@ func _check_city_shop_hours() -> void:
 			closed_count += 1
 	_expect(closed_count >= 6 and closed_count <= 7,
 		"closed first-city stalls show CLOSED")
+	_player.crawler_progress.set_shops_unlimited(true)
+	await get_tree().process_frame
+	var reopened := 0
+	for id: String in CrawlerProgress.SHOP_IDS:
+		var stamp := menu.find_child("StoreTabClosed_%s" % id, true, false) as Label
+		if stamp != null and stamp.visible:
+			reopened += 1
+	_expect(reopened == 0, "infinite stores hide the CLOSED stamps")
+	_player.crawler_progress.set_shops_unlimited(false)
 	var hat_icon := menu.find_child("StoreTabIcon_hats", true, false) as TextureRect
 	var inv_icon := menu.find_child("StoreTabIcon_inventory", true, false) as TextureRect
 	var rest_icon := menu.find_child("StoreTabIcon_reststop", true, false) as TextureRect
@@ -4570,6 +4708,18 @@ func _check_city_shop_hours() -> void:
 		"the rest stop tab has no stall icon")
 	_expect(locker_icon != null and not locker_icon.visible,
 		"the locker tab has no stall icon")
+	var saved_hats := _player.crawler_progress.owned_hats.duplicate()
+	var saved_worn := _player.crawler_progress.worn_hat
+	_player.crawler_progress.grant_hat(CrawlerProgress.HAT_BAZAAR, true)
+	await get_tree().process_frame
+	var fedora_closed := 0
+	for id: String in CrawlerProgress.SHOP_IDS:
+		var stamp := menu.find_child("StoreTabClosed_%s" % id, true, false) as Label
+		if stamp != null and stamp.visible:
+			fedora_closed += 1
+	_expect(fedora_closed == 0, "the bazaar fedora hides the CLOSED stamps")
+	_player.crawler_progress.owned_hats = saved_hats
+	_player.crawler_progress.note_worn(saved_worn)
 	menu.queue_free()
 	ring.queue_free()
 	await get_tree().process_frame
@@ -4577,6 +4727,11 @@ func _check_city_shop_hours() -> void:
 
 
 func _check_later_cities() -> void:
+	var spawn := CrawlerSite.new()
+	spawn.site_id = CrawlerRules.START_SITE_ID
+	spawn.title = CrawlerRules.START_SITE_TITLE
+	spawn.enter_radius = 40.0
+	add_child(spawn)
 	var first := CrawlerCityRing.new()
 	first.configure(-1, Transform3D.IDENTITY)
 	add_child(first)
@@ -4607,6 +4762,7 @@ func _check_later_cities() -> void:
 	_expect(first_mark != null and first_mark.waypoint
 			and first_mark.title == CrawlerRules.CITY_SITE_TITLE,
 		"Neon Fjord still starts on tilde")
+	_expect(not spawn.waypoint, "Tide Margin stays off tilde at the start")
 	_expect(crescent_mark != null and not crescent_mark.waypoint
 			and crescent_mark.title == CrawlerRules.CITY_CRESCENT_TITLE,
 		"Crescent Market stays off tilde at the start")
@@ -4631,19 +4787,22 @@ func _check_later_cities() -> void:
 	var ledger := CrawlerProgress.new()
 	ledger.unlock_site(CrawlerRules.CITY_SITE_ID)
 	CrawlerSites.apply_progress(ledger, get_tree())
-	_expect(crescent_mark.waypoint and lee_mark.waypoint,
+	_expect(crescent_mark.waypoint and lee_mark.waypoint and spawn.waypoint,
 		"a saved first-city visit restores the later maps")
 	crescent_mark.waypoint = false
 	lee_mark.waypoint = false
+	spawn.waypoint = false
 	CrawlerSites.schedule_later_city_unlock(_player, 0.05)
-	_expect(not crescent_mark.waypoint and not lee_mark.waypoint,
+	_expect(not crescent_mark.waypoint and not lee_mark.waypoint
+			and not spawn.waypoint,
 		"later cities wait out the city-enter delay")
 	await get_tree().create_timer(0.2).timeout
-	_expect(crescent_mark.waypoint and lee_mark.waypoint,
-		"entering Neon Fjord lights the later towns after a short wait")
+	_expect(crescent_mark.waypoint and lee_mark.waypoint and spawn.waypoint,
+		"entering Neon Fjord lights Tide Margin and Crescent after a short wait")
 	first.queue_free()
 	crescent.queue_free()
 	lee.queue_free()
+	spawn.queue_free()
 	await get_tree().process_frame
 
 
@@ -4697,6 +4856,22 @@ func _check_game_save() -> void:
 		"settings has a SAVE GAME action")
 	_expect(panel.find_child("SettingsLoadGame", true, false) != null,
 		"settings has a LOAD GAME action")
+	var display_tab := panel.find_child(
+		"SettingsTab_Display", true, false) as Button
+	var tab_rim := display_tab.get_node_or_null("RedGlowPanel") as RedGlowPanel \
+		if display_tab != null else null
+	if tab_rim == null and display_tab != null:
+		var tab_host := CrtType.host_of(display_tab)
+		tab_rim = tab_host.get_node_or_null("RedGlowPanel") as RedGlowPanel \
+			if tab_host != null else null
+	var tab_box := display_tab.get_theme_stylebox(&"normal") as StyleBoxFlat \
+		if display_tab != null else null
+	_expect(display_tab != null and tab_rim != null
+			and tab_rim.border_color.g > tab_rim.border_color.r
+			and tab_rim.border_width >= 2.0
+			and tab_box != null
+			and tab_box.get_border_width(SIDE_LEFT) == 0,
+		"selected settings tab wears its green rim on the outer edge")
 	panel.queue_free()
 	GameSave.clear_file()
 	await get_tree().process_frame
@@ -4774,15 +4949,25 @@ func _check_city_shop_stock() -> void:
 			"hats", hats[1] if hats.size() > 1 else sold_hat, "stock"),
 		"unlimited stores do not empty a bought slot")
 	var gold_before_grant := scratch.gold
-	scratch.grant_gold(CrawlerProgress.REST_GOLD_GRANT)
-	_expect(scratch.gold == gold_before_grant + CrawlerProgress.REST_GOLD_GRANT,
-		"the reststop gold grant adds 10,000")
+	scratch.set_gold_unlimited(true)
+	_expect(scratch.gold_unlimited
+			and scratch.gold == gold_before_grant
+			and scratch.has_gold(CrawlerRules.SANDBOX_GOLD)
+			and scratch.spend_gold(80)
+			and scratch.gold == gold_before_grant,
+		"the reststop gold grant is infinite")
+	scratch.set_gold_unlimited(false)
+	_expect(not scratch.gold_unlimited and scratch.gold == gold_before_grant,
+		"infinite gold can be switched back off")
+	scratch.set_gold_unlimited(true)
 	var unlimited_restored := CrawlerProgress.new()
 	unlimited_restored.from_dict(scratch.to_dict())
 	_expect(unlimited_restored.shops_unlimited
+			and unlimited_restored.gold_unlimited
 			and unlimited_restored.gold == scratch.gold,
 		"unlimited stores and the gold grant persist")
 	scratch.set_shops_unlimited(false)
+	scratch.set_gold_unlimited(false)
 	scratch.force_shop_offers("alpha", "abilities", PackedStringArray(["starfire"]))
 	scratch.force_shop_offers("beta", "abilities", PackedStringArray(["starfire"]))
 	scratch.force_shop_offers("alpha", "hats", PackedStringArray([
@@ -4875,6 +5060,20 @@ func _check_city_shop_stock() -> void:
 		"hats that were not rolled stay off the floor")
 	_expect(refresh != null and refresh.visible and refresh.text.contains("1"),
 		"the hat stall offers a refresh at the first reroll price")
+	var refresh_crt := CrtType.host_of(refresh)
+	_expect(refresh_crt != null and refresh_crt.glitch > 0.0
+			and refresh_crt.chromatic() < 0.5,
+		"store refresh wears slightly glitched type without chromatic aberration")
+	var hats_tab := menu.find_child("StoreTabButton_hats", true, false) as Button
+	var hats_tab_crt := CrtType.host_of(hats_tab)
+	_expect(hats_tab != null and hats_tab_crt != null
+			and hats_tab_crt.glitch > 0.0 and hats_tab_crt.chromatic() < 0.5,
+		"store tab buttons wear slightly glitched type without chromatic aberration")
+	var hat_icon := menu.find_child("HatIcon_crawler_gale_hat", true, false)
+	var hat_icon_crt := CrtType.host_of(hat_icon)
+	_expect(hat_icon != null and hat_icon_crt != null
+			and hat_icon_crt.chromatic() > 0.5,
+		"store hat icons keep chromatic aberration")
 	_expect(_player.buy_crawler_hat(CrawlerProgress.HAT_ID),
 		"an in-stock hat can still be bought")
 	await get_tree().process_frame
@@ -5076,10 +5275,36 @@ func _check_level_tiles() -> void:
 			and rarity.get_theme_color(&"font_color") == ink,
 		"spend copy uses the offer rarity color")
 	await get_tree().process_frame
-	_expect(title != null and CrtType.host_of(title) != null
+	var crt := CrtType.host_of(title)
+	_expect(title != null and crt != null
 			and CrtType.host_of(boost) != null
 			and CrtType.host_of(rarity) != null,
 		"spend copy wears the CRT type")
+	_expect(crt != null and crt.glitch > 0.0 and crt.chromatic() > 0.5,
+		"spend titles wear glitched type with chromatic aberration")
+	var spend_rim: RedGlowPanel = null
+	var spend_walk: Node = title
+	while spend_walk != null and spend_rim == null:
+		spend_rim = spend_walk.get_node_or_null("RedGlowPanel") as RedGlowPanel
+		spend_walk = spend_walk.get_parent()
+	_expect(spend_rim != null and spend_rim.crt_material() != null
+			and spend_rim.crt_material().shader != null,
+		"spend plates wear the CRT rim")
+	var hint := menu.find_child("SpendHint", true, false) as Label
+	var hint_host := CrtType.host_of(hint)
+	_expect(hint != null and hint_host != null and hint_host.chromatic() < 0.5,
+		"small spend copy drops chromatic aberration")
+	var doomed := Label.new()
+	doomed.text = "queued crt dress"
+	add_child(doomed)
+	doomed.queue_free()
+	CrtType._dress_later(doomed)
+	_expect(CrtType.host_of(doomed) == null,
+		"CRT will not wrap a label already queued for free")
+	var clock_a := crt.clock() if crt != null else 0.0
+	await get_tree().create_timer(0.05).timeout
+	_expect(crt != null and crt.clock() > clock_a,
+		"CRT type keeps tearing after the first frame")
 	var reroll := menu.find_child("RerollOffers", true, false) as Button
 	_player.crawler_progress.gold = 0
 	menu._refresh()
@@ -5090,6 +5315,22 @@ func _check_level_tiles() -> void:
 	_expect(reroll != null and not reroll.disabled
 			and reroll.text.contains("1"),
 		"the first reroll is listed at one gold")
+	var auto := menu.find_child("AutoSelectToggle", true, false) as Button
+	_expect(auto != null and auto.text.contains("OFF")
+			and auto.text.contains("PRESS K TO TOGGLE"),
+		"the auto select button sits next to reroll and names the K toggle")
+	_expect(menu.find_child("LevelTab_Prefs", true, false) != null,
+		"the level-up menu has an Auto Select Prefs tab")
+	menu.show_tab(CrawlerLevelMenu.Tab.PREFS)
+	_expect(menu.current_tab() == CrawlerLevelMenu.Tab.PREFS,
+		"Auto Select Prefs is a second tab")
+	var flying := menu.find_child("AutoPref_flying", true, false) as CheckBox
+	var misc := menu.find_child("AutoPref_misc", true, false) as CheckBox
+	_expect(flying != null and flying.button_pressed,
+		"flying is selected by default")
+	_expect(misc != null and not misc.button_pressed,
+		"misc starts unchecked")
+	menu.show_tab(CrawlerLevelMenu.Tab.SPEND)
 	var click := InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
 	click.pressed = true
@@ -5101,6 +5342,7 @@ func _check_level_tiles() -> void:
 		"holding a spend tile spends the point")
 	if is_instance_valid(menu):
 		menu.queue_free()
+	await get_tree().process_frame
 
 
 func _check_level_offers() -> void:
@@ -5150,8 +5392,13 @@ func _check_level_offers() -> void:
 	_expect(CrawlerProgress.rarity_weights(3.0)[0]
 			< CrawlerProgress.rarity_weights(0.0)[0],
 		"luck lowers common weight")
+	_expect(is_equal_approx(CrawlerRules.upgrade_boost(1), 0.05)
+			and is_equal_approx(CrawlerRules.upgrade_boost(2), 0.10)
+			and is_equal_approx(CrawlerRules.upgrade_boost(3), 0.20)
+			and is_equal_approx(CrawlerRules.upgrade_scale(1), 1.05),
+		"stat boosts start at five percent and double each rank")
 	_expect(CrawlerProgress.offer_boost_text(
-			CrawlerProgress.STAT_DAMAGE, 1.0).contains("%"),
+			CrawlerProgress.STAT_DAMAGE, 1.0).contains("+5%"),
 		"damage boosts say the percent")
 	_expect(CrawlerProgress.offer_boost_text(
 			CrawlerProgress.STAT_KNOCKBACK, 1.0).contains("knockback"),
@@ -5186,22 +5433,25 @@ func _check_level_offers() -> void:
 	var payout := CrawlerProgress.new()
 	payout.ranks[CrawlerProgress.STAT_GOLD] = 1.0
 	payout.ranks[CrawlerProgress.STAT_XP] = 1.0
-	payout.ranks[CrawlerProgress.STAT_GEMS] = 1.0
+	payout.ranks[CrawlerProgress.STAT_GEMS] = 5.0
 	var base_gold := CrawlerProgress.kill_gold(5)
 	var base_xp := CrawlerProgress.kill_xp(5)
 	var base_gems := CrawlerMeta.kill_gems(5)
-	payout.award_kill(5)
+	payout.award_kill(5, "", 0.0)
 	_expect(payout.gold == CrawlerProgress.apply_gain(
-			base_gold, 1.0 + CrawlerProgress.GOLD_GAIN_PER_RANK),
-		"one gold rank raises kill gold by twelve percent")
+			base_gold, CrawlerRules.upgrade_scale(1)),
+		"one gold rank raises kill gold by five percent")
 	_expect(payout.lifetime_xp() == CrawlerProgress.apply_gain(
-			base_xp, 1.0 + CrawlerProgress.XP_GAIN_PER_RANK),
-		"one XP rank raises kill XP by twelve percent")
+			base_xp, CrawlerRules.upgrade_scale(1)),
+		"one XP rank raises kill XP by five percent")
 	_expect(payout.gems_earned == CrawlerProgress.apply_gain(
-			base_gems, 1.0 + CrawlerProgress.GEM_GAIN_PER_RANK),
-		"one gem rank raises kill gems by twelve percent")
+			base_gems, CrawlerRules.upgrade_scale(5)),
+		"gem ranks raise a dropped kill gem the same way gold scales")
+	var miss := CrawlerProgress.new()
+	miss.award_kill(5, "", 1.0)
+	_expect(miss.gems_earned == 0, "a failed gem roll pays no gems")
 	_expect(payout.scaled_site_gems() == CrawlerProgress.apply_gain(
-			CrawlerProgress.SITE_GEMS, 1.0 + CrawlerProgress.GEM_GAIN_PER_RANK),
+			CrawlerProgress.SITE_GEMS, CrawlerRules.upgrade_scale(5)),
 		"gem rank also raises site discovery gems")
 	var scratch := CrawlerProgress.new()
 	scratch.unspent = 1
@@ -5237,6 +5487,7 @@ func _check_level_offers() -> void:
 	scratch.unspent = 1
 	scratch.ranks[CrawlerProgress.STAT_DAMAGE] = 0.0
 	scratch.ranks[CrawlerProgress.STAT_DODGE] = 0.0
+	scratch.ranks[CrawlerProgress.STAT_HEALTH] = 0.0
 	scratch.force_level_offers([
 		CrawlerProgress.make_offer(
 			CrawlerProgress.STAT_HEALTH, CrawlerProgress.RARITY_UNCOMMON),
@@ -5247,19 +5498,50 @@ func _check_level_offers() -> void:
 		CrawlerProgress.make_offer(
 			CrawlerProgress.STAT_DAMAGE, CrawlerProgress.RARITY_LEGENDARY),
 	])
+	_expect(not CrawlerMeta.auto_select(),
+		"auto select starts off")
+	_expect(CrawlerMeta.auto_pref_on(CrawlerAutoSelect.PREF_FLYING)
+			and CrawlerMeta.auto_pref_on(CrawlerAutoSelect.PREF_HEALTH)
+			and CrawlerMeta.auto_pref_on(CrawlerAutoSelect.PREF_GREED)
+			and CrawlerMeta.auto_pref_on(CrawlerAutoSelect.PREF_STRENGTH)
+			and not CrawlerMeta.auto_pref_on(CrawlerAutoSelect.PREF_MISC),
+		"flying, health, greed, and strength start selected")
+	_expect(CrawlerAutoSelect.category_of(CrawlerProgress.STAT_FLIGHT)
+			== CrawlerAutoSelect.PREF_FLYING
+			and CrawlerAutoSelect.category_of(CrawlerProgress.STAT_HEALTH)
+			== CrawlerAutoSelect.PREF_HEALTH
+			and CrawlerAutoSelect.category_of(CrawlerStatue.HEAL_ID)
+			== CrawlerAutoSelect.PREF_HEALTH
+			and CrawlerAutoSelect.category_of(CrawlerProgress.STAT_XP)
+			== CrawlerAutoSelect.PREF_GREED
+			and CrawlerAutoSelect.category_of(CrawlerProgress.STAT_DAMAGE)
+			== CrawlerAutoSelect.PREF_STRENGTH
+			and CrawlerAutoSelect.category_of(CrawlerProgress.STAT_DODGE)
+			== CrawlerAutoSelect.PREF_MISC,
+		"auto prefs bucket flight, health, greed, strength, and leftover stats")
 	var auto_picks := scratch.auto_pick_offers()
 	_expect(auto_picks.size() == 2
 			and str((auto_picks[0] as Dictionary).get("id", "")) == CrawlerProgress.STAT_DAMAGE
-			and str((auto_picks[1] as Dictionary).get("id", "")) == CrawlerProgress.STAT_DODGE,
-		"auto level-up takes the highest rarity and the next offer")
+			and str((auto_picks[1] as Dictionary).get("id", "")) == CrawlerProgress.STAT_HEALTH,
+		"auto level-up takes the highest rarity matching the prefs")
+	CrawlerMeta.set_auto_pref(CrawlerAutoSelect.PREF_MISC, true)
+	var with_misc := scratch.auto_pick_offers()
+	_expect(with_misc.size() == 2
+			and str((with_misc[0] as Dictionary).get("id", "")) == CrawlerProgress.STAT_DAMAGE
+			and str((with_misc[1] as Dictionary).get("id", "")) == CrawlerProgress.STAT_DODGE,
+		"turning misc on lets leftover stats compete")
+	CrawlerMeta.set_auto_pref(CrawlerAutoSelect.PREF_MISC, false)
 	scratch.auto_claim_level_offers()
 	_expect(scratch.unspent == 0, "auto level-up spends the point")
 	_expect(is_equal_approx(scratch.rank_of(CrawlerProgress.STAT_DAMAGE),
 			CrawlerProgress.rarity_amount(CrawlerProgress.RARITY_LEGENDARY)),
 		"auto level-up applies the best rarity")
-	_expect(is_equal_approx(scratch.rank_of(CrawlerProgress.STAT_DODGE),
-			CrawlerProgress.rarity_amount(CrawlerProgress.RARITY_RARE)),
-		"auto level-up also applies a second stat")
+	_expect(is_equal_approx(scratch.rank_of(CrawlerProgress.STAT_HEALTH),
+			CrawlerProgress.rarity_amount(CrawlerProgress.RARITY_UNCOMMON)),
+		"auto level-up also applies the next matching pref")
+	CrawlerMeta.set_auto_select(true)
+	_expect(CrawlerMeta.auto_select(), "auto select prefs persist on the meta ledger")
+	CrawlerMeta.set_auto_select(false)
 
 
 func _health_level_offers() -> Array:
@@ -5323,10 +5605,13 @@ func _check_city_hats() -> void:
 	page.configure(_player)
 	add_child(page)
 	page.refresh()
-	_expect(page.find_child("CrawlerAbilityScroll", true, false) != null,
-		"hero ability rows sit in a scroll")
+	var ability_scroll := page.find_child(
+		"CrawlerAbilityScroll", true, false) as ScrollContainer
+	_expect(ability_scroll != null, "hero ability rows sit in a scroll")
 	_expect(page.find_child("CrawlerAbilityTile_3", true, false) != null,
 		"the hero page shows a fourth ability tile")
+	_expect(ability_scroll.vertical_scroll_mode == ScrollContainer.SCROLL_MODE_AUTO,
+		"a fourth ability row unlocks the ability scrollbar")
 	page.queue_free()
 	var store := CrawlerStoreUpgradesPage.new()
 	store.configure(_player)
@@ -5370,6 +5655,18 @@ func _check_city_hats() -> void:
 	poke.faction = DamageHit.Faction.ENEMY
 	_expect(_player.apply_damage(poke) > 0.0,
 		"the ordinance helm still takes ordinary hits")
+	var after_poke := _player.health()
+	AbilityImpact.apply(
+		_player,
+		ItemDB.ability_definition("nuke"),
+		_player.combat_position(),
+		Vector3.UP,
+		{"player_damage": 8.0, "radius": 6.0}
+	)
+	_expect(is_equal_approx(_player.health(), after_poke),
+		"the ordinance helm ignores a nuke self-blast")
+	_player._clear_ragdoll()
+	_player.velocity = Vector3.ZERO
 
 	progress.grant_hat(CrawlerProgress.HAT_RUBBER, true)
 	_player.refresh_crawler_look()
@@ -5424,6 +5721,32 @@ func _check_city_hats() -> void:
 	_player._juke_hat_strike()
 	_expect(foe.taken > 0.0, "the juke cap hurts a foe you dash through")
 	foe.free()
+
+	progress.grant_hat(CrawlerProgress.HAT_REPEATER, true)
+	_player.refresh_crawler_look()
+	_player._arrival_left = 0.0
+	_player._reveal_left = 0.0
+	_expect(progress.wearing_repeater_hat(), "granting the repeater cap puts it on")
+	_expect(is_equal_approx(
+			progress.repeater_interval(), CrawlerRules.REPEATER_HAT_INTERVAL),
+		"one repeater cap fires once a second")
+	_expect(progress.hat_description(progress.worn_hat).contains("once a second"),
+		"the repeater cap says it fires every ability")
+	var keep := progress.worn_hat
+	var other := progress.grant_hat(CrawlerProgress.HAT_REPEATER)
+	progress.gold += CrawlerProgress.HAT_MERGE_PRICE
+	_expect(progress.merge_hats(keep, other), "two repeater caps can fuse")
+	_expect(progress.repeater_interval() < CrawlerRules.REPEATER_HAT_INTERVAL,
+		"a fused repeater cap fires faster")
+	_expect(progress.hat_description(progress.worn_hat).contains("more often"),
+		"a stacked repeater cap says it fires more often")
+	var fired: PackedStringArray = PackedStringArray()
+	_player.ability_activated.connect(func(_index: int, ability_id: String) -> void:
+		fired.append(ability_id)
+	)
+	_player._repeater_cooldown = 0.0
+	_player._tick_repeater_hat(0.02)
+	_expect(not fired.is_empty(), "the repeater cap taps equipped abilities")
 	progress.note_worn("")
 	_player.refresh_crawler_look()
 
@@ -5453,41 +5776,38 @@ func _check_hud_slots() -> void:
 	bar.queue_free()
 
 
-func _check_fool_cape() -> void:
+func _check_fool_hat() -> void:
 	CrawlerKit.clear_session()
 	_player.crawler_kit.seed_starter()
 	var progress := _player.crawler_progress
 	progress.note_worn("")
 	_player.refresh_crawler_look()
 	_player.stats.set_health(_player.maximum_health())
-	_expect(CrawlerProgress.cape_stock().has(CrawlerProgress.CAPE_FOOL),
-		"the cape stall stocks the fool's teleport cape")
-	_expect(not ItemDB.paint_path(CrawlerProgress.CAPE_FOOL).is_empty(),
-		"the fool's cape has a paint texture")
+	_expect(CrawlerProgress.hat_stock().has(CrawlerProgress.HAT_FOOL),
+		"the hat stall stocks the fool's teleport cap")
+	_expect(not CrawlerProgress.cape_stock().has("crawler_fool_cape"),
+		"the cape stall no longer stocks the fool's cape")
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
 	var near := 0
 	var far := 0
 	var illegal := 0
 	for _index in 400:
-		var span := CrawlerRules.fool_cape_distance(rng)
-		if span < CrawlerRules.FOOL_CAPE_MIN - 0.001 \
-				or span > CrawlerRules.FOOL_CAPE_MAX + 0.001:
+		var span := CrawlerRules.fool_hat_distance(rng)
+		if span < CrawlerRules.FOOL_HAT_MIN - 0.001 \
+				or span > CrawlerRules.FOOL_HAT_MAX + 0.001:
 			illegal += 1
-		elif span <= CrawlerRules.FOOL_CAPE_LIKELY + 0.001:
+		elif span <= CrawlerRules.FOOL_HAT_LIKELY + 0.001:
 			near += 1
 		else:
 			far += 1
 	_expect(illegal == 0, "fool hops stay between five and twenty-five hundred metres")
 	_expect(near > far * 4, "most fool hops land inside twenty metres")
-	_expect(progress.grant_cape(CrawlerProgress.CAPE_FOOL, true),
-		"the run can be given the fool's cape")
+	_expect(not progress.grant_hat(CrawlerProgress.HAT_FOOL, true).is_empty(),
+		"the run can be given the fool's cap")
 	_player.refresh_crawler_look()
-	_expect(progress.wearing_fool_cape() and _player.wearing_fool_cape(),
-		"granting the fool's cape puts it on")
-	var cloth := Wardrobe.worn_node(_player.character, "cape") as CapeCloth
-	_expect(cloth != null and cloth.cape_paint != null,
-		"the worn fool's cape shows red splotches")
+	_expect(progress.wearing_fool_hat() and _player.wearing_fool_hat(),
+		"granting the fool's cap puts it on")
 	_player.global_position = Vector3(12.0, 3.0, -4.0)
 	_player.velocity = Vector3(6.0, 0.0, -2.0)
 	_player._fool_cape_lock = 0.0
@@ -5496,20 +5816,61 @@ func _check_fool_cape() -> void:
 	var before := _player.global_position
 	var poke := DamageHit.impact(_player.combat_position(), 1.0, 9.0)
 	poke.faction = DamageHit.Faction.ENEMY
-	_expect(_player.apply_damage(poke) > 0.0, "a hit still deals damage through the cape")
+	_expect(_player.apply_damage(poke) > 0.0, "a hit still deals damage through the cap")
 	_expect(_player.global_position.distance_to(before) > 8.0,
 		"a hit throws the wearer somewhere else")
 	_expect(_player.velocity.is_equal_approx(Vector3(6.0, 0.0, -2.0)),
-		"the fool's cape keeps the wearer's momentum")
+		"the fool's cap keeps the wearer's momentum")
 	var hopped := _player.global_position
 	_expect(_player.apply_damage(poke) > 0.0, "a second hit still hurts")
 	_expect(_player.global_position.is_equal_approx(hopped),
 		"the lock stops a second hop from the same blast")
 	_player._fool_cape_distance_override = -1.0
 	_player._fool_cape_dir_override = Vector3.ZERO
-	progress.note_worn_cape("")
+	progress.note_worn("")
 	_player.refresh_crawler_look()
-	_expect(not _player.wearing_fool_cape(), "taking the fool's cape off stops the hops")
+	_expect(not _player.wearing_fool_hat(), "taking the fool's cap off stops the hops")
+
+
+func _check_gold_cape() -> void:
+	CrawlerKit.clear_session()
+	_player.crawler_kit.seed_starter()
+	var progress := _player.crawler_progress
+	_expect(CrawlerProgress.cape_stock().has(CrawlerProgress.CAPE_GOLD),
+		"the cape stall stocks the gold cape")
+	var saved_capes := progress.owned_capes.duplicate()
+	var saved_worn := progress.worn_cape
+	if progress.owns_cape(CrawlerProgress.CAPE_GOLD):
+		progress.note_worn_cape(CrawlerProgress.CAPE_GOLD)
+	else:
+		_expect(progress.grant_cape(CrawlerProgress.CAPE_GOLD, true),
+			"the run can be given the gold cape")
+	_player.refresh_crawler_look()
+	_expect(progress.wearing_gold_cape() and _player.wearing_gold_cape(),
+		"granting the gold cape puts it on")
+	_player.stats.set_health(_player.maximum_health())
+	_expect(_player.request_cape_ability() and _player.gold_cape_active(),
+		"Q opens the gold cape window")
+	_expect(_player.cape_hud_visible() and _player.cape_ability_id() == CrawlerProgress.CAPE_GOLD,
+		"the HUD keeps a Q tile for the gold cape")
+	var dummy := _HatDummy.new()
+	add_child(dummy)
+	dummy.global_position = _player.global_position + Vector3(2.0, 0.0, 0.0)
+	var poke := DamageHit.impact(_player.combat_position(), 1.0, 22.0)
+	poke.faction = DamageHit.Faction.ENEMY
+	poke.set_source(dummy)
+	var hp := _player.health()
+	_expect(is_zero_approx(_player.apply_damage(poke)),
+		"the gold cape blocks the hit")
+	_expect(is_equal_approx(_player.health(), hp),
+		"the gold cape keeps health")
+	_expect(dummy.reflected > 0.0, "the gold cape throws the hit back")
+	_expect(_player.cape_ability_cooldown_remaining() > 0.0,
+		"the gold cape starts its rest")
+	dummy.queue_free()
+	progress.owned_capes = saved_capes
+	progress.note_worn_cape(saved_worn)
+	_player.refresh_crawler_look()
 
 
 func _check_city_bank() -> void:

@@ -9,6 +9,8 @@ uniform float flash : hint_range(0.0, 1.0) = 0.0;
 uniform sampler2D paint : source_color, hint_default_white;
 uniform float paint_mix : hint_range(0.0, 1.0) = 0.0;
 uniform float vertex_mix : hint_range(0.0, 1.0) = 0.18;
+uniform vec4 emit_color : source_color = vec4(0.0, 0.0, 0.0, 1.0);
+uniform float emit_energy : hint_range(0.0, 8.0) = 0.0;
 
 void fragment() {
 	vec4 painted = texture(paint, UV);
@@ -20,6 +22,7 @@ void fragment() {
 	vec3 rim = rim_color.rgb * fresnel * rim_strength;
 	ALBEDO = ink + rim;
 	EMISSION = rim * (0.55 + flash * 3.4)
+		+ emit_color.rgb * emit_energy * (1.0 - flash)
 		+ painted.rgb * painted.a * paint_mix * 0.45 * (1.0 - flash)
 		+ vec3(1.0, 0.06, 0.07) * flash * 4.2;
 }

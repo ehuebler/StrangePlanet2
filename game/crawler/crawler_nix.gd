@@ -9,8 +9,8 @@ const NIX_INK := Color(0.18, 0.32, 0.22)
 
 
 func _ready() -> void:
-	_base_health = 48.0
-	_base_damage = 10.0
+	_base_health = 4.0
+	_base_damage = 5.0
 	_base_speed = 11.0
 	super._ready()
 

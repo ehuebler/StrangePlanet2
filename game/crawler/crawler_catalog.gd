@@ -15,6 +15,7 @@ const TOKEN_PREFIX := "ck:"
 const FILTER_KIT := "crawler_kit"
 const FILTER_MOD := "crawler_mod"
 const TYPE_ICON_ROOT := "res://assets/runtime/abilities/icons/type_%s.svg"
+const JUKE_ICON := "res://assets/runtime/abilities/icons/juke.svg"
 const TYPE_ORDER := [
 	"beam",
 	"shockwave",
@@ -231,8 +232,6 @@ static func _element_description(mod_id: String, host_id: String) -> String:
 	var host := catalog_id(host_id)
 	var label := title_of(mod_id)
 	if is_ability(host):
-		if host == "grapple" or host == "lasso":
-			return "%s does not fit %s." % [label, title_of(host)]
 		if host == "overdrive":
 			return "While Overdrive is on, other abilities borrow this %s." % label.to_lower()
 		if host == "wall":
@@ -246,8 +245,6 @@ static func _element_description(mod_id: String, host_id: String) -> String:
 static func _multi_description(host_id: String) -> String:
 	var host := catalog_id(host_id)
 	if is_ability(host):
-		if host == "grapple" or host == "lasso":
-			return "Multi Shot does not fit %s." % title_of(host)
 		if host == "overdrive":
 			return "While Overdrive is on, other abilities borrow this Multi Shot."
 		match CrawlerRules.ability_type(host):
@@ -360,6 +357,8 @@ static func default_slots(id: String) -> int:
 
 
 static func icon_path(id: String) -> String:
+	if catalog_id(id) == CrawlerProgress.STAT_JUKE:
+		return JUKE_ICON
 	return str(entry(id).get("icon", ""))
 
 
@@ -372,10 +371,10 @@ static func icon(id: String) -> Texture2D:
 
 static func texture_for(id: String) -> Texture2D:
 	var clean := catalog_id(id)
+	var from_path := icon(clean)
+	if from_path != null:
+		return from_path
 	if has(clean):
-		var from_csv := icon(clean)
-		if from_csv != null:
-			return from_csv
 		var authored := ItemDB.ability_icon(clean)
 		if authored != null:
 			return authored

@@ -34,17 +34,19 @@ const HOLD := 0.16
 const FOLLOW_EYES := 0
 const FOLLOW_HANDS_MERGED := 1
 
-## How many short cylinders make a wobbling beam. Straight beams use the first
+## How many short stretches make a wobbling beam. Straight beams use the first
 ## one only. The wave is drawn along the shot, not by swinging the whole line.
-const WAVE_SEGS := 20
+const WAVE_SEGS := 8
+## Homing and bounce paths can carry more corners than a wobble. Cap so a
+## curved shot does not spawn a GLB for every authored point.
+const PATH_SEGS_MAX := 12
 
-## Core then glow, for each eye. Each entry is a chain of segments.
+## One EnergyVfx chain per eye-and-target. Each entry is a chain of segments.
 var _beams: Array[Array] = []
 var _lamp: OmniLight3D
 var _alive := 0.0
-var _core_material: StandardMaterial3D
-var _glow_material: StandardMaterial3D
 var _colour := COLOR
+var _invert := false
 var _width_scale := 1.0
 var _wobble := 0.0
 var _follow := FOLLOW_EYES
@@ -53,8 +55,6 @@ var _from_right := Vector3.ZERO
 var _target := Vector3.ZERO
 var _targets: PackedVector3Array = PackedVector3Array()
 var _paths: Array[PackedVector3Array] = []
-var _core_mesh: CylinderMesh
-var _glow_mesh: CylinderMesh
 var _pairs := 1
 ## Last soot mark this beam laid. Swept fire would otherwise stamp a decal
 ## every damage tick; one every three-quarters of a metre is enough to read.
@@ -68,16 +68,11 @@ var _far_cast := 0.0
 
 
 func _ready() -> void:
-	# Two passes over one line: an opaque core that reads against anything, and
-	# an additive sheath around it that does not. Additive alone disappears
-	# against bright ground, which is most of the ground there is.
-	_core_material = _material(CORE_COLOR, 4.0, false)
-	_glow_material = _material(COLOR, 2.4, true)
-	_core_mesh = _beam_mesh(RADIUS * CORE_SHARE, _core_material)
-	_glow_mesh = _beam_mesh(RADIUS, _glow_material)
+	# Authored core-beam GLB already has the white-hot blade and the glow
+	# sheath. One instance per segment; straight shots only ever light the
+	# first of each chain.
 	for _eye in 2:
-		_beams.append(_beam_chain(_core_mesh))
-		_beams.append(_beam_chain(_glow_mesh))
+		_beams.append([])
 	_pairs = 1
 
 	_lamp = OmniLight3D.new()
@@ -101,14 +96,15 @@ func _ready() -> void:
 ## Laser Eyes' red damage effect.
 func aim(left_eye: Vector3, right_eye: Vector3, at: Vector3,
 		colour: Color = COLOR, width_scale := 1.0, wobble := 0.0,
-		follow := FOLLOW_EYES, far_cast := 0.0) -> void:
+		follow := FOLLOW_EYES, far_cast := 0.0, invert := false) -> void:
 	aim_many(left_eye, right_eye, PackedVector3Array([at]), colour, width_scale,
-		wobble, follow, far_cast)
+		wobble, follow, far_cast, [], invert)
 
 
 func aim_many(left_eye: Vector3, right_eye: Vector3, targets: PackedVector3Array,
 		colour: Color = COLOR, width_scale := 1.0, wobble := 0.0,
-		follow := FOLLOW_EYES, far_cast := 0.0, paths: Array = []) -> void:
+		follow := FOLLOW_EYES, far_cast := 0.0, paths: Array = [],
+		invert := false) -> void:
 	if _beams.is_empty():
 		return
 	_from_left = left_eye
@@ -136,8 +132,12 @@ func aim_many(left_eye: Vector3, right_eye: Vector3, targets: PackedVector3Array
 			_roll_wobble()
 	else:
 		_wobble_rolled = false
-	_set_colour(colour)
-	_width_scale = clampf(width_scale, 0.35, 4.5)
+	_set_colour(colour, invert)
+	# World radius is [constant RADIUS] times this scale. Kame passes
+	# combat radius / RADIUS so the drawn cylinder matches the hit.
+	# A hard 4.5 cap used to freeze a boosted kame at basketball size
+	# while the trench and mob capsule kept growing.
+	_width_scale = clampf(width_scale, 0.2, 200.0)
 	_draw_now()
 	_lamp.global_position = _target
 	_lamp.visible = true
@@ -147,22 +147,20 @@ func aim_many(left_eye: Vector3, right_eye: Vector3, targets: PackedVector3Array
 	set_process(true)
 
 
-func _set_colour(colour: Color) -> void:
+func _set_colour(colour: Color, invert := false) -> void:
 	colour = Color(colour.r, colour.g, colour.b, 1.0)
-	if colour == _colour:
+	if colour == _colour and invert == _invert:
 		return
 	_colour = colour
-	var core_colour := CORE_COLOR if colour == COLOR \
-		else colour.lerp(Color.WHITE, 0.22)
-	_core_material.albedo_color = core_colour
-	_core_material.emission = core_colour
-	_glow_material.albedo_color = Color(colour, 0.72)
-	_glow_material.emission = colour
-	_lamp.light_color = colour
-	var laser_eyes := colour == COLOR
-	_core_material.emission_energy_multiplier = 4.0 if laser_eyes else 1.8
-	_glow_material.emission_energy_multiplier = 2.4 if laser_eyes else 1.2
-	_lamp.light_energy = 3.4 if laser_eyes else 2.0
+	_invert = invert
+	for chain: Array in _beams:
+		for beam: Variant in chain:
+			var effect := beam as EnergyVfx
+			if effect != null:
+				effect.set_tint(colour, invert)
+	if _lamp != null:
+		_lamp.light_color = colour
+		_lamp.light_energy = 3.4 if colour == COLOR else 2.0
 
 
 ## Takes the beams down now, for the firing player letting go.
@@ -264,10 +262,8 @@ func _follow_eyes() -> void:
 func _ensure_pairs(count: int) -> void:
 	var wanted := maxi(count, 1)
 	while _pairs < wanted:
-		_beams.append(_beam_chain(_core_mesh))
-		_beams.append(_beam_chain(_glow_mesh))
-		_beams.append(_beam_chain(_core_mesh))
-		_beams.append(_beam_chain(_glow_mesh))
+		_beams.append([])
+		_beams.append([])
 		_pairs += 1
 
 
@@ -292,10 +288,8 @@ func _draw_now() -> void:
 func _draw_path(eye: int, from: Vector3, path: PackedVector3Array,
 		slot := -1) -> void:
 	var chain := eye if slot < 0 else slot
-	if chain < 0 or chain * 2 + 1 >= _beams.size():
+	if chain < 0 or chain >= _beams.size():
 		return
-	var core: Array = _beams[chain * 2]
-	var glow: Array = _beams[chain * 2 + 1]
 	var points := PackedVector3Array()
 	points.append(from)
 	for index in range(1, path.size()):
@@ -305,42 +299,44 @@ func _draw_path(eye: int, from: Vector3, path: PackedVector3Array,
 		_draw_eye(eye, from, points[points.size() - 1] if points.size() > 1 \
 			else from, slot)
 		return
-	for index in WAVE_SEGS:
+	if segs > PATH_SEGS_MAX:
+		points = _resample_path(points, PATH_SEGS_MAX)
+		segs = points.size() - 1
+	var beams: Array = _beams[chain]
+	_ensure_chain(beams, segs)
+	for index in beams.size():
 		if index < segs:
-			_place(core[index], points[index], points[index + 1])
-			_place(glow[index], points[index], points[index + 1])
+			_place(beams[index], points[index], points[index + 1])
 		else:
-			(core[index] as MeshInstance3D).visible = false
-			(glow[index] as MeshInstance3D).visible = false
+			(beams[index] as EnergyVfx).visible = false
 
 
 func _hide_eye(slot: int) -> void:
-	if slot < 0 or slot * 2 + 1 >= _beams.size():
+	if slot < 0 or slot >= _beams.size():
 		return
-	var core: Array = _beams[slot * 2]
-	var glow: Array = _beams[slot * 2 + 1]
-	for index in WAVE_SEGS:
-		(core[index] as MeshInstance3D).visible = false
-		(glow[index] as MeshInstance3D).visible = false
+	var beams: Array = _beams[slot]
+	for beam: Variant in beams:
+		(beam as EnergyVfx).visible = false
 
 
 func _draw_eye(eye: int, from: Vector3, to: Vector3, slot := -1) -> void:
 	var chain := eye if slot < 0 else slot
-	if chain < 0 or chain * 2 + 1 >= _beams.size():
+	if chain < 0 or chain >= _beams.size():
 		return
-	var core: Array = _beams[chain * 2]
-	var glow: Array = _beams[chain * 2 + 1]
+	var beams: Array = _beams[chain]
 	if _wobble <= 0.001:
-		_place(core[0], from, to)
-		_place(glow[0], from, to)
-		for index in range(1, WAVE_SEGS):
-			(core[index] as MeshInstance3D).visible = false
-			(glow[index] as MeshInstance3D).visible = false
+		_ensure_chain(beams, 1)
+		_place(beams[0], from, to)
+		for index in range(1, beams.size()):
+			(beams[index] as EnergyVfx).visible = false
 		return
 	var points := _wave_points(from, to, eye)
-	for index in WAVE_SEGS:
-		_place(core[index], points[index], points[index + 1])
-		_place(glow[index], points[index], points[index + 1])
+	_ensure_chain(beams, WAVE_SEGS)
+	for index in beams.size():
+		if index < WAVE_SEGS:
+			_place(beams[index], points[index], points[index + 1])
+		else:
+			(beams[index] as EnergyVfx).visible = false
 
 
 func _wave_points(from: Vector3, to: Vector3, eye: int) -> PackedVector3Array:
@@ -394,84 +390,43 @@ func _roll_wobble() -> void:
 	_wobble_rolled = true
 
 
-## Stretches one beam between two points. A cylinder stands along its own +Y, so
-## the placement is a basis whose Y runs down the beam and whose scale carries
-## the length — which also means the beam does not get fatter as it gets longer.
-## Width is applied here; setting `scale` on the node is overwritten by this
-## transform and would never show.
-func _place(beam: MeshInstance3D, from: Vector3, to: Vector3) -> void:
-	var along := to - from
-	var span := along.length()
-	if span < 0.001:
-		beam.visible = false
+## Stretches one authored core-beam between two points. The GLB stands along
+## its own +Y at a fixed length, so the placement scales that axis to the
+## span and never fattens the glow as the shot gets longer.
+func _place(beam: EnergyVfx, from: Vector3, to: Vector3) -> void:
+	if beam == null:
 		return
-	var up := along / span
-	var side := up.cross(Vector3.UP if absf(up.y) < 0.9 else Vector3.RIGHT)
-	if side.length_squared() < 0.000001:
-		beam.visible = false
-		return
-	side = side.normalized() * _width_scale
-	beam.global_transform = Transform3D(
-		Basis(side, up * span, side.cross(up).normalized() * _width_scale),
-		from + along * 0.5)
-	beam.visible = true
-	beam.reset_physics_interpolation()
+	beam.place_beam(from, to, RADIUS * _width_scale)
 
 
 func _hide() -> void:
 	for chain: Array in _beams:
 		for beam: Variant in chain:
-			(beam as MeshInstance3D).visible = false
+			(beam as EnergyVfx).visible = false
 	if _lamp != null:
 		_lamp.visible = false
 
 
-func _beam_chain(mesh: CylinderMesh) -> Array:
-	var chain: Array = []
-	for _index in WAVE_SEGS:
-		chain.append(_beam_node(mesh))
-	return chain
+func _ensure_chain(chain: Array, count: int) -> void:
+	while chain.size() < count:
+		chain.append(_make_beam())
 
 
-func _beam_mesh(radius: float, material: StandardMaterial3D) -> CylinderMesh:
-	var mesh := CylinderMesh.new()
-	# Tapered towards the far end, which is the end that is converging on a
-	# point: two beams that met at full width would meet as a blunt join.
-	mesh.top_radius = radius * 0.55
-	mesh.bottom_radius = radius
-	mesh.height = 1.0
-	mesh.radial_segments = 6
-	mesh.rings = 0
-	mesh.material = material
-	return mesh
-
-
-func _beam_node(mesh: CylinderMesh) -> MeshInstance3D:
-	var beam := MeshInstance3D.new()
-	beam.mesh = mesh
-	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+func _make_beam() -> EnergyVfx:
+	var beam := EnergyVfx.make(EnergyVfx.Kind.BEAM_CORE, _colour, _invert)
 	beam.visible = false
 	beam.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	add_child(beam)
 	return beam
 
 
-func _material(tint: Color, energy: float,
-		additive: bool) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = tint
-	material.emission_enabled = true
-	material.emission = tint
-	material.emission_energy_multiplier = energy
-	material.disable_receive_shadows = true
-	if not additive:
-		return material
-	# Additive, so two beams crossing brighten rather than cutting a seam into
-	# each other. Held back from full strength: added at full value onto ground
-	# this bright the red saturates to white, which is the one colour a beam
-	# whose whole job is to look like heat must not be.
-	material.albedo_color = Color(tint, 0.72)
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	return material
+func _resample_path(points: PackedVector3Array, segs: int) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	out.resize(segs + 1)
+	var last := float(points.size() - 1)
+	for index in out.size():
+		var src := (float(index) / float(segs)) * last
+		var a := clampi(int(src), 0, points.size() - 1)
+		var b := mini(a + 1, points.size() - 1)
+		out[index] = points[a].lerp(points[b], src - float(a))
+	return out

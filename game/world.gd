@@ -7,6 +7,7 @@ extends Node3D
 ## scene change, which is what keeps the planet's quadtree built across it.
 
 const PLAYER_SCENE := preload("res://game/player/player.tscn")
+const TRAINING := preload("res://game/crawler/crawler_training.gd")
 
 ## The title view opens at the light the authored cycle reaches after three
 ## minutes: low over Vacationer's Landing and close to local sunset. Story
@@ -72,6 +73,9 @@ var _crawler_city_gift_claimed := false
 var _peer_spawns: Dictionary = {}
 var _duel_active := false
 var _duel_returns: Dictionary = {}
+var _training_active := false
+var _training_returns: Dictionary = {}
+var _training_level := 1
 
 
 func _ready() -> void:
@@ -145,6 +149,22 @@ func duel_snapshot() -> Dictionary:
 	return {
 		"active": _duel_active,
 		"returns": _duel_returns.duplicate(true),
+	}
+
+
+func training_active() -> bool:
+	return _training_active
+
+
+func training_level() -> int:
+	return _training_level
+
+
+func training_snapshot() -> Dictionary:
+	return {
+		"active": _training_active,
+		"returns": _training_returns.duplicate(true),
+		"level": _training_level,
 	}
 
 
@@ -382,9 +402,62 @@ func request_colony_respawn() -> void:
 		return
 	if CrawlerRules.active():
 		var progress := player.crawler_progress
-		if progress == null or not progress.spend_respawn_ticket():
+		if progress == null:
+			return
+		if not progress.has_respawn_ticket() \
+				and int(CrawlerProgress.session_payload.get("tickets", 0)) > 0:
+			progress.from_dict(CrawlerProgress.session_payload)
+		if not progress.spend_respawn_ticket():
 			return
 	respawn_player_at_colony(sender)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func request_revive_player(target_peer: int) -> void:
+	if not _is_host_authority():
+		return
+	if not CrawlerRules.active() or CrawlerRules.duel_active() \
+			or CrawlerRules.training_active():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	if sender <= 0:
+		sender = multiplayer.get_unique_id()
+	var healer := _spawned_players.get(sender) as OnlinePlayer
+	var target := _spawned_players.get(target_peer) as OnlinePlayer
+	if not is_instance_valid(healer) or healer.is_dead() or healer.training_enemy:
+		return
+	if not is_instance_valid(target) or not target.is_dead() \
+			or target.training_enemy:
+		return
+	if healer.global_position.distance_to(target.global_position) \
+			> CrawlerRules.REVIVE_REACH + 0.35:
+		return
+	var sequence := int(_respawn_sequence.get(target_peer, 0)) + 1
+	_respawn_sequence[target_peer] = sequence
+	var at_transform := target.global_transform
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_colony_respawn.rpc(target_peer, at_transform, sequence)
+	else:
+		_apply_colony_respawn(target_peer, at_transform, sequence)
+
+
+func note_crawler_party_changed() -> void:
+	if not _is_host_authority():
+		return
+	if not CrawlerRules.active() or CrawlerRules.duel_active() \
+			or CrawlerRules.training_active():
+		return
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_refresh_crawler_death.rpc()
+	else:
+		_refresh_crawler_death()
+
+
+@rpc("authority", "call_local", "reliable")
+func _refresh_crawler_death() -> void:
+	var player := local_player()
+	if player != null and player.has_method(&"refresh_crawler_death_overlay"):
+		player.refresh_crawler_death_overlay()
 
 
 func respawn_player_at_colony(peer_id: int) -> bool:
@@ -464,6 +537,17 @@ func _seed_crawler_cities(tries := 0) -> void:
 		if tries < 8:
 			call_deferred(&"_seed_crawler_cities", tries + 1)
 		return
+	if CrawlerRun.active():
+		var layout := CrawlerRunLayout.ensure(self)
+		if layout != null:
+			layout.place_opening()
+			if not CrawlerProgress.session_payload.is_empty():
+				var ledger := CrawlerProgress.new()
+				ledger.from_dict(CrawlerProgress.session_payload)
+				layout.apply_saved_progress(ledger)
+		_ensure_crawler_horde()
+		_park_crawler_players()
+		return
 	_ensure_crawler_ring(tries)
 	_ensure_crawler_horde()
 	_park_crawler_players()
@@ -534,31 +618,45 @@ func _ensure_later_crawler_cities(tries := 0) -> void:
 		city_dir = CrawlerRules.city_direction()
 	var tower_id := overlay.patch_id_named(CrawlerRules.TOWER_PATCH)
 	var castle_id := overlay.patch_id_named(CrawlerRules.CASTLE_PATCH)
-	if tower_id < 0 or castle_id < 0:
-		if tries < 8:
-			call_deferred(&"_ensure_later_crawler_cities", tries + 1)
-		return
-	var heading := CrawlerRules.city_pair_heading(
-		city_dir,
-		overlay.flat_direction_for_patch(tower_id),
-		overlay.flat_direction_for_patch(castle_id)
-	)
+	var heading := Vector3.ZERO
+	if tower_id >= 0 and castle_id >= 0:
+		heading = CrawlerRules.city_pair_heading(
+			city_dir,
+			overlay.flat_direction_for_patch(tower_id),
+			overlay.flat_direction_for_patch(castle_id)
+		)
 	var radius := _crawler_planet_radius()
+	var crescent_id := overlay.patch_id_named_exact(CrawlerRules.CITY_CRESCENT_PATCH)
+	if crescent_id < 0:
+		crescent_id = overlay.compass_cell_named("Far Beacon 4", "Northwest")
+	var crescent_dir := overlay.flat_direction_for_patch(crescent_id) \
+			if crescent_id >= 0 else Vector3.ZERO
+	if crescent_dir.length_squared() < 0.0001 and heading.length_squared() > 0.0001:
+		crescent_dir = CrawlerRules.slide_direction(
+			city_dir, heading, CrawlerRules.CITY_OUTPOST_METRES, radius)
 	_place_later_crawler_city(
 		"CrawlerCrescentRing",
-		CrawlerRules.slide_direction(
-			city_dir, heading, CrawlerRules.CITY_OUTPOST_METRES, radius),
+		crescent_dir,
 		CrawlerRules.CITY_CRESCENT_SITE_ID,
 		CrawlerRules.CITY_CRESCENT_TITLE,
-		CrawlerRules.CRESCENT_VILLAGE
+		CrawlerRules.CRESCENT_VILLAGE,
+		crescent_id
 	)
+	var lee_id := overlay.rest_cell_named(CrawlerRules.CITY_LEE_PATCH)
+	if lee_id < 0:
+		lee_id = overlay.patch_id_named(CrawlerRules.CITY_LEE_PATCH)
+	var lee_dir := overlay.flat_direction_for_patch(lee_id) \
+			if lee_id >= 0 else Vector3.ZERO
+	if lee_dir.length_squared() < 0.0001 and heading.length_squared() > 0.0001:
+		lee_dir = CrawlerRules.slide_direction(
+			city_dir, heading, -CrawlerRules.CITY_OUTPOST_METRES, radius)
 	_place_later_crawler_city(
 		"CrawlerLeeRing",
-		CrawlerRules.slide_direction(
-			city_dir, heading, -CrawlerRules.CITY_OUTPOST_METRES, radius),
+		lee_dir,
 		CrawlerRules.CITY_LEE_SITE_ID,
 		CrawlerRules.CITY_LEE_TITLE,
-		""
+		CrawlerCityRing.VILLAGE_MODEL,
+		lee_id
 	)
 
 
@@ -567,17 +665,23 @@ func _place_later_crawler_city(
 		direction: Vector3,
 		next_site: String,
 		next_title: String,
-		next_model: String
+		next_model: String,
+		patch_id := -1
 	) -> void:
 	if get_node_or_null(node_name) != null:
 		return
 	var overlay := _land_patches()
 	if overlay == null:
 		return
-	var at := overlay.surface_transform_for_direction(direction, 0.35)
+	var at := Transform3D()
+	if patch_id >= 0:
+		at = overlay.flat_surface_transform_for_patch(patch_id, 0.35)
+	if at.origin.length_squared() < 1.0:
+		at = overlay.surface_transform_for_direction(direction, 0.35)
 	if at.origin.length_squared() < 1.0:
 		return
-	var patch_id := overlay.patch_id_at(at.origin)
+	if patch_id < 0:
+		patch_id = overlay.patch_id_at(at.origin)
 	var ring = load("res://game/crawler/crawler_city_ring.gd").new()
 	ring.name = node_name
 	ring.configure(patch_id, at, next_site, next_title, next_model, next_site)
@@ -741,13 +845,12 @@ func _crawler_start_transform() -> Transform3D:
 	var overlay := _land_patches()
 	if overlay == null or not overlay.ensure_ready():
 		return Transform3D()
-	var seated := overlay.crawler_spawn_transform(1.35)
-	if seated.origin.length_squared() > 1.0:
-		return seated
-	var patch_id := overlay.patch_id_named(CrawlerRules.START_PATCH)
-	if patch_id < 0 and not overlay.partition.patches.is_empty():
-		patch_id = overlay.partition.patches[0].id
-	return overlay.high_surface_transform_for_patch(patch_id, 1.35)
+	var patch_id := overlay.crawler_start_patch_id()
+	if patch_id >= 0:
+		var seated := overlay.high_surface_transform_for_patch(patch_id, 1.35)
+		if seated.origin.length_squared() > 1.0:
+			return seated
+	return overlay.crawler_spawn_transform(1.35)
 
 
 func _crawler_pad_transform(peer_id: int) -> Transform3D:
@@ -800,12 +903,16 @@ func _ensure_crawler_spawn_pad(tries := 0) -> void:
 		if tries < 8:
 			call_deferred(&"_ensure_crawler_spawn_pad", tries + 1)
 		return
-	var at := overlay.crawler_spawn_transform(0.0)
+	var at := Transform3D()
+	if CrawlerRun.active():
+		at = overlay.surface_transform_for_direction(CrawlerRun.spawn_direction(), 0.0)
 	if at.origin.length_squared() < 1.0:
-		var patch_id := overlay.patch_id_named(CrawlerRules.START_PATCH)
+		var patch_id := overlay.crawler_start_patch_id()
 		if patch_id < 0 and not overlay.partition.patches.is_empty():
 			patch_id = overlay.partition.patches[0].id
 		at = overlay.high_surface_transform_for_patch(patch_id, 0.0)
+	if at.origin.length_squared() < 1.0:
+		at = overlay.crawler_spawn_transform(0.0)
 	if at.origin.length_squared() < 1.0:
 		if tries < 8:
 			call_deferred(&"_ensure_crawler_spawn_pad", tries + 1)
@@ -1223,6 +1330,13 @@ func apply_saved_world(payload: Dictionary) -> void:
 	else:
 		_duel_active = false
 		_duel_returns.clear()
+	var training: Variant = state.get("training", {})
+	if training is Dictionary:
+		_apply_training_snapshot(training)
+	else:
+		_training_active = false
+		_training_returns.clear()
+		_training_level = 1
 
 
 func _apply_saved_player(player: OnlinePlayer, player_state: Variant) -> void:
@@ -1337,6 +1451,14 @@ func _apply_saved_roster_player(player: OnlinePlayer, entry: Dictionary) -> void
 func _seed_guest_crawler(player: OnlinePlayer) -> void:
 	if player.crawler_progress != null:
 		player.crawler_progress.from_dict({})
+		var meta := NetworkManager.get_player_metadata(player.peer_id)
+		if meta.is_empty() and player.peer_id == multiplayer.get_unique_id():
+			var look := CharacterDB.load_look()
+			player.crawler_progress.seed_look_hat(look)
+			player.crawler_progress.seed_look_cape(look)
+		else:
+			player.crawler_progress.seed_look_hat(meta)
+			player.crawler_progress.seed_look_cape(meta)
 		player.crawler_progress.remember()
 		player.refresh_crawler_look()
 	if player.crawler_kit != null:
@@ -1385,7 +1507,7 @@ func _request_duel_respawn() -> void:
 
 
 func _start_city_duel() -> void:
-	if _duel_active or not CrawlerRules.coop():
+	if _duel_active or _training_active or not CrawlerRules.coop():
 		return
 	if NetworkManager == null or NetworkManager.players.size() < 2:
 		return
@@ -1493,6 +1615,252 @@ func _apply_duel_snapshot(wire: Dictionary) -> void:
 	_duel_active = bool(wire.get("active", false))
 	var held: Variant = wire.get("returns", {})
 	_duel_returns = held.duplicate(true) if held is Dictionary else {}
+
+
+func request_start_training() -> void:
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_request_start_training.rpc_id(1)
+		return
+	_start_training_session()
+
+
+@rpc("any_peer", "reliable")
+func _request_start_training() -> void:
+	if multiplayer.is_server():
+		_start_training_session()
+
+
+func request_end_training() -> void:
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_request_end_training.rpc_id(1)
+		return
+	_end_training_session()
+
+
+@rpc("any_peer", "reliable")
+func _request_end_training() -> void:
+	if multiplayer.is_server():
+		_end_training_session()
+
+
+func request_training_level(level: int) -> void:
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_request_training_level.rpc_id(1, level)
+		return
+	_set_training_level(level)
+
+
+@rpc("any_peer", "reliable")
+func _request_training_level(level: int) -> void:
+	if multiplayer.is_server():
+		_set_training_level(level)
+
+
+func request_training_respawn() -> void:
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		_request_training_respawn.rpc_id(1)
+		return
+	_training_respawn_peer(multiplayer.get_unique_id())
+
+
+@rpc("any_peer", "reliable")
+func _request_training_respawn() -> void:
+	if multiplayer.is_server():
+		_training_respawn_peer(multiplayer.get_remote_sender_id())
+
+
+func _start_training_session() -> void:
+	if _training_active or _duel_active or not CrawlerRules.active():
+		return
+	_training_active = true
+	_training_level = 1
+	_training_returns.clear()
+	var ids: Array = _spawned_players.keys()
+	ids.sort()
+	var centre := _training_centre_transform()
+	var returns := {}
+	var poses := {}
+	var index := 0
+	for id_variant: Variant in ids:
+		var peer_id := int(id_variant)
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		returns[str(peer_id)] = player.global_transform
+		poses[str(peer_id)] = _ring_offset(centre, index, maxi(ids.size(), 1), 8.0)
+		index += 1
+	_training_returns = returns
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_training_start.rpc(returns, poses, _training_level)
+	else:
+		_apply_training_start(returns, poses, _training_level)
+
+
+func _end_training_session() -> void:
+	if not _training_active:
+		return
+	var returns := _training_returns.duplicate(true)
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_training_end.rpc(returns)
+	else:
+		_apply_training_end(returns)
+
+
+func _set_training_level(level: int) -> void:
+	if not _training_active:
+		return
+	var next := TRAINING.clamp_level(level)
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_training_level.rpc(next)
+	else:
+		_apply_training_level(next)
+
+
+func _training_respawn_peer(peer_id: int) -> void:
+	if not _training_active or peer_id <= 0:
+		return
+	var player := _spawned_players.get(peer_id) as OnlinePlayer
+	if not is_instance_valid(player):
+		return
+	var ids: Array = _spawned_players.keys()
+	ids.sort()
+	var index := ids.find(peer_id)
+	if index < 0:
+		index = 0
+	var at := _ring_offset(_training_centre_transform(), index, maxi(ids.size(), 1), 8.0)
+	var sequence := int(_respawn_sequence.get(peer_id, 0)) + 1
+	_respawn_sequence[peer_id] = sequence
+	if multiplayer.has_multiplayer_peer() and not multiplayer.get_peers().is_empty():
+		_apply_colony_respawn.rpc(peer_id, at, sequence)
+	else:
+		_apply_colony_respawn(peer_id, at, sequence)
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_training_start(returns: Dictionary, poses: Dictionary, level: int) -> void:
+	_training_active = true
+	_training_returns = returns.duplicate(true)
+	_training_level = TRAINING.clamp_level(level)
+	_seat_training_players(poses)
+	_register_training_flora()
+	_ensure_crawler_horde()
+	var horde := get_node_or_null("CrawlerHorde") as CrawlerHorde
+	if horde != null:
+		horde.spawn_training_field(_training_centre_transform(), _training_level)
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_training_end(returns: Dictionary) -> void:
+	var horde := get_node_or_null("CrawlerHorde") as CrawlerHorde
+	if horde != null:
+		horde.clear_training()
+	BuildingFloraClear.unregister(TRAINING.CLEAR_ID)
+	_training_active = false
+	for id_variant: Variant in _spawned_players.keys():
+		var peer_id := int(id_variant)
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		var at := GameSave.unpack_transform(returns.get(str(peer_id), {}))
+		if at.origin.length_squared() < 0.01:
+			continue
+		if player.is_dead():
+			player.respawn_at(at)
+		else:
+			player.global_transform = at
+			player.reset_physics_interpolation()
+			player.reset_network_state(at)
+	_training_returns.clear()
+	_training_level = 1
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_training_level(level: int) -> void:
+	_training_level = TRAINING.clamp_level(level)
+	var horde := get_node_or_null("CrawlerHorde") as CrawlerHorde
+	if horde != null:
+		horde.set_training_level(_training_level)
+
+
+func _apply_training_snapshot(wire: Dictionary) -> void:
+	_training_active = bool(wire.get("active", false))
+	var held: Variant = wire.get("returns", {})
+	_training_returns = held.duplicate(true) if held is Dictionary else {}
+	_training_level = TRAINING.clamp_level(int(wire.get("level", 1)))
+	if _training_active:
+		_register_training_flora()
+		call_deferred(&"_ensure_training_field")
+
+
+func _ensure_training_field() -> void:
+	if not _training_active:
+		return
+	var horde := get_node_or_null("CrawlerHorde") as CrawlerHorde
+	if horde == null:
+		return
+	if horde.training_count() > 0:
+		return
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		return
+	horde.spawn_training_field(_training_centre_transform(), _training_level)
+
+
+func _seat_training_players(poses: Dictionary) -> void:
+	for id_variant: Variant in _spawned_players.keys():
+		var peer_id := int(id_variant)
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		var at := GameSave.unpack_transform(poses.get(str(peer_id), {}))
+		if at.origin.length_squared() < 0.01:
+			continue
+		if player.is_dead():
+			player.respawn_at(at)
+		else:
+			player.global_transform = at
+			player.reset_physics_interpolation()
+			player.reset_network_state(at)
+		if player.has_method(&"apply_heal"):
+			player.apply_heal(player.maximum_health())
+
+
+func _register_training_flora() -> void:
+	var centre := _training_centre_transform()
+	if centre.origin.length_squared() < 0.01:
+		return
+	var radius := 8000.0
+	var host := planet()
+	if host != null and host.shape != null:
+		radius = host.shape.radius
+	BuildingFloraClear.register(
+		TRAINING.CLEAR_ID, centre.origin, TRAINING.FLORA_CLEAR, radius, 0.0)
+
+
+func _training_centre_transform() -> Transform3D:
+	var overlay := _land_patches()
+	if overlay != null:
+		var seated := overlay.surface_transform_for_direction(_training_direction(), 1.35)
+		if seated.origin.length_squared() > 1.0:
+			return seated
+	var fallback := Transform3D(Basis.IDENTITY, TRAINING.FALLBACK_ORIGIN)
+	var start := _crawler_start_transform()
+	if start.origin.length_squared() > 1.0:
+		var dir := _training_direction()
+		fallback.origin = dir * maxf(start.origin.length(), 1.0) \
+			+ Vector3(0.0, TRAINING.FALLBACK_ORIGIN.y, 0.0)
+	return fallback
+
+
+func _training_direction() -> Vector3:
+	var start := _crawler_start_transform().origin
+	if start.length_squared() < 0.01:
+		start = Vector3.FORWARD
+	var axis := start.cross(Vector3.UP)
+	if axis.length_squared() < 0.01:
+		axis = start.cross(Vector3.RIGHT)
+	if axis.length_squared() < 0.01:
+		return Vector3.RIGHT
+	return start.rotated(axis.normalized(), PI * 0.5).normalized()
 
 
 func _duel_centre_transform() -> Transform3D:
@@ -1797,9 +2165,9 @@ func _server_crawler_drop(
 		"transform": at_transform,
 		"claimed": false,
 	}
-	_spawn_crawler_pickup_local(pickup_id, payload, at_transform)
+	_spawn_crawler_pickup_local(pickup_id, payload, at_transform, true)
 	if multiplayer.has_multiplayer_peer():
-		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform)
+		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform, true)
 	if peer_id != multiplayer.get_unique_id():
 		_confirm_crawler_drop.rpc_id(
 			peer_id, pickup_id, source, index, expected_token, next_generation)
@@ -1865,10 +2233,18 @@ func _server_crawler_spawn(player: OnlinePlayer, payload: Dictionary) -> int:
 		"transform": at_transform,
 		"claimed": false,
 	}
-	_spawn_crawler_pickup_local(pickup_id, payload, at_transform)
+	_spawn_crawler_pickup_local(pickup_id, payload, at_transform, true)
 	if multiplayer.has_multiplayer_peer():
-		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform)
+		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform, true)
 	return pickup_id
+
+
+func spawn_crawler_card_loot(payload: Dictionary, at: Vector3) -> int:
+	if payload.is_empty() or not at.is_finite():
+		return 0
+	if multiplayer.has_multiplayer_peer() and not multiplayer.is_server():
+		return 0
+	return _server_crawler_loot_spawn(payload, _loot_drop_transform(at, 0))
 
 
 func spawn_crawler_kill_loot(drops: Array, at: Vector3) -> PackedInt32Array:
@@ -1914,9 +2290,9 @@ func _server_crawler_loot_spawn(payload: Dictionary, at_transform: Transform3D) 
 		"transform": at_transform,
 		"claimed": false,
 	}
-	_spawn_crawler_pickup_local(pickup_id, payload, at_transform)
+	_spawn_crawler_pickup_local(pickup_id, payload, at_transform, true)
 	if multiplayer.has_multiplayer_peer():
-		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform)
+		_spawn_crawler_pickup.rpc(pickup_id, payload, at_transform, true)
 	return pickup_id
 
 
@@ -1931,9 +2307,9 @@ func _server_crawler_hat_spawn(item_id: String, at_transform: Transform3D) -> in
 		"transform": at_transform,
 		"claimed": false,
 	}
-	_spawn_crawler_hat_pickup_local(pickup_id, item_id, at_transform)
+	_spawn_crawler_hat_pickup_local(pickup_id, item_id, at_transform, true)
 	if multiplayer.has_multiplayer_peer():
-		_spawn_crawler_hat_pickup.rpc(pickup_id, item_id, at_transform)
+		_spawn_crawler_hat_pickup.rpc(pickup_id, item_id, at_transform, true)
 	return pickup_id
 
 
@@ -1989,7 +2365,7 @@ func _loot_drop_transform(at: Vector3, index: int) -> Transform3D:
 	var north := up.cross(east).normalized()
 	var angle := TAU * (float(index) * 0.37 + 0.18)
 	var span := 0.45 + 0.18 * float(index)
-	var origin := at + (east * cos(angle) + north * sin(angle)) * span + up * 0.12
+	var origin := at + (east * cos(angle) + north * sin(angle)) * span + up * 1.8
 	return Transform3D(_upright_basis(north, up), origin)
 
 
@@ -1997,15 +2373,17 @@ func _loot_drop_transform(at: Vector3, index: int) -> Transform3D:
 func _spawn_crawler_hat_pickup(
 		pickup_id: int,
 		item_id: String,
-		at_transform: Transform3D
+		at_transform: Transform3D,
+		settle_to_ground := false
 	) -> void:
-	_spawn_crawler_hat_pickup_local(pickup_id, item_id, at_transform)
+	_spawn_crawler_hat_pickup_local(pickup_id, item_id, at_transform, settle_to_ground)
 
 
 func _spawn_crawler_hat_pickup_local(
 		pickup_id: int,
 		item_id: String,
-		at_transform: Transform3D
+		at_transform: Transform3D,
+		settle_to_ground := false
 	) -> void:
 	if pickup_id <= 0 or not CrawlerProgress.is_city_hat(item_id):
 		return
@@ -2023,6 +2401,10 @@ func _spawn_crawler_hat_pickup_local(
 	add_child(dropped, true)
 	dropped.global_transform = at_transform
 	dropped.reset_physics_interpolation()
+	if settle_to_ground:
+		dropped.begin_settle()
+	else:
+		dropped.begin_hover()
 	_pickup_nodes[pickup_id] = dropped
 
 
@@ -2069,15 +2451,17 @@ func _grant_crawler_pickup(
 func _spawn_crawler_pickup(
 		pickup_id: int,
 		payload: Dictionary,
-		at_transform: Transform3D
+		at_transform: Transform3D,
+		settle_to_ground := false
 	) -> void:
-	_spawn_crawler_pickup_local(pickup_id, payload, at_transform)
+	_spawn_crawler_pickup_local(pickup_id, payload, at_transform, settle_to_ground)
 
 
 func _spawn_crawler_pickup_local(
 		pickup_id: int,
 		payload: Dictionary,
-		at_transform: Transform3D
+		at_transform: Transform3D,
+		settle_to_ground := false
 	) -> void:
 	if pickup_id <= 0 or payload.is_empty():
 		return
@@ -2095,6 +2479,10 @@ func _spawn_crawler_pickup_local(
 	add_child(dropped, true)
 	dropped.global_transform = at_transform
 	dropped.reset_physics_interpolation()
+	if settle_to_ground:
+		dropped.begin_settle()
+	else:
+		dropped.begin_hover()
 	_pickup_nodes[pickup_id] = dropped
 
 
@@ -2268,8 +2656,8 @@ func _source_accepts_item(source: String, item_id: String) -> bool:
 	return false
 
 
-## Floats a crawler card in front of the player's look, at their current height.
-## Flight keeps that pose in the air; the tile is never snapped to the terrain.
+## Spawns a crawler card in front of the player's look. The tile then falls
+## to the ground under [DroppedWorldMotion]; this pose is only the toss.
 func _crawler_drop_transform(player: OnlinePlayer) -> Transform3D:
 	var up := player.world_up()
 	if up.length_squared() < 0.5:
@@ -2399,10 +2787,12 @@ func _spawn_player(peer_id: int, metadata: Dictionary, at_transform: Transform3D
 	if _has_look_override and peer_id == multiplayer.get_unique_id():
 		look = _look_override.duplicate(true)
 		_has_look_override = false
-	if CrawlerRules.active():
-		look["worn"] = {}
 	player.apply_look(look)
-	if CrawlerRules.active() and player.has_method(&"refresh_crawler_look"):
+	if CrawlerRules.active() and player.has_method(&"refresh_crawler_look") \
+			and peer_id == multiplayer.get_unique_id() \
+			and player.crawler_progress != null:
+		player.crawler_progress.seed_look_hat(look)
+		player.crawler_progress.seed_look_cape(look)
 		player.call(&"refresh_crawler_look")
 	if CrawlerRules.active() and player.has_method(&"arm_spawn_arrival"):
 		player.call(&"arm_spawn_arrival")

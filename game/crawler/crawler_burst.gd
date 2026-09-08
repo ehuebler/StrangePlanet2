@@ -26,10 +26,20 @@ const SNOW_COLORS: PackedColorArray = [
 	Color(0.78, 0.90, 1.00),
 	Color(0.86, 0.94, 1.00),
 ]
+const CONFETTI_COLORS: PackedColorArray = [
+	Color(1.00, 0.18, 0.30),
+	Color(1.00, 0.58, 0.08),
+	Color(0.98, 0.88, 0.14),
+	Color(0.16, 0.90, 0.36),
+	Color(0.16, 0.64, 1.00),
+	Color(0.74, 0.26, 1.00),
+	Color(1.00, 0.42, 0.86),
+]
 
 var _size := 2.4
 var _up := Vector3.UP
 var _colors: PackedColorArray = DEATH_COLORS
+var _flakes := false
 var _age := 0.0
 var _puffs: Array[GPUParticles3D] = []
 var _light: OmniLight3D
@@ -48,8 +58,22 @@ static func snow(world: Node, at: Vector3, up := Vector3.UP, size := 1.2) -> Cra
 	return play(world, at, up, clampf(size, 0.45, 3.4), SNOW_COLORS)
 
 
+static func confetti(world: Node, at: Vector3, up := Vector3.UP, size := 2.2) -> CrawlerBurst:
+	return play(world, at, up, clampf(size, 1.2, 4.8), CONFETTI_COLORS, true)
+
+
+static func leaves(world: Node, at: Vector3, up := Vector3.UP, size := 2.4) -> CrawlerBurst:
+	return play(world, at, up, clampf(size, 0.9, 6.0), PackedColorArray([
+		Color(0.22, 0.72, 0.14),
+		Color(0.46, 0.86, 0.18),
+		Color(0.78, 0.92, 0.22),
+		Color(0.18, 0.42, 0.08),
+		Color(0.92, 0.78, 0.16),
+	]), true)
+
+
 static func play(world: Node, at: Vector3, up: Vector3, size: float,
-		colors: PackedColorArray) -> CrawlerBurst:
+		colors: PackedColorArray, flakes := false) -> CrawlerBurst:
 	if world == null or not at.is_finite():
 		return null
 	var burst := CrawlerBurst.new()
@@ -57,6 +81,7 @@ static func play(world: Node, at: Vector3, up: Vector3, size: float,
 	burst._size = clampf(size, 0.8, 8.0)
 	burst._up = up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
 	burst._colors = colors if not colors.is_empty() else DEATH_COLORS
+	burst._flakes = flakes
 	world.add_child(burst)
 	burst.global_position = at
 	return burst
@@ -100,21 +125,24 @@ func _build_puffs() -> void:
 		process.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
 		process.emission_sphere_radius = clampf(_size * 0.16, 0.12, 1.1)
 		process.direction = _up
-		process.spread = 180.0
-		process.initial_velocity_min = 3.4 + _size * 0.9
-		process.initial_velocity_max = 8.2 + _size * 1.8
-		process.gravity = -_up * 7.5
+		process.spread = 95.0 if _flakes else 180.0
+		process.initial_velocity_min = (4.2 if _flakes else 3.4) + _size * 0.9
+		process.initial_velocity_max = (9.6 if _flakes else 8.2) + _size * 1.8
+		process.gravity = -_up * (11.0 if _flakes else 7.5)
 		process.damping_min = 0.6
 		process.damping_max = 1.8
-		process.scale_min = 0.22
-		process.scale_max = 0.62
+		process.scale_min = 0.28 if _flakes else 0.22
+		process.scale_max = 0.82 if _flakes else 0.62
 		process.color = tint
 		process.color_ramp = fade
 		process.hue_variation_min = -0.04
 		process.hue_variation_max = 0.04
+		if _flakes:
+			process.angular_velocity_min = -22.0
+			process.angular_velocity_max = 22.0
 		var puff := GPUParticles3D.new()
 		puff.name = "BurstPuff%d" % index
-		puff.amount = clampi(10 + int(_size * 3.0), 10, 22)
+		puff.amount = clampi((16 if _flakes else 10) + int(_size * 3.0), 10, 28)
 		puff.lifetime = LIFE * 0.92
 		puff.one_shot = true
 		puff.explosiveness = 1.0
@@ -126,10 +154,23 @@ func _build_puffs() -> void:
 			Vector3.ONE * -18.0, Vector3.ONE * 36.0)
 		puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		puff.process_material = process
-		puff.draw_pass_1 = mesh
+		puff.draw_pass_1 = _flake_mesh() if _flakes else mesh
 		puff.emitting = false
 		add_child(puff)
 		_puffs.append(puff)
+
+
+func _flake_mesh() -> BoxMesh:
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(0.18, 0.08, 0.02)
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.vertex_color_use_as_albedo = true
+	material.disable_receive_shadows = true
+	mesh.material = material
+	return mesh
 
 
 func _spark_mesh() -> SphereMesh:

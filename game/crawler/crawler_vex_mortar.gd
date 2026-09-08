@@ -5,8 +5,7 @@ extends Node3D
 ## is charmed, so a castle horde of Vex does not scan every goblin.
 
 const LIFETIME := 4.2
-const CORE_COLOR := Color(1.0, 0.22, 0.14)
-const GLOW_COLOR := Color(0.95, 0.08, 0.06)
+const GLOW_COLOR := EnergyVfx.TINT_GREEN
 
 var damage := 16.0
 var gravity := 22.0
@@ -14,6 +13,7 @@ var shot_speed := 16.0
 var ball_radius := 0.42
 var hit_radius := 1.15
 var knockback := 5.0
+var ability_id := "crawler_vex_mortar"
 var shooter: Node
 var _charmed_shot := false
 
@@ -21,8 +21,9 @@ var _velocity := Vector3.ZERO
 var _planet: Planet
 var _blocker := RID()
 var _live := 0.0
-var _core: MeshInstance3D
+var _core: EnergyVfx
 var _spent := false
+var _charm_frame := -1
 
 
 func launch(planet: Planet, from: Vector3, along: Vector3, by: Node) -> bool:
@@ -56,32 +57,16 @@ func _begin(host: Node, from: Vector3, along: Vector3, by: Node) -> bool:
 func _ready() -> void:
 	set_physics_process(_velocity.length_squared() > 0.0001)
 	_planet = get_parent() as Planet
-	var mesh := SphereMesh.new()
-	mesh.radius = ball_radius
-	mesh.height = ball_radius * 2.0
-	mesh.radial_segments = 10
-	mesh.rings = 6
-	_core = MeshInstance3D.new()
-	_core.mesh = mesh
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = CORE_COLOR
-	material.emission_enabled = true
-	material.emission = GLOW_COLOR
-	material.emission_energy_multiplier = 5.8
-	_core.material_override = material
-	_core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_core = EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, GLOW_COLOR)
 	add_child(_core)
+	_core.set_ball_radius(ball_radius)
 
 
 func _physics_process(delta: float) -> void:
 	_live += delta
 	if is_instance_valid(_core):
 		var pulse := 1.0 + sin(_live * 14.0) * 0.22
-		_core.scale = Vector3.ONE * pulse
-		var glow := _core.material_override as StandardMaterial3D
-		if glow != null:
-			glow.emission_energy_multiplier = 4.4 + sin(_live * 11.0) * 2.2
+		_core.set_ball_radius(ball_radius * pulse)
 	if _live >= LIFETIME:
 		queue_free()
 		return
@@ -124,37 +109,21 @@ func _victim_along(from: Vector3, to: Vector3) -> Node:
 
 func _hurt_targets() -> Array[Node]:
 	var found: Array[Node] = []
-	var seen := {}
 	if not is_inside_tree():
 		return found
-	if _shooter_charmed():
-		for node_variant: Variant in get_tree().get_nodes_in_group(CrawlerMob.GROUP):
-			if is_instance_valid(node_variant):
-				_take_if(node_variant as Node, seen, found)
-		return found
-	for node_variant: Variant in get_tree().get_nodes_in_group(&"network_players"):
-		if is_instance_valid(node_variant):
-			_take_if(node_variant as Node, seen, found)
+	var charmed := _shooter_charmed()
+	CrawlerMobSense.ensure_frame(get_tree())
+	for node_variant: Variant in CrawlerMobSense.shot_targets(charmed):
+		var node := node_variant as Node
+		if node != null and _should_hurt(node):
+			found.append(node)
 	return found
-
-
-func _take_if(node: Node, seen: Dictionary, found: Array[Node]) -> void:
-	if not is_instance_valid(node):
-		return
-	var key := node.get_instance_id()
-	if seen.has(key) or not _should_hurt(node):
-		return
-	seen[key] = true
-	found.append(node)
 
 
 func _should_hurt(node: Node) -> bool:
 	if not is_instance_valid(node) or node == shooter:
 		return false
 	if not node is Node3D:
-		return false
-	if DamageHit.game_world_of(self) != null \
-			and not DamageHit.in_same_world(self, node):
 		return false
 	if node.has_method(&"is_dead") and bool(node.call(&"is_dead")):
 		return false
@@ -166,8 +135,11 @@ func _should_hurt(node: Node) -> bool:
 
 
 func _shooter_charmed() -> bool:
-	if is_instance_valid(shooter):
-		_charmed_shot = _read_shooter_charmed()
+	var frame := Engine.get_physics_frames()
+	if frame != _charm_frame:
+		_charm_frame = frame
+		_charmed_shot = _read_shooter_charmed() if is_instance_valid(shooter) \
+			else false
 	return _charmed_shot
 
 
@@ -214,7 +186,7 @@ func _make_blast(at: Vector3) -> DamageHit:
 	blast.world_impulse = along * knockback * 0.3
 	blast.radial_impulse = knockback * 0.55
 	blast.affects_flora = false
-	blast.ability_id = "crawler_vex_mortar"
+	blast.ability_id = ability_id
 	blast.projectile = true
 	if is_instance_valid(shooter):
 		blast.set_source(shooter)

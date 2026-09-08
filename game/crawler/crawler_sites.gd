@@ -13,13 +13,19 @@ static func poll(player: OnlinePlayer) -> String:
 	var site := _nearest(player)
 	if site == null:
 		return ""
-	unlock(site)
 	var site_id := _site_id(site)
+	if _lights_on_enter(site_id, progress):
+		unlock(site)
 	var first := not progress.site_unlocked(site_id)
-	if site_id == CrawlerRules.CITY_SITE_ID and player.journal != null:
+	if CrawlerRules.is_first_city(site_id) and player.journal != null:
 		player.journal.note_city()
-	if site_id == CrawlerRules.CITY_SITE_ID and first:
-		schedule_later_city_unlock(player)
+	if first:
+		if CrawlerRun.active():
+			var layout := CrawlerRunLayout.instance(player.get_tree())
+			if layout != null:
+				layout.on_city_entered(site_id, player)
+		elif site_id == CrawlerRules.CITY_SITE_ID:
+			schedule_later_city_unlock(player)
 	if not progress.enter_site(site_id):
 		return ""
 	var gems := 0
@@ -37,8 +43,13 @@ static func apply_progress(progress: CrawlerProgress, tree: SceneTree) -> void:
 		return
 	PatchMonument.apply_owned_quests(progress)
 	for site in _collect(tree):
-		if progress.site_unlocked(_site_id(site)):
-			unlock(site, false)
+		var site_id := _site_id(site)
+		if not progress.site_unlocked(site_id):
+			continue
+		if site_id == CrawlerRules.START_SITE_ID \
+				and not progress.site_unlocked(CrawlerRules.CITY_SITE_ID):
+			continue
+		unlock(site, false)
 	if progress.site_unlocked(CrawlerRules.CITY_SITE_ID):
 		unlock_later_cities(tree, false)
 
@@ -58,6 +69,7 @@ static func unlock(site: Node, announce := true) -> void:
 		mark.waypoint = true
 		if not mark.is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP):
 			mark.add_to_group(CrawlerRules.CITY_WAYPOINT_GROUP)
+		CrawlerRules.apply_crawler_waypoint_tint(mark)
 		if first and announce:
 			announce_unlock(mark)
 
@@ -78,23 +90,53 @@ static func schedule_later_city_unlock(player: OnlinePlayer, delay := -1.0) -> v
 	)
 
 
-static func unlock_later_cities(tree: SceneTree, announce := true) -> void:
+static func unlock_later_cities(
+		tree: SceneTree,
+		announce := true,
+		tries := 0
+	) -> void:
 	if tree == null:
 		return
+	var wanted := CrawlerRules.first_city_map_ids()
+	var found: Dictionary = {}
 	for site in _collect(tree):
-		if CrawlerRules.is_later_city(_site_id(site)):
-			unlock(site, announce)
+		var site_id := _site_id(site)
+		if not wanted.has(site_id):
+			continue
+		unlock(site, announce)
+		found[site_id] = true
+	var missing := false
+	for id: String in wanted:
+		if not found.has(id):
+			missing = true
+			break
+	if missing and tries < 8:
+		var timer := tree.create_timer(0.35)
+		timer.timeout.connect(func() -> void:
+			unlock_later_cities(tree, announce, tries + 1)
+		)
 
 
 static func later_cities_shown(tree: SceneTree) -> bool:
 	if tree == null:
 		return false
+	var wanted := CrawlerRules.first_city_map_ids()
+	var needed := 0
+	var lit := 0
 	for site in _collect(tree):
-		if CrawlerRules.is_later_city(_site_id(site)):
-			var mark := site as Landmark
-			if mark != null and mark.waypoint:
-				return true
-	return false
+		if not wanted.has(_site_id(site)):
+			continue
+		needed += 1
+		var mark := site as Landmark
+		if mark != null and mark.waypoint:
+			lit += 1
+	return needed > 0 and lit >= needed
+
+
+static func _lights_on_enter(site_id: String, progress: CrawlerProgress) -> bool:
+	if site_id == CrawlerRules.START_SITE_ID:
+		return progress != null and progress.site_unlocked(CrawlerRules.CITY_SITE_ID)
+	return true
 
 
 ## Local players turn to a newly unlocked mark. Restored progress stays silent.

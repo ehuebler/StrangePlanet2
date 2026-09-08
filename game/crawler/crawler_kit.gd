@@ -407,6 +407,7 @@ func base_stats_for(card: CrawlerCard) -> Dictionary:
 	elif card.id == "starfire":
 		base["damage"] = CrawlerRules.STARFIRE_DAMAGE
 		base["impact"] = CrawlerRules.STARFIRE_IMPACT
+		base["player_damage"] = CrawlerRules.STARFIRE_PLAYER_DAMAGE
 		base["cooldown"] = CrawlerRules.STARFIRE_COOLDOWN
 		base["range"] = CrawlerRules.STARFIRE_RANGE
 		base["size"] = 1.0
@@ -442,6 +443,10 @@ func base_stats_for(card: CrawlerCard) -> Dictionary:
 		var wall := CrawlerRules.wall_start_stats()
 		for key: Variant in wall:
 			base[str(key)] = wall[key]
+	elif card.id == "nuke":
+		base["damage"] = CrawlerRules.NUKE_DAMAGE
+		base["impact"] = CrawlerRules.NUKE_IMPACT
+		base["player_damage"] = CrawlerRules.NUKE_PLAYER_DAMAGE
 	elif card.id == "mini_nuke":
 		var orb := CrawlerRules.mini_nuke_start_stats()
 		for key: Variant in orb:
@@ -486,8 +491,8 @@ func _apply_shop_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 	elif card.id == "nausicaa":
 		_apply_nausicaa_ranks(stats, card)
 	elif card.id == "meteor_punch":
-		stats["damage"] = CrawlerRules.METEOR_DAMAGE \
-			+ 40.0 * float(upgrade_rank_for(card, "damage"))
+		stats["damage"] = CrawlerRules.scaled_stat(
+			CrawlerRules.METEOR_DAMAGE, upgrade_rank_for(card, "damage"))
 		stats["impact"] = CrawlerRules.METEOR_IMPACT \
 			* (float(stats.get("damage", CrawlerRules.METEOR_DAMAGE))
 				/ CrawlerRules.METEOR_DAMAGE)
@@ -496,14 +501,12 @@ func _apply_shop_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 			CrawlerRules.METEOR_COOLDOWN
 				- CrawlerRules.METEOR_COOLDOWN_PER_RANK
 				* float(upgrade_rank_for(card, "cooldown")))
-		stats["range"] = CrawlerRules.METEOR_RANGE \
-			+ CrawlerRules.METEOR_RANGE_PER_RANK * float(upgrade_rank_for(card, "range"))
-		var fist_size := 1.0 + CrawlerRules.METEOR_SIZE_PER_RANK \
-			* float(upgrade_rank_for(card, "size"))
+		stats["range"] = CrawlerRules.scaled_stat(
+			CrawlerRules.METEOR_RANGE, upgrade_rank_for(card, "range"))
+		var fist_size := _rank_scale(card, "size")
 		stats["size"] = fist_size
-		stats["knockback"] = CrawlerRules.METEOR_KNOCKBACK \
-			+ CrawlerRules.METEOR_KNOCKBACK_PER_RANK \
-			* float(upgrade_rank_for(card, "knockback"))
+		stats["knockback"] = CrawlerRules.scaled_stat(
+			CrawlerRules.METEOR_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 		stats["speed"] = CrawlerRules.METEOR_SPEED
 		stats["radius"] = CrawlerRules.METEOR_RADIUS
 		stats["crater_radius"] = CrawlerRules.METEOR_CRATER_RADIUS
@@ -516,24 +519,24 @@ func _apply_shop_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 	elif card.id == "overdrive":
 		_apply_overdrive_ranks(stats, card)
 	elif card.id == "starfire":
-		var burst := CrawlerRules.STARFIRE_DAMAGE \
-			+ CrawlerRules.STARFIRE_DAMAGE_PER_RANK * float(upgrade_rank_for(card, "damage"))
+		var burst := CrawlerRules.scaled_stat(
+			CrawlerRules.STARFIRE_DAMAGE, upgrade_rank_for(card, "damage"))
 		stats["damage"] = burst
 		stats["impact"] = CrawlerRules.STARFIRE_IMPACT \
+			* (burst / CrawlerRules.STARFIRE_DAMAGE)
+		stats["player_damage"] = CrawlerRules.STARFIRE_PLAYER_DAMAGE \
 			* (burst / CrawlerRules.STARFIRE_DAMAGE)
 		stats["cooldown"] = maxf(
 			CrawlerRules.STARFIRE_COOLDOWN_MIN,
 			CrawlerRules.STARFIRE_COOLDOWN
 				- CrawlerRules.STARFIRE_COOLDOWN_PER_RANK
 				* float(upgrade_rank_for(card, "cooldown")))
-		stats["range"] = CrawlerRules.STARFIRE_RANGE \
-			+ CrawlerRules.STARFIRE_RANGE_PER_RANK * float(upgrade_rank_for(card, "range"))
-		var disk_size := 1.0 + CrawlerRules.STARFIRE_SIZE_PER_RANK \
-			* float(upgrade_rank_for(card, "size"))
+		stats["range"] = CrawlerRules.scaled_stat(
+			CrawlerRules.STARFIRE_RANGE, upgrade_rank_for(card, "range"))
+		var disk_size := _rank_scale(card, "size")
 		stats["size"] = disk_size
-		stats["knockback"] = CrawlerRules.STARFIRE_KNOCKBACK \
-			+ CrawlerRules.STARFIRE_KNOCKBACK_PER_RANK \
-			* float(upgrade_rank_for(card, "knockback"))
+		stats["knockback"] = CrawlerRules.scaled_stat(
+			CrawlerRules.STARFIRE_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 		_scale_shop_stat(stats, "radius", disk_size)
 		_scale_shop_stat(stats, "projectile_radius", disk_size)
 		_scale_shop_stat(stats, "crater_radius", disk_size)
@@ -548,22 +551,19 @@ func _apply_shop_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 	elif CrawlerRules.is_field_ability(card.id):
 		_apply_field_ranks(stats, card)
 	elif CrawlerRules.is_roar_ability(card.id):
-		stats["damage"] = CrawlerRules.roar_base_damage(card.id) \
-			+ CrawlerRules.ROAR_DAMAGE_PER_RANK \
-			* float(upgrade_rank_for(card, "damage"))
-		stats["range"] = CrawlerRules.ROAR_RADIUS \
-			+ CrawlerRules.ROAR_RADIUS_PER_RANK \
-			* float(upgrade_rank_for(card, "range"))
+		stats["damage"] = CrawlerRules.scaled_stat(
+			CrawlerRules.roar_base_damage(card.id), upgrade_rank_for(card, "damage"))
+		stats["range"] = CrawlerRules.scaled_stat(
+			CrawlerRules.ROAR_RADIUS, upgrade_rank_for(card, "range"))
 		stats["radius"] = float(stats["range"])
-		stats["knockback"] = CrawlerRules.roar_base_knockback(card.id) \
-			+ CrawlerRules.ROAR_KNOCKBACK_PER_RANK \
-			* float(upgrade_rank_for(card, "knockback"))
+		stats["knockback"] = CrawlerRules.scaled_stat(
+			CrawlerRules.roar_base_knockback(card.id),
+			upgrade_rank_for(card, "knockback"))
 		stats["cooldown"] = CrawlerRules.ROAR_COOLDOWN
 		stats["animation_duration"] = CrawlerRules.ROAR_ANIMATION
 		if card.id != "roar":
-			stats["duration"] = CrawlerRules.ROAR_DURATION \
-				+ CrawlerRules.ROAR_DURATION_PER_RANK \
-				* float(upgrade_rank_for(card, "duration"))
+			stats["duration"] = CrawlerRules.scaled_stat(
+				CrawlerRules.ROAR_DURATION, upgrade_rank_for(card, "duration"))
 	for index in card.slot_count:
 		var child := card.mod_at(index)
 		if child == null:
@@ -577,9 +577,8 @@ func _apply_shop_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 		var authored := CrawlerRules.LIGHT_BOLT_RADIUS
 		stats["size"] = float(stats.get("radius", authored)) / maxf(authored, 0.01)
 	elif card.id == "icicle":
-		var cold_rank := upgrade_rank_for(card, "cold")
-		var authored := CrawlerRules.ICICLE_RADIUS \
-			+ CrawlerRules.ICICLE_RADIUS_COLD_PER_RANK * float(cold_rank)
+		var authored := CrawlerRules.scaled_stat(
+			CrawlerRules.ICICLE_RADIUS, upgrade_rank_for(card, "cold"))
 		stats["size"] = float(stats.get("radius", authored)) / maxf(authored, 0.01)
 	elif card.id == "teleport":
 		var authored := CrawlerRules.TELEPORT_RADIUS
@@ -618,29 +617,26 @@ func _apply_shop_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 
 
 func _apply_light_bolt_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	var burst := CrawlerRules.LIGHT_BOLT_DAMAGE \
-		+ CrawlerRules.LIGHT_BOLT_DAMAGE_PER_RANK \
-		* float(upgrade_rank_for(card, "damage"))
+	var burst := CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHT_BOLT_DAMAGE, upgrade_rank_for(card, "damage"))
 	stats["damage"] = burst
 	stats["impact"] = CrawlerRules.LIGHT_BOLT_IMPACT \
+		* (burst / CrawlerRules.LIGHT_BOLT_DAMAGE)
+	stats["player_damage"] = CrawlerRules.LIGHT_BOLT_PLAYER_DAMAGE \
 		* (burst / CrawlerRules.LIGHT_BOLT_DAMAGE)
 	stats["cooldown"] = maxf(
 		CrawlerRules.LIGHT_BOLT_COOLDOWN_MIN,
 		CrawlerRules.LIGHT_BOLT_COOLDOWN
 			- CrawlerRules.LIGHT_BOLT_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["range"] = CrawlerRules.LIGHT_BOLT_RANGE \
-		+ CrawlerRules.LIGHT_BOLT_RANGE_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	stats["speed"] = CrawlerRules.LIGHT_BOLT_SPEED \
-		+ CrawlerRules.LIGHT_BOLT_SPEED_PER_RANK \
-		* float(upgrade_rank_for(card, "speed"))
-	var bolt_size := 1.0 + CrawlerRules.LIGHT_BOLT_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHT_BOLT_RANGE, upgrade_rank_for(card, "range"))
+	stats["speed"] = CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHT_BOLT_SPEED, upgrade_rank_for(card, "speed"))
+	var bolt_size := _rank_scale(card, "size")
 	stats["size"] = bolt_size
-	stats["knockback"] = CrawlerRules.LIGHT_BOLT_KNOCKBACK \
-		+ CrawlerRules.LIGHT_BOLT_KNOCKBACK_PER_RANK \
-		* float(upgrade_rank_for(card, "knockback"))
+	stats["knockback"] = CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHT_BOLT_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 	_scale_shop_stat(stats, "radius", bolt_size)
 	_scale_shop_stat(stats, "projectile_radius", bolt_size)
 	_scale_shop_stat(stats, "crater_radius", bolt_size)
@@ -648,33 +644,26 @@ func _apply_light_bolt_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 
 
 func _apply_icicle_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	stats["damage"] = CrawlerRules.ICICLE_DAMAGE \
-		+ CrawlerRules.ICICLE_DAMAGE_PER_RANK \
-		* float(upgrade_rank_for(card, "damage"))
+	stats["damage"] = CrawlerRules.scaled_stat(
+		CrawlerRules.ICICLE_DAMAGE, upgrade_rank_for(card, "damage"))
 	stats["cooldown"] = maxf(
 		CrawlerRules.ICICLE_COOLDOWN_MIN,
 		CrawlerRules.ICICLE_COOLDOWN
 			- CrawlerRules.ICICLE_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["range"] = CrawlerRules.ICICLE_RANGE \
-		+ CrawlerRules.ICICLE_RANGE_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	stats["speed"] = CrawlerRules.ICICLE_SPEED \
-		+ CrawlerRules.ICICLE_SPEED_PER_RANK \
-		* float(upgrade_rank_for(card, "speed"))
-	var spear_size := 1.0 + CrawlerRules.ICICLE_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.ICICLE_RANGE, upgrade_rank_for(card, "range"))
+	stats["speed"] = CrawlerRules.scaled_stat(
+		CrawlerRules.ICICLE_SPEED, upgrade_rank_for(card, "speed"))
+	var spear_size := _rank_scale(card, "size")
 	stats["size"] = spear_size
-	stats["knockback"] = CrawlerRules.ICICLE_KNOCKBACK \
-		+ CrawlerRules.ICICLE_KNOCKBACK_PER_RANK \
-		* float(upgrade_rank_for(card, "knockback"))
-	var cold_rank := float(upgrade_rank_for(card, "cold"))
-	stats["cold"] = CrawlerRules.ICICLE_COLD \
-		+ CrawlerRules.ICICLE_COLD_PER_RANK * cold_rank
-	stats["cold_damage"] = CrawlerRules.ICICLE_COLD_DAMAGE \
-		+ CrawlerRules.ICICLE_COLD_DAMAGE_PER_RANK * cold_rank
-	stats["radius"] = CrawlerRules.ICICLE_RADIUS \
-		+ CrawlerRules.ICICLE_RADIUS_COLD_PER_RANK * cold_rank
+	stats["knockback"] = CrawlerRules.scaled_stat(
+		CrawlerRules.ICICLE_KNOCKBACK, upgrade_rank_for(card, "knockback"))
+	var cold_rank := upgrade_rank_for(card, "cold")
+	stats["cold"] = CrawlerRules.scaled_stat(CrawlerRules.ICICLE_COLD, cold_rank)
+	stats["cold_damage"] = CrawlerRules.scaled_stat(
+		CrawlerRules.ICICLE_COLD_DAMAGE, cold_rank)
+	stats["radius"] = CrawlerRules.scaled_stat(CrawlerRules.ICICLE_RADIUS, cold_rank)
 	stats["projectile_radius"] = CrawlerRules.ICICLE_PROJECTILE_RADIUS
 	_scale_shop_stat(stats, "radius", spear_size)
 	_scale_shop_stat(stats, "projectile_radius", spear_size)
@@ -687,14 +676,11 @@ func _apply_teleport_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 		CrawlerRules.TELEPORT_COOLDOWN
 			- CrawlerRules.TELEPORT_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["range"] = CrawlerRules.TELEPORT_RANGE \
-		+ CrawlerRules.TELEPORT_RANGE_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	stats["speed"] = CrawlerRules.TELEPORT_SPEED \
-		+ CrawlerRules.TELEPORT_SPEED_PER_RANK \
-		* float(upgrade_rank_for(card, "speed"))
-	var marker_size := 1.0 + CrawlerRules.TELEPORT_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.TELEPORT_RANGE, upgrade_rank_for(card, "range"))
+	stats["speed"] = CrawlerRules.scaled_stat(
+		CrawlerRules.TELEPORT_SPEED, upgrade_rank_for(card, "speed"))
+	var marker_size := _rank_scale(card, "size")
 	stats["size"] = marker_size
 	stats["swap"] = 1.0 if upgrade_rank_for(card, "swap") > 0 else 0.0
 	stats["gravity"] = CrawlerRules.TELEPORT_GRAVITY
@@ -706,26 +692,21 @@ func _apply_teleport_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 
 
 func _apply_fus_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	stats["damage"] = CrawlerRules.FUS_DAMAGE \
-		+ CrawlerRules.FUS_DAMAGE_PER_RANK \
-		* float(upgrade_rank_for(card, "damage"))
+	stats["damage"] = CrawlerRules.scaled_stat(
+		CrawlerRules.FUS_DAMAGE, upgrade_rank_for(card, "damage"))
 	stats["cooldown"] = maxf(
 		CrawlerRules.FUS_COOLDOWN_MIN,
 		CrawlerRules.FUS_COOLDOWN
 			- CrawlerRules.FUS_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["range"] = CrawlerRules.FUS_RANGE \
-		+ CrawlerRules.FUS_RANGE_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	stats["speed"] = CrawlerRules.FUS_SPEED \
-		+ CrawlerRules.FUS_SPEED_PER_RANK \
-		* float(upgrade_rank_for(card, "speed"))
-	var cone_size := 1.0 + CrawlerRules.FUS_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.FUS_RANGE, upgrade_rank_for(card, "range"))
+	stats["speed"] = CrawlerRules.scaled_stat(
+		CrawlerRules.FUS_SPEED, upgrade_rank_for(card, "speed"))
+	var cone_size := _rank_scale(card, "size")
 	stats["size"] = cone_size
-	stats["knockback"] = CrawlerRules.FUS_KNOCKBACK \
-		+ CrawlerRules.FUS_KNOCKBACK_PER_RANK \
-		* float(upgrade_rank_for(card, "knockback"))
+	stats["knockback"] = CrawlerRules.scaled_stat(
+		CrawlerRules.FUS_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 	stats["radius"] = CrawlerRules.FUS_RADIUS
 	stats["projectile_radius"] = CrawlerRules.FUS_PROJECTILE_RADIUS
 	_scale_shop_stat(stats, "radius", cone_size)
@@ -733,35 +714,29 @@ func _apply_fus_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 
 
 func _apply_hero_punch_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	stats["damage"] = CrawlerRules.HERO_PUNCH_DAMAGE \
-		+ CrawlerRules.HERO_PUNCH_DAMAGE_PER_RANK \
-		* float(upgrade_rank_for(card, "damage"))
+	stats["damage"] = CrawlerRules.scaled_stat(
+		CrawlerRules.HERO_PUNCH_DAMAGE, upgrade_rank_for(card, "damage"))
 	stats["cooldown"] = maxf(
 		CrawlerRules.HERO_PUNCH_COOLDOWN_MIN,
 		CrawlerRules.HERO_PUNCH_COOLDOWN
 			- CrawlerRules.HERO_PUNCH_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["range"] = CrawlerRules.HERO_PUNCH_RANGE \
-		+ CrawlerRules.HERO_PUNCH_RANGE_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	var size := 1.0 + CrawlerRules.HERO_PUNCH_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.HERO_PUNCH_RANGE, upgrade_rank_for(card, "range"))
+	var size := _rank_scale(card, "size")
 	stats["size"] = size
-	stats["knockback"] = CrawlerRules.HERO_PUNCH_KNOCKBACK \
-		+ CrawlerRules.HERO_PUNCH_KNOCKBACK_PER_RANK \
-		* float(upgrade_rank_for(card, "knockback"))
+	stats["knockback"] = CrawlerRules.scaled_stat(
+		CrawlerRules.HERO_PUNCH_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 	if not stats.has("radius"):
 		stats["radius"] = CrawlerRules.HERO_PUNCH_RADIUS
 	_scale_shop_stat(stats, "radius", size)
 
 
 func _apply_overdrive_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	stats["boost"] = CrawlerRules.OVERDRIVE_BOOST \
-		+ CrawlerRules.OVERDRIVE_BOOST_PER_RANK \
-		* float(upgrade_rank_for(card, "boost"))
-	stats["duration"] = CrawlerRules.OVERDRIVE_DURATION \
-		+ CrawlerRules.OVERDRIVE_DURATION_PER_RANK \
-		* float(upgrade_rank_for(card, "duration"))
+	stats["boost"] = CrawlerRules.scaled_stat(
+		CrawlerRules.OVERDRIVE_BOOST, upgrade_rank_for(card, "boost"))
+	stats["duration"] = CrawlerRules.scaled_stat(
+		CrawlerRules.OVERDRIVE_DURATION, upgrade_rank_for(card, "duration"))
 	stats["cooldown"] = maxf(
 		CrawlerRules.OVERDRIVE_COOLDOWN_MIN,
 		CrawlerRules.OVERDRIVE_COOLDOWN
@@ -816,9 +791,8 @@ func _apply_active_overdrive(stats: Dictionary, card: CrawlerCard) -> void:
 
 
 func _apply_nausicaa_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	var burst := CrawlerRules.NAUSICAA_DAMAGE \
-		+ CrawlerRules.NAUSICAA_DAMAGE_PER_RANK \
-		* float(upgrade_rank_for(card, "damage"))
+	var burst := CrawlerRules.scaled_stat(
+		CrawlerRules.NAUSICAA_DAMAGE, upgrade_rank_for(card, "damage"))
 	stats["damage"] = burst
 	stats["player_damage"] = CrawlerRules.NAUSICAA_PLAYER_DAMAGE \
 		* (burst / CrawlerRules.NAUSICAA_DAMAGE)
@@ -827,18 +801,14 @@ func _apply_nausicaa_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 		CrawlerRules.NAUSICAA_COOLDOWN
 			- CrawlerRules.NAUSICAA_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["duration"] = CrawlerRules.NAUSICAA_DURATION \
-		+ CrawlerRules.NAUSICAA_DURATION_PER_RANK \
-		* float(upgrade_rank_for(card, "duration"))
-	stats["range"] = CrawlerRules.NAUSICAA_RANGE \
-		+ CrawlerRules.NAUSICAA_RANGE_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	var size := 1.0 + CrawlerRules.NAUSICAA_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["duration"] = CrawlerRules.scaled_stat(
+		CrawlerRules.NAUSICAA_DURATION, upgrade_rank_for(card, "duration"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.NAUSICAA_RANGE, upgrade_rank_for(card, "range"))
+	var size := _rank_scale(card, "size")
 	stats["size"] = size
-	stats["knockback"] = CrawlerRules.NAUSICAA_KNOCKBACK \
-		+ CrawlerRules.NAUSICAA_KNOCKBACK_PER_RANK \
-		* float(upgrade_rank_for(card, "knockback"))
+	stats["knockback"] = CrawlerRules.scaled_stat(
+		CrawlerRules.NAUSICAA_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 	stats["delay"] = CrawlerRules.NAUSICAA_DELAY
 	stats["paint_spacing"] = float(stats.get(
 		"paint_spacing", CrawlerRules.NAUSICAA_PAINT_SPACING))
@@ -860,9 +830,8 @@ func _apply_nausicaa_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 
 
 func _apply_mini_nuke_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	var burst := CrawlerRules.MINI_NUKE_DAMAGE \
-		+ CrawlerRules.MINI_NUKE_DAMAGE_PER_RANK \
-		* float(upgrade_rank_for(card, "damage"))
+	var burst := CrawlerRules.scaled_stat(
+		CrawlerRules.MINI_NUKE_DAMAGE, upgrade_rank_for(card, "damage"))
 	stats["damage"] = burst
 	stats["impact"] = CrawlerRules.MINI_NUKE_IMPACT \
 		* (burst / CrawlerRules.MINI_NUKE_DAMAGE)
@@ -873,16 +842,13 @@ func _apply_mini_nuke_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 		CrawlerRules.MINI_NUKE_COOLDOWN
 			- CrawlerRules.MINI_NUKE_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["range"] = CrawlerRules.MINI_NUKE_RANGE \
-		+ CrawlerRules.MINI_NUKE_RANGE_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	var size := 1.0 + CrawlerRules.MINI_NUKE_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.MINI_NUKE_RANGE, upgrade_rank_for(card, "range"))
+	var size := _rank_scale(card, "size")
 	stats["size"] = size
 	stats["speed"] = CrawlerRules.MINI_NUKE_SPEED
-	stats["knockback"] = CrawlerRules.MINI_NUKE_KNOCKBACK \
-		+ CrawlerRules.MINI_NUKE_KNOCKBACK_PER_RANK \
-		* float(upgrade_rank_for(card, "knockback"))
+	stats["knockback"] = CrawlerRules.scaled_stat(
+		CrawlerRules.MINI_NUKE_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 	stats["lift"] = CrawlerRules.MINI_NUKE_LIFT
 	stats["self_launch_speed"] = CrawlerRules.MINI_NUKE_SELF_LAUNCH
 	stats["explosion_duration"] = CrawlerRules.MINI_NUKE_EXPLOSION
@@ -899,13 +865,11 @@ func _apply_wall_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 		CrawlerRules.WALL_COOLDOWN
 			- CrawlerRules.WALL_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["range"] = CrawlerRules.WALL_RANGE \
-		+ CrawlerRules.WALL_RANGE_PER_RANK * float(upgrade_rank_for(card, "range"))
-	stats["duration"] = CrawlerRules.WALL_DURATION \
-		+ CrawlerRules.WALL_DURATION_PER_RANK \
-		* float(upgrade_rank_for(card, "duration"))
-	var size := 1.0 + CrawlerRules.WALL_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.WALL_RANGE, upgrade_rank_for(card, "range"))
+	stats["duration"] = CrawlerRules.scaled_stat(
+		CrawlerRules.WALL_DURATION, upgrade_rank_for(card, "duration"))
+	var size := _rank_scale(card, "size")
 	stats["size"] = size
 	stats["fade_duration"] = CrawlerRules.WALL_FADE
 	stats["project"] = CrawlerRules.wall_project_speed(
@@ -919,22 +883,18 @@ func _apply_wall_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 
 
 func _apply_field_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	stats["damage"] = CrawlerRules.field_base_damage(card.id) \
-		+ CrawlerRules.FIELD_DAMAGE_PER_RANK \
-		* float(upgrade_rank_for(card, "damage"))
+	stats["damage"] = CrawlerRules.scaled_stat(
+		CrawlerRules.field_base_damage(card.id), upgrade_rank_for(card, "damage"))
 	stats["cooldown"] = maxf(
 		CrawlerRules.FIELD_COOLDOWN_MIN,
 		CrawlerRules.FIELD_COOLDOWN
 			- CrawlerRules.FIELD_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["duration"] = CrawlerRules.FIELD_DURATION \
-		+ CrawlerRules.FIELD_DURATION_PER_RANK \
-		* float(upgrade_rank_for(card, "duration"))
-	var radius := CrawlerRules.FIELD_RADIUS \
-		+ CrawlerRules.FIELD_RADIUS_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	var size := 1.0 + CrawlerRules.FIELD_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["duration"] = CrawlerRules.scaled_stat(
+		CrawlerRules.FIELD_DURATION, upgrade_rank_for(card, "duration"))
+	var radius := CrawlerRules.scaled_stat(
+		CrawlerRules.FIELD_RADIUS, upgrade_rank_for(card, "range"))
+	var size := _rank_scale(card, "size")
 	stats["size"] = size
 	stats["range"] = radius
 	stats["radius"] = radius
@@ -950,54 +910,44 @@ func _apply_field_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 	stats["freeze"] = 0.0
 	stats["heal"] = 0.0
 	if card.id == "static_field":
-		stats["shock"] = CrawlerRules.FIELD_SHOCK \
-			+ CrawlerRules.FIELD_SHOCK_PER_RANK \
-			* float(upgrade_rank_for(card, "shock"))
+		stats["shock"] = CrawlerRules.scaled_stat(
+			CrawlerRules.FIELD_SHOCK, upgrade_rank_for(card, "shock"))
 	elif card.id == "toxic_field":
-		stats["toxic"] = CrawlerRules.FIELD_TOXIC \
-			+ CrawlerRules.FIELD_TOXIC_PER_RANK \
-			* float(upgrade_rank_for(card, "toxic"))
+		stats["toxic"] = CrawlerRules.scaled_stat(
+			CrawlerRules.FIELD_TOXIC, upgrade_rank_for(card, "toxic"))
 	elif card.id == "freeze_field":
 		stats["freeze"] = minf(
 			CrawlerRules.FIELD_FREEZE_MAX,
-			CrawlerRules.FIELD_FREEZE
-				+ CrawlerRules.FIELD_FREEZE_PER_RANK
-				* float(upgrade_rank_for(card, "freeze")))
+			CrawlerRules.scaled_stat(
+				CrawlerRules.FIELD_FREEZE, upgrade_rank_for(card, "freeze")))
 	elif card.id == "healing_field":
-		stats["heal"] = CrawlerRules.FIELD_HEAL \
-			+ CrawlerRules.FIELD_HEAL_PER_RANK \
-			* float(upgrade_rank_for(card, "heal"))
+		stats["heal"] = CrawlerRules.scaled_stat(
+			CrawlerRules.FIELD_HEAL, upgrade_rank_for(card, "heal"))
 	_scale_shop_stat(stats, "radius", size)
 	_scale_shop_stat(stats, "range", size)
 
 
 func _apply_lightning_ranks(stats: Dictionary, card: CrawlerCard) -> void:
-	stats["damage"] = CrawlerRules.LIGHTNING_DAMAGE \
-		+ CrawlerRules.LIGHTNING_DAMAGE_PER_RANK \
-		* float(upgrade_rank_for(card, "damage"))
+	stats["damage"] = CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHTNING_DAMAGE, upgrade_rank_for(card, "damage"))
 	stats["cooldown"] = maxf(
 		CrawlerRules.LIGHTNING_COOLDOWN_MIN,
 		CrawlerRules.LIGHTNING_COOLDOWN
 			- CrawlerRules.LIGHTNING_COOLDOWN_PER_RANK
 			* float(upgrade_rank_for(card, "cooldown")))
-	stats["duration"] = CrawlerRules.LIGHTNING_DURATION \
-		+ CrawlerRules.LIGHTNING_DURATION_PER_RANK \
-		* float(upgrade_rank_for(card, "duration"))
-	stats["range"] = CrawlerRules.LIGHTNING_RANGE \
-		+ CrawlerRules.LIGHTNING_RANGE_PER_RANK \
-		* float(upgrade_rank_for(card, "range"))
-	var size := 1.0 + CrawlerRules.LIGHTNING_SIZE_PER_RANK \
-		* float(upgrade_rank_for(card, "size"))
+	stats["duration"] = CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHTNING_DURATION, upgrade_rank_for(card, "duration"))
+	stats["range"] = CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHTNING_RANGE, upgrade_rank_for(card, "range"))
+	var size := _rank_scale(card, "size")
 	stats["size"] = size
-	stats["knockback"] = CrawlerRules.LIGHTNING_KNOCKBACK \
-		+ CrawlerRules.LIGHTNING_KNOCKBACK_PER_RANK \
-		* float(upgrade_rank_for(card, "knockback"))
+	stats["knockback"] = CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHTNING_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 	stats["arcs"] = float(CrawlerRules.LIGHTNING_ARCS \
 		+ CrawlerRules.LIGHTNING_ARCS_PER_RANK \
 		* upgrade_rank_for(card, "arcs"))
-	stats["shock"] = CrawlerRules.LIGHTNING_SHOCK \
-		+ CrawlerRules.LIGHTNING_SHOCK_PER_RANK \
-		* float(upgrade_rank_for(card, "shock"))
+	stats["shock"] = CrawlerRules.scaled_stat(
+		CrawlerRules.LIGHTNING_SHOCK, upgrade_rank_for(card, "shock"))
 	stats["hop_range"] = CrawlerRules.LIGHTNING_ARC_RANGE
 	stats["damage_unit"] = "/s"
 	if not stats.has("radius"):
@@ -1016,24 +966,19 @@ func _apply_pulsed_beam_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 	var duration := CrawlerRules.KAME_DURATION if kame else CrawlerRules.LASER_DURATION
 	var reach := CrawlerRules.KAME_RANGE if kame else CrawlerRules.LASER_RANGE
 	var knockback := CrawlerRules.KAME_KNOCKBACK if kame else CrawlerRules.LASER_KNOCKBACK
-	var damage_per := CrawlerRules.KAME_DAMAGE_PER_RANK if kame else 12.0
 	var cooldown_per := CrawlerRules.KAME_COOLDOWN_PER_RANK if kame else 0.05
 	var cooldown_min := CrawlerRules.KAME_COOLDOWN_MIN if kame else 0.18
-	var duration_per := CrawlerRules.KAME_DURATION_PER_RANK if kame else 0.06
-	var range_per := CrawlerRules.KAME_RANGE_PER_RANK if kame \
-		else CrawlerRules.LASER_RANGE_PER_RANK
-	var knock_per := CrawlerRules.KAME_KNOCKBACK_PER_RANK if kame \
-		else CrawlerRules.LASER_KNOCKBACK_PER_RANK
-	var size_per := CrawlerRules.KAME_SIZE_PER_RANK if kame else 0.10
-	stats["damage"] = damage + damage_per * float(upgrade_rank_for(card, "damage"))
+	stats["damage"] = CrawlerRules.scaled_stat(damage, upgrade_rank_for(card, "damage"))
 	stats["cooldown"] = maxf(
 		cooldown_min,
 		cooldown - cooldown_per * float(upgrade_rank_for(card, "cooldown")))
-	stats["duration"] = duration + duration_per * float(upgrade_rank_for(card, "duration"))
-	stats["range"] = reach + range_per * float(upgrade_rank_for(card, "range"))
-	var size := 1.0 + size_per * float(upgrade_rank_for(card, "size"))
+	stats["duration"] = CrawlerRules.scaled_stat(
+		duration, upgrade_rank_for(card, "duration"))
+	stats["range"] = CrawlerRules.scaled_stat(reach, upgrade_rank_for(card, "range"))
+	var size := _rank_scale(card, "size")
 	stats["size"] = size
-	stats["knockback"] = knockback + knock_per * float(upgrade_rank_for(card, "knockback"))
+	stats["knockback"] = CrawlerRules.scaled_stat(
+		knockback, upgrade_rank_for(card, "knockback"))
 	stats["damage_unit"] = "/s"
 	if kame:
 		stats["damage_hz"] = CrawlerRules.KAME_DAMAGE_HZ
@@ -1053,7 +998,7 @@ func _apply_mod_upgrade(stats: Dictionary, mod: CrawlerCard, host_id := "") -> v
 		_scale_shop_stat(stats, "damage", maxf(0.45, 1.0 - 0.10 * float(rank)))
 		return
 	if mod.id == "big":
-		var rank := clampi(mod.upgrade_rank("size"), 0, CrawlerRules.BIG_SIZE_MAX_RANK)
+		var rank := maxi(mod.upgrade_rank("size"), 0)
 		var wanted := CrawlerRules.big_size_scale(rank)
 		var already := CrawlerCatalog.size_mul_for("big", host_id)
 		var extra := wanted / already if already > 0.0001 else wanted
@@ -1070,8 +1015,7 @@ func _apply_mod_upgrade(stats: Dictionary, mod: CrawlerCard, host_id := "") -> v
 		return
 	if mod.id == "ice" and CrawlerRules.is_field_ability(host_id):
 		var rank := maxi(mod.upgrade_rank("freeze"), 0)
-		var extra := CrawlerRules.ELEM_ICE_FIELD \
-			+ CrawlerRules.ELEM_ICE_FIELD_PER_RANK * float(rank)
+		var extra := CrawlerRules.scaled_stat(CrawlerRules.ELEM_ICE_FIELD, rank)
 		stats["freeze"] = minf(
 			float(stats.get("freeze", 0.0)) + extra, CrawlerRules.FIELD_FREEZE_MAX)
 		return
@@ -1123,6 +1067,10 @@ func _apply_mod_upgrade(stats: Dictionary, mod: CrawlerCard, host_id := "") -> v
 		stats["homing_range"] = maxf(
 			float(stats.get("homing_range", 0.0)),
 			CrawlerRules.homing_range(seek_rank))
+
+
+func _rank_scale(card: CrawlerCard, stat_id: String) -> float:
+	return CrawlerRules.upgrade_scale(upgrade_rank_for(card, stat_id))
 
 
 func _scale_shop_stat(stats: Dictionary, key: String, scale: float) -> void:
@@ -1215,6 +1163,11 @@ func shop_grant_result(catalog_id: String, swap_equipped_index := 0) -> Dictiona
 	return grant(card.to_dict())
 
 
+func _shops_unlimited() -> bool:
+	return player != null and player.crawler_progress != null \
+		and player.crawler_progress.shops_are_unlimited()
+
+
 func upgrade_card(uid: String, stat_id := "") -> bool:
 	var card := cards.get(uid) as CrawlerCard
 	if card == null:
@@ -1234,8 +1187,8 @@ func upgrade_card(uid: String, stat_id := "") -> bool:
 			return false
 		card.slot_count += 1
 		card._ensure_mods()
-	var cap := CrawlerRules.upgrade_max_rank(card.id, wanted)
-	if cap > 0 and card.upgrade_rank(wanted) >= cap:
+	if CrawlerRules.upgrade_at_cap(
+			card.id, wanted, card.upgrade_rank(wanted), _shops_unlimited()):
 		return false
 	card.add_upgrade_rank(wanted)
 	if card.id == "clip":
@@ -1340,8 +1293,8 @@ func _upgrade_shared_ability(card: CrawlerCard, wanted: String) -> bool:
 	var held: Variant = entry.get("upgrades", {})
 	if held is Dictionary:
 		table = (held as Dictionary).duplicate()
-	var cap := CrawlerRules.upgrade_max_rank(card.id, wanted)
-	if cap > 0 and int(table.get(wanted, 0)) >= cap:
+	if CrawlerRules.upgrade_at_cap(
+			card.id, wanted, int(table.get(wanted, 0)), _shops_unlimited()):
 		return false
 	if wanted == "slots":
 		var slots := maxi(int(entry.get("slots", 0)), card.slot_count)

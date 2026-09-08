@@ -180,6 +180,19 @@ func can_use() -> bool:
 	return _can_use()
 
 
+## Hat autofire uses the cap's cadence, not the ability's own cooldown.
+func can_auto_use() -> bool:
+	var held_cd := _cooldown_left
+	_cooldown_left = 0.0
+	var ok := not _held and can_use()
+	_cooldown_left = held_cd
+	return ok
+
+
+func clear_cooldown() -> void:
+	_cooldown_left = 0.0
+
+
 func _has_shots() -> bool:
 	if player == null or player.crawler_kit == null:
 		return true

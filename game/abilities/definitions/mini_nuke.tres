@@ -8,7 +8,7 @@
 script = ExtResource("1_definition")
 ability_id = "mini_nuke"
 title = "Mini Nuke"
-description = "A smaller energy core from the front of both hands. It flies faster and farther than Nuke before it bursts, then tears a modest crater and hurls whatever it reaches. Can launch its caster without dealing self-damage."
+description = "A smaller energy core from the front of both hands. It flies faster and farther than Nuke before it bursts, then tears a modest crater and hurls whatever it reaches. Can launch its caster. The blast hurts you, not other players, unless you have explosion immunity."
 implementation = ExtResource("2_implementation")
 icon = ExtResource("3_icon")
 tint = Color(1.000000, 0.690196, 0.227451, 1.000000)

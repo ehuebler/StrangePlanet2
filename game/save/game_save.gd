@@ -207,6 +207,8 @@ static func capture(world: Node) -> Dictionary:
 			"city_gift_id": int(world.call(&"city_gift_id")) if world.has_method(&"city_gift_id") else 0,
 			"city_gift_claimed": bool(world.call(&"city_gift_claimed")) if world.has_method(&"city_gift_claimed") else false,
 			"duel": world.call(&"duel_snapshot") if world.has_method(&"duel_snapshot") else {},
+			"training": world.call(&"training_snapshot") \
+				if world.has_method(&"training_snapshot") else {},
 		}
 	return {
 		"version": VERSION,

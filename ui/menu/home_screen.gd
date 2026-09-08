@@ -20,7 +20,7 @@ signal handed_over
 
 const PALETTE: UIPalette = preload("res://ui/themes/ui_palette.tres")
 
-enum View { HOME, ONLINE, SETTINGS, CHARACTER, UPGRADES, ACHIEVEMENTS }
+enum View { HOME, ONLINE, SETTINGS, CHARACTER, UPGRADES, ACHIEVEMENTS, HATS }
 
 ## Camera poses, in the spawn point's frame: metres from the spawn, then degrees
 ## of yaw and pitch (positive is up) off its facing, and the field of view. The
@@ -171,12 +171,20 @@ const FADE_IN_TIME := 0.9
 const SCREEN_FADE_TIME := 0.35
 const SCREEN_FADE_DELAY := MOVE_TIME * 0.45
 const SPIN_PER_PIXEL := 0.008
+## Front key for the preview figure. The lamp sits on the camera's side of the
+## face rather than along the lens: the home shot looks at the planet, so a
+## camera-forward cone only grazes the head. Energy rises once the sun leaves
+## the face, and the range stays short so the planet is not recast.
+const PREVIEW_FILL_DAY := 1.6
+const PREVIEW_FILL_NIGHT := 5.4
+const PREVIEW_FILL_STANDOFF := 0.58
 
 ## Set by the world before this enters the tree: the spawn the local player will
 ## use, and the frame every camera pose is measured in.
 var frame := Transform3D.IDENTITY
 
 var _camera: Camera3D
+var _preview_fill: SpotLight3D
 var _preview: Node3D
 ## The facing the preview was built with, kept apart from the drag so a spin is
 ## always measured from where the character was put rather than from itself.
@@ -217,6 +225,7 @@ var _awaiting_player := false
 ## unchanged, but a second New Game must not start another warm-up beside it.
 var _warming := false
 var _loading_bar: StartLoadingBar
+var _loading_note: Label
 var _loading_block: ColorRect
 var _preview_hold_speed := 1.0
 var _edit_button: Button
@@ -268,6 +277,7 @@ func _process(delta: float) -> void:
 			_begin_handover(player)
 	if _handover_target != null:
 		_advance_handover(delta)
+	_update_preview_fill()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -305,6 +315,75 @@ func _build_camera() -> void:
 	_camera.far = 60000.0
 	add_child(_camera)
 	_camera.current = true
+	_build_preview_fill()
+
+
+## Sits on the menu camera so the figure is always lit from the viewer's side,
+## including the character editor that reuses this pose.
+func _build_preview_fill() -> void:
+	if _camera == null or _camera.get_node_or_null("PreviewFillLight") != null:
+		return
+	var fill := SpotLight3D.new()
+	fill.name = "PreviewFillLight"
+	fill.light_energy = PREVIEW_FILL_NIGHT
+	fill.light_color = Color(1.0, 0.96, 0.90)
+	fill.light_specular = 0.18
+	fill.spot_range = 8.0
+	fill.spot_attenuation = 0.32
+	fill.spot_angle = 48.0
+	fill.shadow_enabled = false
+	# Same mask as the other character lamps: every layer except terrain.
+	fill.light_cull_mask = 0xFFFFD
+	_preview_fill = fill
+	_camera.add_child(fill)
+
+
+## How bright the front key is for a given amount of remaining daylight.
+## Night is 0, noon is 1. Exposed so the loadout test can check the night
+## boost without standing a planet up.
+static func preview_fill_energy(daylight: float) -> float:
+	return lerpf(PREVIEW_FILL_NIGHT, PREVIEW_FILL_DAY, clampf(daylight, 0.0, 1.0))
+
+
+func _update_preview_fill() -> void:
+	if _preview_fill == null or _camera == null:
+		return
+	if _handover_target != null:
+		_preview_fill.light_energy = 0.0
+		return
+	var face := _preview_face_point()
+	var to_camera := _camera.global_position - face
+	if to_camera.length_squared() < 0.0001:
+		return
+	var toward := to_camera.normalized()
+	_preview_fill.global_position = face + toward * PREVIEW_FILL_STANDOFF
+	var up := frame.basis.y
+	if absf(up.dot(toward)) > 0.96:
+		up = _camera.global_basis.x
+	_preview_fill.look_at(face, up)
+	_preview_fill.light_energy = preview_fill_energy(_preview_daylight())
+
+
+func _preview_face_point() -> Vector3:
+	var up := frame.basis.y
+	if is_instance_valid(_preview):
+		var skeleton := Wardrobe.skeleton_of(_preview)
+		var head := CharacterRig.find_bone(skeleton, &"Head")
+		if skeleton != null and head >= 0:
+			return skeleton.to_global(skeleton.get_bone_global_pose(head).origin)
+		return _preview.global_position + up * 1.35
+	return frame.origin + up * 1.35
+
+
+func _preview_daylight() -> float:
+	var world := _world()
+	if world == null or world.celestial_cycle == null:
+		return 0.0
+	var up := frame.basis.y
+	var planet := world.planet()
+	if planet != null:
+		up = (frame.origin - planet.global_position).normalized()
+	return smoothstep(-6.0, 18.0, world.celestial_cycle.local_elevation_degrees(up))
 
 
 ## Wraps the unchanged logo PNG across the actual height field. The title is
@@ -476,6 +555,7 @@ func _dress_preview() -> void:
 			continue
 		for node in _preview.find_children(Wardrobe.NODE_PREFIX + slot, "MeshInstance3D", true, false):
 			SurfaceSkin.tint(node as MeshInstance3D, Color.html(str(tints[slot])))
+	SurfaceSkin.apply_outline_tint(_preview, tints)
 
 
 ## Turned to face the home camera and then PREVIEW_TURN off it, flattened against
@@ -632,6 +712,23 @@ func _build_start_loading() -> void:
 	_loading_bar.offset_bottom = LOADING_BAR_HEIGHT * 0.5
 	_loading_bar.visible = false
 	_root.add_child(_loading_bar)
+	_loading_note = Label.new()
+	_loading_note.name = "StartLoadingNote"
+	_loading_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_loading_note.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_loading_note.anchor_left = 0.5
+	_loading_note.anchor_right = 0.5
+	_loading_note.anchor_top = LOADING_BAR_ANCHOR_Y
+	_loading_note.anchor_bottom = LOADING_BAR_ANCHOR_Y
+	_loading_note.offset_left = -220.0
+	_loading_note.offset_right = 220.0
+	_loading_note.offset_top = LOADING_BAR_HEIGHT * 0.5 + 10.0
+	_loading_note.offset_bottom = LOADING_BAR_HEIGHT * 0.5 + 36.0
+	_loading_note.add_theme_font_size_override("font_size", 16)
+	_loading_note.add_theme_color_override("font_color", Color(0.86, 0.90, 0.84))
+	_loading_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_loading_note.visible = false
+	_root.add_child(_loading_note)
 
 
 ## The permanent home actions, split across two rows of CRT type.
@@ -665,7 +762,7 @@ func _fill_menu_row() -> void:
 		[
 			{
 				"name": "HomeUpgrades",
-				"label": "Upgrades",
+				"label": "Unlocks",
 				"callback": func() -> void: show_view(View.UPGRADES),
 			},
 			{
@@ -1371,6 +1468,16 @@ func _style_load_button(button: Button) -> void:
 	var open := GameSave.has_save()
 	button.disabled = not open
 	button.tooltip_text = "" if open else "No saved game yet."
+	if open:
+		button.add_theme_color_override(
+			&"font_disabled_color", Color(HOME_GREEN_TEXT, 0.42)
+		)
+		if button.has_meta(&"crt_keep_disabled_ink"):
+			button.remove_meta(&"crt_keep_disabled_ink")
+		return
+	var gray := Color(0.76, 0.76, 0.78)
+	button.add_theme_color_override(&"font_disabled_color", gray)
+	button.set_meta(&"crt_keep_disabled_ink", true)
 
 
 func _refresh_load_button() -> void:
@@ -1395,12 +1502,12 @@ func _refresh_gem_counter() -> void:
 		return
 	_gems.text = "%d GEMS" % CrawlerMeta.gems()
 	_gems.visible = _view == View.CHARACTER or _view == View.UPGRADES \
-		or _view == View.ACHIEVEMENTS
+		or _view == View.HATS or _view == View.ACHIEVEMENTS
 
 
 func _pose_view(view: View) -> View:
 	match view:
-		View.ONLINE, View.UPGRADES, View.ACHIEVEMENTS:
+		View.ONLINE, View.UPGRADES, View.HATS, View.ACHIEVEMENTS:
 			return View.ONLINE
 		View.SETTINGS:
 			return View.SETTINGS
@@ -1410,12 +1517,13 @@ func _pose_view(view: View) -> View:
 
 func _planet_overlay(view: View) -> bool:
 	return view == View.ONLINE or view == View.UPGRADES \
-		or view == View.ACHIEVEMENTS
+		or view == View.HATS or view == View.ACHIEVEMENTS
 
 
 func _transition_framed_background(view: View) -> bool:
 	var framed := view == View.ONLINE or view == View.SETTINGS \
-		or view == View.UPGRADES or view == View.ACHIEVEMENTS
+		or view == View.UPGRADES or view == View.HATS \
+		or view == View.ACHIEVEMENTS
 	if _background_fade != null and _background_fade.is_valid():
 		_background_fade.kill()
 	if not framed:
@@ -1452,7 +1560,7 @@ func show_view(view: View) -> void:
 	if _handover_target != null:
 		return
 	_view = view
-	# Character editing keeps the HOME camera. Upgrades and achievements
+	# Character editing keeps the HOME camera. Unlocks and achievements
 	# share the Online planet pose so those pages turn to the globe first.
 	_apply_pose(_pose_view(view), false)
 	_set_notice("", false)
@@ -1519,10 +1627,9 @@ func show_view(view: View) -> void:
 			settings.closed.connect(func() -> void: show_view(View.HOME))
 			_screen = settings
 		View.UPGRADES:
-			var upgrades := MetaUpgradesPanel.new()
-			upgrades.closed.connect(func() -> void: show_view(View.HOME))
-			upgrades.gems_changed.connect(_refresh_gem_counter)
-			_screen = upgrades
+			_screen = _uplocks_panel(MetaUpgradesPanel.Tab.STATS)
+		View.HATS:
+			_screen = _uplocks_panel(MetaUpgradesPanel.Tab.HATS)
 		View.ACHIEVEMENTS:
 			var achievements := AchievementsPanel.new()
 			achievements.closed.connect(func() -> void: show_view(View.HOME))
@@ -1540,6 +1647,14 @@ func show_view(view: View) -> void:
 			SCREEN_FADE_TIME
 		).set_delay(SCREEN_FADE_DELAY).set_trans(Tween.TRANS_SINE)
 	_refresh_gem_counter()
+
+
+func _uplocks_panel(tab: MetaUpgradesPanel.Tab) -> MetaUpgradesPanel:
+	var shop := MetaUpgradesPanel.new()
+	shop.opening_tab = tab
+	shop.closed.connect(func() -> void: show_view(View.HOME))
+	shop.gems_changed.connect(_refresh_gem_counter)
+	return shop
 
 
 # --- The character editor -----------------------------------------------------
@@ -1593,22 +1708,27 @@ func _stock_editor(body_id: String) -> void:
 		var item_id := str(worn.get(slot, ""))
 		_worn_slots.set_item(index, item_id if CharacterDB.apparel_fits(body_id, item_id) else "")
 
-	# Finite ownership, apparel only: worn garments plus garments in the saved
-	# backpack. Holding a tile changes only the worn slot, never this rail.
+	# Finite ownership, apparel only: gem-unlocked and free garments. Holding a
+	# tile changes only the worn slot, never this rail.
 	var owned := PackedStringArray()
 	for item_id: String in _worn_slots.items():
 		if not item_id.is_empty() and ItemDB.is_apparel(item_id) \
+				and CrawlerMeta.owns_apparel(item_id) \
 				and not owned.has(item_id):
 			owned.append(item_id)
 	for item_id: String in CharacterDB.backpack_items(
 			_look, CharacterDB.BACKPACK_SLOTS):
-		if ItemDB.is_apparel(item_id) \
-				and CharacterDB.apparel_fits(body_id, item_id) \
-				and not owned.has(item_id):
-			owned.append(item_id)
+		if not ItemDB.is_apparel(item_id) \
+				or not CharacterDB.apparel_fits(body_id, item_id) \
+				or owned.has(item_id):
+			continue
+		if not CrawlerMeta.owns_apparel(item_id):
+			continue
+		owned.append(item_id)
 	for item_id: String in CharacterDB.apparel_ids(body_id):
-		if not owned.has(item_id):
-			owned.append(item_id)
+		if not CrawlerMeta.owns_apparel(item_id) or owned.has(item_id):
+			continue
+		owned.append(item_id)
 	if owned.size() > _apparel_rail.size():
 		_apparel_rail = ItemContainer.new(owned.size())
 	for index in _apparel_rail.size():
@@ -1656,7 +1776,7 @@ func _capture_worn() -> void:
 		if item_id.is_empty() or in_use.has(item_id) \
 				or available_apparel.has(item_id):
 			continue
-		if ItemDB.is_apparel(item_id) and not CrawlerMeta.owns_hat(item_id, _look):
+		if ItemDB.is_apparel(item_id) and not CrawlerMeta.owns_apparel(item_id):
 			continue
 		available_apparel.append(item_id)
 
@@ -1780,7 +1900,7 @@ func start_new_game(game_mode := "crawler", duels_mode := "") -> void:
 	# Before the session rather than after it, because the point is to be holding
 	# the player still while this happens. Once a session exists the world is
 	# theirs and every millisecond of it is a frame they are flying in.
-	await _warm_up()
+	await _warm_up(str(game_mode))
 	NetworkManager.start_single_player(str(game_mode), str(duels_mode))
 
 
@@ -1801,7 +1921,7 @@ func start_saved_game() -> void:
 		_world().override_local_look(_look)
 	if CrawlerRules.uses_mode(GameSave.mode_of(payload)):
 		_dismiss_overlay()
-	await _warm_up()
+	await _warm_up(GameSave.mode_of(payload))
 	NetworkManager.start_saved_game(payload)
 
 
@@ -1809,7 +1929,7 @@ func start_saved_game() -> void:
 ## screen. [WorldWarmup] draws through its own offscreen viewport, so the meshes
 ## that force texture and shader preparation never enter this camera's world.
 ## A small red/green bar tracks that work so the still shot does not look hung.
-func _warm_up() -> void:
+func _warm_up(game_mode := "") -> void:
 	_warming = true
 	_hold_preview_still(true)
 	_show_start_loading()
@@ -1817,7 +1937,7 @@ func _warm_up() -> void:
 	warmup.name = "WorldWarmup"
 	warmup.progressed.connect(_on_warmup_progressed)
 	_world().add_child(warmup)
-	await warmup.run(_world(), _camera)
+	await warmup.run(_world(), _camera, game_mode)
 	if warmup.progressed.is_connected(_on_warmup_progressed):
 		warmup.progressed.disconnect(_on_warmup_progressed)
 	warmup.queue_free()
@@ -1836,18 +1956,26 @@ func _show_start_loading() -> void:
 	if is_instance_valid(_loading_bar):
 		_loading_bar.share = 0.0
 		_loading_bar.visible = true
+	if is_instance_valid(_loading_note):
+		_loading_note.text = ""
+		_loading_note.visible = true
 
 
 func _hide_start_loading() -> void:
 	if is_instance_valid(_loading_bar):
 		_loading_bar.visible = false
+	if is_instance_valid(_loading_note):
+		_loading_note.visible = false
 	if is_instance_valid(_loading_block):
 		_loading_block.visible = false
 
 
-func _on_warmup_progressed(share: float, _note: String) -> void:
+func _on_warmup_progressed(share: float, note: String) -> void:
 	if is_instance_valid(_loading_bar):
 		_loading_bar.share = share
+	if is_instance_valid(_loading_note):
+		_loading_note.text = note
+		_loading_note.visible = true
 
 
 func _hold_preview_still(hold: bool) -> void:

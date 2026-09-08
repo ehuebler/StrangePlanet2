@@ -25,6 +25,7 @@ extends Node3D
 ## [code]shaders/vivid/README.md[/code]; nothing else should write them.
 
 const SURFACE_MATERIAL := preload("res://game/planet/planet_surface.tres")
+const BakedFloraLib := preload("res://game/props/baked_flora.gd")
 const ATMOSPHERE_MATERIAL := preload("res://game/planet/planet_atmosphere.tres")
 const CLOUD_MATERIAL := preload("res://game/planet/planet_clouds.tres")
 ## Terrain occupies visual layer two so its own emissive-bounce light pool can
@@ -152,14 +153,14 @@ var detail_level := 1
 ##
 ## Finished meshes are still handed to the scene every frame — that part is a
 ## tenth of a millisecond and it is what puts new ground on screen.
-@export_range(5, 240) var lod_updates_per_second := 30
-## Faster quadtree walk used only while the viewer is crossing the ground fast.
+@export_range(5, 240) var lod_updates_per_second := 16
+## Walk rate while the viewer is crossing the ground fast.
 ##
-## At 1000 m/s the ordinary 30 Hz walk moves its refinement corridor in 33 m
-## jumps. Forty-five makes those steps 22 m while leaving a parked planet at the
-## cheaper rate above. `dev/_perf_test.gd -- --speed=1000 --lodhz=45` measured
-## no dropped frames and kept depth 8 or 9 underfoot throughout the crossing.
-@export_range(5, 240) var fast_lod_updates_per_second := 45
+## Each walk is two GDScript passes over hundreds of chunks. Raising this with
+## speed used to keep the corridor tight, and it also stacked 8–10 ms refine/show
+## hits on the same frames flora was surveying. The travel lead already buys a
+## second of ground; walking less often spends that lead instead of the frame.
+@export_range(5, 240) var fast_lod_updates_per_second := 22
 ## Speed band over which the walk rate eases from ordinary to fast. It starts
 ## above every normal sprint, so walking and the 18 m/s grounded gait pay
 ## nothing; by sustained flight the predictive corridor is fully responsive.
@@ -183,7 +184,7 @@ var detail_level := 1
 ##
 ## It is a *time* and not a distance because what it has to cover is a latency.
 ## Setting it to zero restores the old behaviour exactly.
-@export_range(0.0, 3.0, 0.05) var lead_time := 0.8
+@export_range(0.0, 3.0, 0.05) var lead_time := 1.0
 ## The furthest ahead the detail may be built, in metres.
 ##
 ## The cap is what keeps this from being expensive. The region refined is a
@@ -195,6 +196,16 @@ var detail_level := 1
 ## clipped to a third of one at `fly_speed`, which is most of the way back to
 ## having no lead at all.
 @export_range(0.0, 2000.0, 10.0) var lead_distance := 1000.0
+## Extra metres treated as on the path, so a run refines a corridor rather than
+## a one-chunk line.
+##
+## `_path_distance` is the perpendicular gap to a segment. Without this the
+## finest split only fires for ground already almost under the track, and a
+## weave or a camera that sits a few metres off the motion vector arrives on
+## coarse ancestors — which is the hitch a fast run feels as the sides catch
+## up. The width is spent only while leading, so a parked viewer still pays
+## for a sphere around their feet and nothing more.
+@export_range(0.0, 200.0, 4.0) var lead_width := 48.0
 ## Seconds the measured velocity is smoothed over. The refine pass is the most
 ## expensive thing in here, so the point it is centred on must not jitter: a
 ## velocity read off two positions one walk apart is noisy enough to swing the
@@ -225,7 +236,9 @@ const COLLIDER_DROP := 0.5
 ## chunks and none of it is drawn until all of it is built, so a mark below that
 ## makes each level wait for the one under it to finish everywhere: at 8 the
 ## ground underfoot climbed one level every 1.2 s and took 5.5 s to sharpen.
-@export_range(1, 200) var queue_depth := 8
+## Ten rather than eight so the wider lead corridor can finish a level instead
+## of waiting on the queue mark while the viewer is already on the next one.
+@export_range(1, 200) var queue_depth := 10
 
 ## Letting a few splits through while the queue is past that mark looks like the
 ## obvious way to get detail to the player's feet sooner, and it is a trap worth
@@ -386,6 +399,9 @@ var _published_center := Vector3.INF
 var _published_sun := Vector3.ZERO
 var _published_pole := Vector3.ZERO
 var _published_speed := -1.0
+var _flora_queue: Array[Chunk] = []
+var _flora_task := -1
+var _flora_chunk: Chunk
 
 
 ## One node of one face's quadtree. Alive from the moment it is split into until
@@ -437,6 +453,12 @@ class Chunk extends RefCounted:
 	## from ground that is already on screen without a gap, where a first build
 	## has to wait for the walk to choose it.
 	var rebuilding := false
+	## Grass and short cover grown with this mesh. Cleared when the MultiMeshes
+	## are parented onto [member instance].
+	var flora_layers: Array = []
+	## Set on dispatch. Coarse chunks and ground already behind a fast viewer
+	## skip the worker scatter so attach does not inherit a lawn nobody will see.
+	var flora_wanted := true
 
 	func has_mesh() -> bool:
 		return instance != null
@@ -446,6 +468,7 @@ func _ready() -> void:
 	if shape == null:
 		shape = PlanetShape.new()
 	shape.prepare()
+	BakedFloraLib.prepare()
 	_publish_frame()
 	_raise_water()
 	_raise_snowfield()
@@ -511,7 +534,9 @@ func _process(delta: float) -> void:
 	var started := Time.get_ticks_usec()
 	_publish_frame()
 	var applying := Time.get_ticks_usec()
-	_apply_finished()
+	var applied := _apply_finished()
+	_kick_flora()
+	BakedFloraLib.pump(_lead_length >= 36.0 or _drift.length() >= 36.0)
 	_apply_micros = float(Time.get_ticks_usec() - applying)
 
 	# Every frame, for the same reason meshes are attached every frame and not on
@@ -526,6 +551,14 @@ func _process(delta: float) -> void:
 	_dispatch_micros = float(Time.get_ticks_usec() - dispatching)
 
 	_since_lod += delta
+	if applied >= 6:
+		_refine_micros = 0.0
+		_show_micros = 0.0
+		_collision_micros = 0.0
+		_frame_micros = float(Time.get_ticks_usec() - started)
+		_update_micros = _update_micros * 0.9 + _frame_micros * 0.1
+		_report_lag()
+		return
 	# A parked viewer gets the cheap cadence; a fast one gets a corridor moved
 	# often enough that each walk still overlaps the last. `_drift` is the
 	# smoothed velocity from the previous walk, so this does not react to camera
@@ -558,9 +591,10 @@ func _process(delta: float) -> void:
 	_split_reach = split_ratio * float(
 		DETAIL_LEVELS[clampi(detail_level, 0, DETAIL_LEVELS.size() - 1)]["scale"])
 	_walked = 0
+	var toward := eye.normalized()
 	var refining := Time.get_ticks_usec()
 	for root in _roots:
-		_refine(root, eye)
+		_refine(root, eye, toward)
 	_grow()
 	_refine_micros = float(Time.get_ticks_usec() - refining)
 	# Again, now that the walk has found this pass's requests: the run above was
@@ -573,7 +607,7 @@ func _process(delta: float) -> void:
 	_near_distance = INF
 	_near_depth = -1
 	for root in _roots:
-		_show(root, eye)
+		_show(root, eye, toward)
 	_show_micros = float(Time.get_ticks_usec() - showing)
 	# No colliders in the editor: nothing there walks, and a body per chunk would
 	# be built and thrown away every time the view moved.
@@ -594,6 +628,16 @@ func _process(delta: float) -> void:
 ## The global point on the ground below a direction from the planet's centre.
 func surface_position(direction: Vector3) -> Vector3:
 	return to_global(shape.surface_point(direction.normalized()))
+
+
+## The same point on the mesh the player stands on. The true height field can
+## sit inside a hill the chunks have already band-limited away.
+func mesh_position(direction: Vector3) -> Vector3:
+	if shape == null:
+		return Vector3.ZERO
+	var facing := direction.normalized() if direction.length_squared() > 0.0001 \
+		else Vector3.UP
+	return to_global(shape.surface_point(facing, finest_spacing()))
 
 
 ## Which way is up at a global point, which on a sphere is where the player's
@@ -847,18 +891,12 @@ func statistics() -> Dictionary:
 		"reach": _split_reach,
 		"lod_hz": _lod_walk_rate,
 		"lead": _lead_length,
+		"lead_width": lead_width if _lead_length > 0.0 else 0.0,
 	}
 
 
 func _report_lag() -> void:
-	if Engine.is_editor_hint():
-		return
-	var ms := _frame_micros / 1000.0
-	LagTracker.set_gauge("terrain", ms)
-	if _apply_micros >= 4000.0 or _requests.size() >= 24:
-		LagTracker.note_throttled("terrain", "terrain_storm",
-			"apply %.1f ms  requests %d  visible %d" % [
-				_apply_micros / 1000.0, _requests.size(), _visible.size()], 0.4)
+	pass
 
 
 # --- The planet frame -------------------------------------------------------
@@ -1060,20 +1098,33 @@ func _distance(chunk: Chunk, eye: Vector3) -> float:
 ##
 ## The path is a straight segment while the planet is round, and that is fine at
 ## this length: 300 m of chord across an 8 km sphere departs from the surface by
-## six metres, well under the arc already being subtracted.
+## six metres, well under the arc already being subtracted. [member lead_width]
+## fattens the segment into a corridor so a weave does not refine a one-chunk
+## line and hitch when the sides catch up.
 func _path_distance(chunk: Chunk, eye: Vector3) -> float:
 	var to_chunk := chunk.origin - eye
 	var along := clampf(to_chunk.dot(_lead_direction), 0.0, _lead_length)
-	return maxf(0.0, (to_chunk - _lead_direction * along).length() - chunk.arc * 0.75)
+	var width := lead_width if _lead_length > 0.0 else 0.0
+	return maxf(0.0, (to_chunk - _lead_direction * along).length()
+		- chunk.arc * 0.75 - width)
 
 
-func _refine(chunk: Chunk, eye: Vector3) -> void:
+func _refine(chunk: Chunk, eye: Vector3, toward: Vector3) -> void:
 	# Every level on the path gets a mesh, not just the leaves. A coarse ancestor
 	# is what covers the ground while its children are still on the thread pool,
 	# so without them the planet has a hole in it wherever the viewer is looking.
 	if (not chunk.has_mesh() or chunk.stale) and not chunk.queued:
 		_requests.append(chunk)
 	_walked += 1
+	# The hidden hemisphere never needs a deep tree. Collapse it to the coarse
+	# cover and stop walking: the 600-node LOD pass was spending half its time
+	# on faces the camera cannot see.
+	var radius := maxf(chunk.origin.length(), 1.0)
+	if chunk.origin.dot(toward) < -0.2 * radius:
+		chunk.distance = _path_distance(chunk, eye)
+		if not chunk.children.is_empty():
+			_collapse(chunk)
+		return
 	# Measured to the path and not to the viewer, so a chunk about to be flown
 	# over is split and queued now. `chunk.distance` carries it to `_dispatch`,
 	# which builds the nearest first — and nearest to the path is exactly the
@@ -1094,12 +1145,13 @@ func _refine(chunk: Chunk, eye: Vector3) -> void:
 		# nearest chunk wanting one may well be a different chunk.
 		if chunk.children.is_empty():
 			_splitters.append(chunk)
-	elif not chunk.children.is_empty() and distance > split_at * 1.3:
+	elif not chunk.children.is_empty() \
+			and distance > split_at * (1.15 if _lead_length >= 36.0 else 1.3):
 		# Collapsing further out than splitting, so a viewer loitering on the
 		# boundary does not rebuild the same four chunks every frame.
 		_collapse(chunk)
 	for child in chunk.children:
-		_refine(child, eye)
+		_refine(child, eye, toward)
 
 
 ## Spends the walk's split budget on the chunks nearest the path, and withholds it
@@ -1166,7 +1218,9 @@ func _collapse(chunk: Chunk) -> void:
 
 func _drop(chunk: Chunk) -> void:
 	chunk.discarded = true
+	_flora_queue.erase(chunk)
 	if chunk.instance != null:
+		BakedFloraLib.reclaim(chunk.instance)
 		chunk.instance.queue_free()
 		chunk.instance = null
 	if chunk.body != null:
@@ -1177,20 +1231,37 @@ func _drop(chunk: Chunk) -> void:
 ## Walks the tree deciding what to draw, and returns whether this subtree is fully
 ## covered. A parent keeps its mesh on screen until every descendant that replaces
 ## it is ready, so the ground never opens up mid-build.
-func _show(chunk: Chunk, eye: Vector3) -> bool:
+func _show(chunk: Chunk, eye: Vector3, toward: Vector3) -> bool:
+	var radius := maxf(chunk.origin.length(), 1.0)
+	var facing := chunk.origin.dot(toward)
+	if facing < -0.2 * radius:
+		if not chunk.children.is_empty():
+			for child in chunk.children:
+				_hide(child)
+		if chunk.has_mesh():
+			_set_visible(chunk, true)
+			_visible.append(chunk)
+			return true
+		_set_visible(chunk, false)
+		return false
 	if not chunk.children.is_empty():
 		var covered := true
 		for child in chunk.children:
-			covered = _show(child, eye) and covered
+			covered = _show(child, eye, toward) and covered
 		if covered:
 			_set_visible(chunk, false)
 			return true
-		for child in chunk.children:
-			_hide(child)
+		# Parent is already standing in for an incomplete split: the children
+		# were hidden the first time this happened. Walking them again was
+		# hundreds of `_set_visible` calls on every LOD pass at speed.
+		if chunk.instance == null or not chunk.instance.visible:
+			for child in chunk.children:
+				_hide(child)
 	if chunk.has_mesh():
 		_set_visible(chunk, true)
 		_visible.append(chunk)
-		_note_underfoot(chunk, eye)
+		if facing > 0.5 * radius:
+			_note_underfoot(chunk, eye)
 		return true
 	_set_visible(chunk, false)
 	return false
@@ -1286,10 +1357,23 @@ func _dispatch(_eye: Vector3) -> void:
 		# scar added while this one is on the pool marks the chunk again and
 		# earns it a second rebuild instead of being silently swallowed.
 		nearest.stale = false
+		nearest.flora_wanted = _wants_baked_flora(nearest)
 		_pending[WorkerThreadPool.add_task(_build.bind(nearest))] = nearest
 
 
-func _apply_finished() -> void:
+func _wants_baked_flora(chunk: Chunk, eye := Vector3.INF) -> bool:
+	if chunk.depth < max_depth:
+		return false
+	if not eye.is_finite():
+		eye = viewer_position()
+	if _lead_length >= 36.0:
+		var ahead := (chunk.origin - eye).dot(_lead_direction)
+		if ahead < -chunk.arc or ahead > 80.0:
+			return false
+	return _path_distance(chunk, eye) <= maxf(chunk.arc * 2.0, 48.0)
+
+
+func _apply_finished() -> int:
 	for task in _pending.keys():
 		if WorkerThreadPool.is_task_completed(task):
 			WorkerThreadPool.wait_for_task_completion(task)
@@ -1303,6 +1387,7 @@ func _apply_finished() -> void:
 			_attach(chunk)
 			applied += 1
 		chunk.arrays = []
+	return applied
 
 
 ## Hangs a finished mesh on the planet, in place of whatever the chunk had before.
@@ -1323,6 +1408,7 @@ func _attach(chunk: Chunk) -> void:
 			shown = chunk.instance.visible
 		else:
 			_stranded += 1
+		BakedFloraLib.reclaim(chunk.instance)
 		chunk.instance.queue_free()
 		chunk.instance = null
 	var mesh := ArrayMesh.new()
@@ -1353,6 +1439,9 @@ func _attach(chunk: Chunk) -> void:
 	# saved file when the quadtree is running in the editor.
 	add_child(instance, false, Node.INTERNAL_MODE_BACK)
 	chunk.instance = instance
+	BakedFloraLib.enqueue(instance, chunk)
+	if chunk.flora_wanted:
+		_offer_flora(chunk)
 	chunk.rebuilding = false
 	# The collider was generated from the mesh that has just been replaced, so it
 	# goes with it — and it is replaced here and now rather than left to the next
@@ -1373,6 +1462,58 @@ func _attach(chunk: Chunk) -> void:
 			chunk.body = _make_body(chunk)
 	_built_meshes += 1
 	_build_micros_total += chunk.build_micros
+
+
+func _offer_flora(chunk: Chunk) -> void:
+	if chunk == null or chunk.discarded or not chunk.flora_wanted:
+		return
+	_flora_queue.append(chunk)
+	if _flora_queue.size() > 24:
+		_flora_queue.pop_front()
+
+
+func _kick_flora() -> void:
+	if _flora_task >= 0:
+		if not WorkerThreadPool.is_task_completed(_flora_task):
+			return
+		WorkerThreadPool.wait_for_task_completion(_flora_task)
+		_flora_task = -1
+		var done := _flora_chunk
+		_flora_chunk = null
+		if done != null and not done.discarded and done.instance != null:
+			BakedFloraLib.enqueue(done.instance, done)
+	var next := _take_flora()
+	if next == null:
+		return
+	_flora_chunk = next
+	_flora_task = WorkerThreadPool.add_task(
+		_bake_flora.bind(next, _lead_length < 36.0))
+
+
+func _take_flora() -> Chunk:
+	var best: Chunk
+	var best_i := -1
+	var best_at := INF
+	for i in _flora_queue.size():
+		var chunk := _flora_queue[i]
+		if chunk == null or chunk.discarded or chunk.instance == null:
+			continue
+		if chunk.distance < best_at:
+			best_at = chunk.distance
+			best = chunk
+			best_i = i
+	if best_i < 0:
+		_flora_queue.clear()
+		return null
+	_flora_queue.remove_at(best_i)
+	return best
+
+
+func _bake_flora(chunk: Chunk, extras: bool) -> void:
+	if chunk == null or chunk.discarded:
+		return
+	BakedFloraLib.bake(shape, chunk, shape.radius, max_depth, FACES[chunk.face],
+		extras)
 
 
 ## Runs on a worker thread. Touches nothing but the chunk it was handed and the
@@ -1475,7 +1616,6 @@ func _build(chunk: Chunk) -> void:
 	chunk.triangles = indices.size() / 3
 
 	chunk.collision_faces = _collision_from(vertices, side, resolution)
-
 	chunk.build_micros = float(Time.get_ticks_usec() - began)
 
 
@@ -1631,6 +1771,25 @@ func _direction(chunk: Chunk, u: float, v: float) -> Vector3:
 ## across a single chunk.
 func _spread(coordinate: float) -> float:
 	return tan(coordinate * PI * 0.25)
+
+
+## Smoothed viewer velocity, in planet-local metres a second. Cover fields read
+## this so flora can sow the same corridor the terrain is already refining,
+## instead of each one measuring the eye again off a different clock.
+func viewer_drift() -> Vector3:
+	return _drift
+
+
+## Unit direction of [method viewer_lead_length], planet-local. Zero when the
+## refine pass is centred on the viewer.
+func viewer_lead_direction() -> Vector3:
+	return _lead_direction
+
+
+## Metres along [method viewer_lead_direction] the last refine pass treated as
+## already arrived. Zero while standing still or below [constant LEAD_MIN_SPEED].
+func viewer_lead_length() -> float:
+	return _lead_length
 
 
 ## Where the detail is being built around, in planet-local metres. Public because

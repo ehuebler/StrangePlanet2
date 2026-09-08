@@ -5,14 +5,17 @@ extends CharacterBody3D
 ## other peers interpolate the compact state the horde publishes.
 ##
 ## Unique hunt and fire live in `_tick_ai`. The director only runs that on
-## nearby bodies that still have think budget. New kinds should not override
-## `_physics_process` or query the height field every tick. Start a windup
-## with `_begin_attack` so the swarm shares an attack token.
+## nearby bodies that still have think budget. Idle roam lives in `_tick_idle`
+## so warm and cold bodies keep walking without planning shots. New kinds
+## should not override `_physics_process` or query the height field every
+## tick. Start a windup with `_begin_attack` so the swarm shares an attack
+## token.
 
 signal died
 
 const GROUP := &"crawler_mobs"
 const ENEMY_SHADER: Shader = preload("res://shaders/crawler/crawler_enemy.gdshader")
+const ENEMY_OUTLINE_SHADER: Shader = preload("res://shaders/crawler/crawler_enemy_outline.gdshader")
 const MobSense := preload("res://game/crawler/crawler_mob_sense.gd")
 const STATE_SYNC_INTERVAL := 0.1
 const CLIENT_FOLLOW_SPEED := 18.0
@@ -22,6 +25,8 @@ const RIM := Color("ef151f")
 const CLIP_IDLE := "Idle"
 const CLIP_WALK := "Walk"
 const CLIP_RUN := "Run"
+const CLIP_FLY := "Fly"
+const CLIP_CAST := "Cast"
 const CLIP_ATTACK := "Attack"
 const CLIP_HIT := "HitReact"
 const CLIP_BLEND := 0.12
@@ -32,23 +37,28 @@ var mob_id := ""
 var city_id := -1
 var garrison_slot := -1
 var persistent := false
+var training := false
 var threat_level := 0
 var chase := false
 var ever_chased := false
 var idle_seconds := 0.0
 var hang_origin := Vector3.ZERO
 var dismissed := false
+var directed_frame := -1
+var director_push := Vector3.ZERO
+var director_sep := Vector3.ZERO
+var _director_lod := -1
 var last_source_peer := 0
 var statuses := CombatStatuses.new()
 var _poison_float := 0.0
 var _frost_float := 0.0
 
 var _alive := true
-var _base_health := 48.0
-var _health := 48.0
-var _maximum_health := 48.0
+var _base_health := 6.0
+var _health := 6.0
+var _maximum_health := 6.0
 var _patch_health_scale := 1.0
-var _base_damage := 12.0
+var _base_damage := 8.0
 var _base_speed := 22.0
 var _cruise := 0.0
 var _flash_left := 0.0
@@ -65,6 +75,9 @@ var _animator: AnimationPlayer
 var _current_clip := ""
 var _network_clip := ""
 var _faces_motion := false
+## Authored demon GLBs face +Z (mouth, bite lunge). Godot looking_at uses -Z
+## unless this is set.
+var _uses_model_front := false
 var _attack_left := 0.0
 var _spotted_left := 0.0
 var _network_transform := Transform3D.IDENTITY
@@ -73,11 +86,27 @@ var _has_network_transform := false
 var _orbit_dir := Vector3.ZERO
 var _sensed_player: Node3D
 var _sensed_frame := -1
+var _status_frame := -1
+var _frozen_now := false
+var _charmed_now := false
+var _row_level := -999
+var _row_speed := -1.0
+var _row_agro := 0.0
+var _row_deagro := 0.0
+var _row_fire := 0.0
+var _row_agro_mode := ""
 var _cached_up := Vector3.ZERO
 var _cached_up_at := Vector3.INF
 var _cached_alt := 0.0
 var _cached_alt_at := Vector3.INF
+var _drift_clock := 0.0
+var _hold_cached := -1.0
 var _clip_names: Dictionary = {}
+var _last_flash := -1.0
+var _outline_height := 0.0
+var _skinned_mats: Array[StandardMaterial3D] = []
+var _skinned_energy: Array[float] = []
+var _skinned_emit: Array[Color] = []
 
 
 func configure(id: String, at: Transform3D, level: int, should_chase: bool,
@@ -109,6 +138,8 @@ func _ready() -> void:
 	_planet = _find_planet()
 	_apply_threat_stats(false)
 	_build_body()
+	_scale_enemy_outline(_outline_height if _outline_height > 0.01 \
+		else maxf(combat_radius() * 2.0, 1.6))
 	add_to_group(DamageHit.COMBATANT_GROUP)
 	add_to_group(GROUP)
 	MobSense.note_spawned(self)
@@ -131,80 +162,143 @@ func _process(delta: float) -> void:
 	_spotted_left = maxf(_spotted_left - delta, 0.0)
 	_update_flash()
 	_update_clips()
+	if training:
+		_update_training_range_tag()
+	if _director_lod == CrawlerRules.MOB_LOD_COLD \
+			and _flash_left <= 0.0 and _spotted_left <= 0.0 and not training:
+		set_process(false)
 
 
 func _physics_process(delta: float) -> void:
 	if not _is_host():
 		_follow_network(delta)
+		if training:
+			_update_training_range_tag()
+		return
+	if training:
+		_tick_statuses(delta)
+		velocity = Vector3.ZERO
+		chase = false
+		_update_training_range_tag()
+		if _alive:
+			_publish_state(delta)
 		return
 	if not _alive:
 		return
 	var clock := Time.get_ticks_usec()
-	MobSense.begin_frame(get_tree())
-	var lod := MobSense.lod_of(self)
+	var lod := MobSense.lod_at(global_position)
 	if lod == CrawlerRules.MOB_LOD_COLD:
-		_tick_cold(delta)
-		MobSense.note_tick(self, Time.get_ticks_usec() - clock)
+		var directed := MobSense.was_directed(self)
+		if directed:
+			_integrate_director(delta)
+		else:
+			_tick_cold(delta, true)
+			_integrate_director(delta)
+		var stride := maxi(CrawlerRules.MOB_COLD_STRIDE, 1)
+		if (Engine.get_physics_frames() + get_instance_id()) % stride == 0:
+			if directed:
+				_tick_statuses(delta * float(stride))
+			_publish_state(delta)
+			MobSense.note_tick(
+				self, Time.get_ticks_usec() - clock, lod, false, _attacking())
 		return
 	_attack_left = maxf(_attack_left - delta, 0.0)
 	_tick_statuses(delta)
 	if not _alive:
-		MobSense.note_tick(self, Time.get_ticks_usec() - clock)
+		MobSense.note_tick(
+			self, Time.get_ticks_usec() - clock, lod, false, _attacking())
 		return
 	var hot := lod == CrawlerRules.MOB_LOD_HOT
-	if is_frozen():
+	var thought := false
+	if _movement_locked():
 		velocity = Vector3.ZERO
 	elif hot and MobSense.take_think(self, chase or is_charmed()):
+		var think_clock := Time.get_ticks_usec()
 		_tick_ai(delta)
+		MobSense.note_think_usec(Time.get_ticks_usec() - think_clock)
+		thought = true
 		var field_slow := MobSense.field_slow(self, global_position)
 		if field_slow < 0.999:
 			velocity *= field_slow
-	else:
+	elif not MobSense.was_directed(self):
 		_tick_far(delta)
-	if hot:
+	if thought:
 		_respect_flyer_ceiling(delta)
 		_keep_clear_of_terrain(false)
-		if _faces_motion and not is_frozen():
-			_face_motion(delta)
 		_keep_out_of_safe_zones()
+	else:
+		_director_climb()
+	if director_push.length_squared() > 0.0001 and not _movement_locked():
+		velocity += director_push
+		director_push = Vector3.ZERO
+	if (thought or lod == CrawlerRules.MOB_LOD_WARM) \
+			and _faces_motion and not _movement_locked():
+		_face_motion(delta)
 	# Mask is 0, so move_and_slide would not collide. Integrate the same way
 	# far and near so a crowd does not pay a physics-server slide each tick.
 	if velocity.length_squared() > 0.0001:
 		global_position += velocity * delta
-	if hot:
+	if thought:
 		_keep_clear_of_terrain(true)
 	_publish_state(delta)
-	MobSense.note_tick(self, Time.get_ticks_usec() - clock)
+	MobSense.note_tick(
+		self, Time.get_ticks_usec() - clock, lod, thought, _attacking())
 
 
 func _tick_ai(_delta: float) -> void:
 	pass
 
 
+func _tick_idle(delta: float) -> void:
+	_patrol(delta)
+
+
 func _tick_far(delta: float) -> void:
 	var player := _nearest_player()
-	if player == null or not tick_agro(player, delta):
-		velocity = velocity.move_toward(Vector3.ZERO, 10.0 * delta)
+	if player != null and tick_agro(player, delta):
+		var along := _seek_along(player)
+		if along.length_squared() < 0.04:
+			return
+		_match_speed(move_speed(), delta, 1.2, 16.0)
+		_steer_toward(along.normalized() * _cruise, delta, 10.0)
 		return
-	var along := _combat_position_of(player) - global_position
-	if along.length_squared() < 0.04:
-		return
-	_match_speed(move_speed(), delta, 1.2, 16.0)
-	_steer_toward(along.normalized() * _cruise, delta, 10.0)
+	_tick_idle(delta)
 
 
-func _tick_cold(delta: float) -> void:
+func _tick_cold(delta: float, steer := true) -> void:
 	var stride := maxi(CrawlerRules.MOB_COLD_STRIDE, 1)
-	if (Engine.get_physics_frames() + get_instance_id()) % stride != 0:
+	if (Engine.get_physics_frames() + get_instance_id()) % stride == 0:
+		var step := delta * float(stride)
+		_attack_left = maxf(_attack_left - step, 0.0)
+		_tick_statuses(step)
+	if _movement_locked():
 		velocity = Vector3.ZERO
 		return
-	var step := delta * float(stride)
-	_attack_left = maxf(_attack_left - step, 0.0)
-	_tick_statuses(step)
+	if not steer:
+		return
 	var player := _nearest_player()
-	tick_agro(player, step)
-	velocity = Vector3.ZERO
-	_publish_state(step)
+	if player != null and tick_agro(player, delta):
+		var along := _seek_along(player)
+		if along.length_squared() >= 0.04:
+			_match_speed(move_speed(), delta, 1.2, 16.0)
+			_steer_toward(along.normalized() * _cruise, delta, 10.0)
+		return
+	_tick_idle(delta)
+
+
+func _integrate_director(delta: float) -> void:
+	var frozen := _movement_locked()
+	if director_push.length_squared() > 0.0001 and not frozen:
+		velocity += director_push
+	director_push = Vector3.ZERO
+	if not frozen and not flies():
+		_director_climb()
+	if not frozen and velocity.length_squared() > 0.0001:
+		global_position += velocity * delta
+
+
+func _movement_locked() -> bool:
+	return false if statuses.is_empty() else is_frozen()
 
 
 func _build_body() -> void:
@@ -222,6 +316,11 @@ func set_threat_level(level: int) -> void:
 	_apply_threat_stats(true)
 
 
+func refill_health() -> void:
+	_health = _maximum_health
+	_force_publish()
+
+
 func _apply_threat_stats(rescale_current: bool) -> void:
 	var row := CrawlerMobs.stats(wild_kind(), threat_level)
 	var catalog_health := float(row.get("health", _base_health))
@@ -231,6 +330,7 @@ func _apply_threat_stats(rescale_current: bool) -> void:
 	if row.is_empty():
 		health_scale *= CrawlerRules.threat_health(threat_level)
 	var next_max := maxf(catalog_health * health_scale, 1.0)
+	_row_level = -999
 	if rescale_current and _maximum_health > 0.0:
 		var share := _health / _maximum_health
 		_maximum_health = next_max
@@ -248,33 +348,73 @@ func damage() -> float:
 
 
 func move_speed() -> float:
-	var row := CrawlerMobs.stats(wild_kind(), threat_level)
-	if not row.is_empty() and row.has("speed"):
-		return maxf(float(row.get("speed", _base_speed)), 0.0)
-	return _base_speed * CrawlerRules.threat_speed(threat_level)
+	_pull_row()
+	var pace := 1.0 if statuses.is_empty() else statuses.move_scale()
+	return _row_speed * pace
 
 
 func fire_scale() -> float:
-	var interval := CrawlerMobs.number(wild_kind(), threat_level, "fire", 0.0)
-	if interval > 0.0:
-		return interval
+	_pull_row()
+	if _row_fire > 0.0:
+		return _row_fire
 	return CrawlerRules.threat_fire(threat_level)
+
+
+func _pull_row() -> void:
+	if _row_level == threat_level and _row_speed >= 0.0:
+		return
+	var kind := wild_kind()
+	_row_level = threat_level
+	var row := CrawlerMobs.stats(kind, threat_level)
+	if not row.is_empty() and row.has("speed"):
+		_row_speed = maxf(float(row.get("speed", _base_speed)), 0.0)
+	else:
+		_row_speed = _base_speed * CrawlerRules.threat_speed(threat_level)
+	_row_fire = CrawlerMobs.number(kind, threat_level, "fire", 0.0)
+	_row_agro = CrawlerMobs.number(
+		kind, threat_level, "agro_range", CrawlerRules.AGRO_RANGE)
+	_row_deagro = CrawlerMobs.number(
+		kind, threat_level, "deagro_range", CrawlerRules.DEAGRO_RANGE)
+	_row_agro_mode = CrawlerMobs.agro_mode(kind, threat_level)
+
+
+func receive_reflected_damage(amount: float, source_peer: int) -> void:
+	if not _is_host() or amount <= 0.0 or not _alive:
+		return
+	var hit := DamageHit.impact(combat_position(), combat_radius(), amount)
+	hit.faction = DamageHit.Faction.PLAYER
+	hit.source_peer = source_peer
+	hit.ability_id = "cape_reflect"
+	var source := _player_for_peer(source_peer)
+	if source != null:
+		hit.set_source(source, source_peer)
+	var dealt := apply_damage(hit)
+	if dealt > 0.0 and source != null \
+			and source.has_method(&"combat_damage_dealt"):
+		source.call(&"combat_damage_dealt", self, dealt, hit)
 
 
 func apply_damage(hit: DamageHit) -> float:
 	if hit == null or not _alive or not _is_host() or not _accepts_hit(hit):
 		return 0.0
 	var status_applied := CrawlerElements.apply_to_combatant(self, hit)
+	_status_frame = -1
 	var actual := minf(maxf(hit.amount, 0.0) if is_finite(hit.amount) else 0.0, _health)
 	if actual <= 0.0 and not status_applied:
 		return 0.0
 	if actual > 0.0:
 		_health -= actual
 		_flash_left = DAMAGE_FLASH_SECONDS
+		if _director_lod == CrawlerRules.MOB_LOD_COLD:
+			set_process(true)
 	if hit.source_peer > 0:
 		last_source_peer = hit.source_peer
-	chase = true
-	ever_chased = true
+	if training:
+		chase = false
+		ever_chased = false
+	else:
+		chase = true
+		ever_chased = true
 	idle_seconds = 0.0
 	if is_charmed():
 		MobSense.note_charmed(self, true)
@@ -293,11 +433,26 @@ func _accepts_hit(hit: DamageHit) -> bool:
 
 
 func is_charmed() -> bool:
-	return statuses.has(CombatStatuses.CHARM)
+	_pull_status()
+	return _charmed_now
 
 
 func is_frozen() -> bool:
-	return statuses.movement_locked()
+	_pull_status()
+	return _frozen_now
+
+
+func _pull_status() -> void:
+	var frame := Engine.get_physics_frames()
+	if frame == _status_frame:
+		return
+	_status_frame = frame
+	if statuses.is_empty():
+		_charmed_now = false
+		_frozen_now = false
+		return
+	_charmed_now = statuses.has(CombatStatuses.CHARM)
+	_frozen_now = statuses.movement_locked()
 
 
 func outgoing_faction() -> int:
@@ -306,6 +461,8 @@ func outgoing_faction() -> int:
 
 
 func _tick_statuses(delta: float) -> void:
+	if statuses.is_empty():
+		return
 	if statuses.has(CombatStatuses.POISON):
 		var dps := statuses.strength(CombatStatuses.POISON)
 		if dps > 0.0 and _alive:
@@ -321,8 +478,10 @@ func _tick_statuses(delta: float) -> void:
 			if _health <= 0.0:
 				_die()
 				return
-	if statuses.has(CombatStatuses.FREEZE):
+	if statuses.has(CombatStatuses.FREEZE) or statuses.has(CombatStatuses.SLOW):
 		var frost := statuses.strength(CombatStatuses.FREEZE)
+		if frost <= 0.0:
+			frost = statuses.strength(CombatStatuses.SLOW)
 		if frost > 0.0 and _alive:
 			var chilled := minf(frost * delta, _health)
 			_health = maxf(_health - chilled, 0.0)
@@ -338,8 +497,10 @@ func _tick_statuses(delta: float) -> void:
 				return
 	var had_charm := is_charmed()
 	var had_poison := statuses.has(CombatStatuses.POISON)
-	var had_freeze := statuses.has(CombatStatuses.FREEZE)
+	var had_freeze := statuses.has(CombatStatuses.FREEZE) \
+		or statuses.has(CombatStatuses.SLOW)
 	statuses.tick(delta)
+	_status_frame = -1
 	if statuses.consume_pulse(CombatStatuses.CHARM, CombatStatuses.CHARM_PULSE):
 		_emit_status_float(DamageNumberEvent.Kind.CHARM, 1.0)
 	if statuses.consume_shock_pulse():
@@ -347,7 +508,8 @@ func _tick_statuses(delta: float) -> void:
 	if had_poison and not statuses.has(CombatStatuses.POISON) and _poison_float > 0.0:
 		_emit_status_float(DamageNumberEvent.Kind.POISON, _poison_float)
 		_poison_float = 0.0
-	if had_freeze and not statuses.has(CombatStatuses.FREEZE) and _frost_float > 0.0:
+	if had_freeze and not statuses.has(CombatStatuses.FREEZE) \
+			and not statuses.has(CombatStatuses.SLOW) and _frost_float > 0.0:
 		_emit_status_float(DamageNumberEvent.Kind.FREEZE, _frost_float)
 		_frost_float = 0.0
 	if had_charm and not is_charmed():
@@ -414,6 +576,70 @@ func is_persistent() -> bool:
 	return persistent
 
 
+func is_training() -> bool:
+	return training
+
+
+func become_training(home := Transform3D.IDENTITY) -> void:
+	training = true
+	persistent = true
+	chase = false
+	ever_chased = false
+	idle_seconds = 0.0
+	if home.origin.length_squared() > 0.01:
+		hang_origin = home.origin
+		global_transform = home
+		reset_physics_interpolation()
+	elif hang_origin.length_squared() < 0.01:
+		hang_origin = global_position
+	_mount_training_range_tag()
+	set_process(true)
+
+
+func _mount_training_range_tag() -> void:
+	if get_node_or_null("TrainingRange") != null:
+		_update_training_range_tag()
+		return
+	var tag := Label3D.new()
+	tag.name = "TrainingRange"
+	tag.pixel_size = 0.012
+	tag.font_size = 28
+	tag.outline_size = 10
+	tag.modulate = Color("f4f6ff")
+	tag.outline_modulate = Color(0.04, 0.03, 0.08, 0.92)
+	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	tag.no_depth_test = true
+	add_child(tag)
+	_update_training_range_tag()
+
+
+func _update_training_range_tag() -> void:
+	var tag := get_node_or_null("TrainingRange") as Label3D
+	if tag == null:
+		return
+	tag.position = Vector3(0.0, maxf(ground_clearance() * 2.15 + 0.55, 2.2), 0.0)
+	var metres := 0
+	if is_inside_tree():
+		var player := _local_player()
+		if player != null:
+			metres = roundi(global_position.distance_to(player.global_position))
+	tag.text = "%s\n%d m" % [
+		CrawlerMobs.title(wild_kind(), threat_level),
+		metres,
+	]
+
+
+func _local_player() -> Node3D:
+	if NetworkManager == null or NetworkManager.active_world == null:
+		return _nearest_player()
+	var world := NetworkManager.active_world
+	if world.has_method(&"local_player"):
+		var local: Variant = world.call(&"local_player")
+		if local is Node3D:
+			return local as Node3D
+	return _nearest_player()
+
+
 func flies() -> bool:
 	return CrawlerRules.flies(wild_kind())
 
@@ -428,21 +654,100 @@ func flyer_floor() -> float:
 	return combat_radius() + 1.6
 
 
-func surface_altitude(at := Vector3.INF) -> float:
+func ground_clearance() -> float:
+	return maxf(combat_radius(), 0.55)
+
+
+func mesh_surface(at := Vector3.INF) -> Vector3:
 	var point := at if at.is_finite() else global_position
-	if _planet == null:
-		return 0.0
-	if not at.is_finite() and point.distance_squared_to(_cached_alt_at) < 0.04:
-		return _cached_alt
+	if _planet == null or _planet.shape == null:
+		return Vector3.INF
 	var local := _planet.to_local(point)
 	if local.length_squared() < 0.0001:
-		local = _up()
-	var surface := _planet.surface_position(local)
-	var altitude := (point - surface).dot(_planet.up_at(surface))
+		local = Vector3.UP
+	return _planet.mesh_position(local)
+
+
+func ground_surface(at := Vector3.INF) -> Vector3:
+	var point := at if at.is_finite() else global_position
+	var hit := _probe_ground(point)
+	if hit.is_finite():
+		return hit
+	return mesh_surface(point)
+
+
+func snap_to_ground() -> void:
+	var surface := ground_surface()
+	if not surface.is_finite():
+		return
+	var up := _up()
+	if _planet != null:
+		up = _planet.up_at(surface)
+	global_position = surface + up * ground_clearance()
+	velocity -= up * velocity.dot(up)
+	_cached_alt = ground_clearance()
+	_cached_alt_at = global_position
+
+
+func surface_altitude(at := Vector3.INF) -> float:
+	var point := at if at.is_finite() else global_position
+	if not at.is_finite() and point.distance_squared_to(_cached_alt_at) < 0.04:
+		return _cached_alt
+	var surface := ground_surface(point)
+	if not surface.is_finite():
+		return 0.0
+	var up := _up()
+	if _planet != null:
+		up = _planet.up_at(surface)
+	var altitude := (point - surface).dot(up)
 	if not at.is_finite():
 		_cached_alt = altitude
 		_cached_alt_at = point
 	return altitude
+
+
+func _probe_ground(from: Vector3) -> Vector3:
+	if not is_inside_tree() or get_world_3d() == null:
+		return Vector3.INF
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return Vector3.INF
+	var up := _up()
+	if _planet != null:
+		up = _planet.up_at(from)
+	# Start just above the body. An 8 m start hits roofs, trees, and
+	# battlements first and snaps walkers into the air.
+	var probe := maxf(ground_clearance() + 0.55, 1.5)
+	if flies():
+		probe = maxf(8.0, flyer_floor() + 2.0)
+	var skip: Array[RID] = []
+	skip.append(get_rid())
+	var start := from + up * probe
+	var stop := from - up * 80.0
+	var tries := 0
+	while tries < 6:
+		tries += 1
+		var query := PhysicsRayQueryParameters3D.create(start, stop)
+		query.exclude = skip
+		query.collide_with_areas = false
+		var hit := space.intersect_ray(query)
+		if hit.is_empty():
+			return Vector3.INF
+		var collider := hit.get("collider") as Object
+		if collider is CharacterBody3D:
+			var body := collider as CollisionObject3D
+			skip.append(body.get_rid())
+			continue
+		var at: Vector3 = hit.get("position", Vector3.INF)
+		if not at.is_finite():
+			return Vector3.INF
+		# Roofs, branches, and ceilings sit on the same body as the floor.
+		# Skip hits above the walker and keep casting down.
+		if not flies() and (at - from).dot(up) > 0.4:
+			start = at - up * 0.18
+			continue
+		return at
+	return Vector3.INF
 
 
 func _clamp_below_ceiling(at: Vector3) -> Vector3:
@@ -477,7 +782,11 @@ func _respect_flyer_ceiling(_delta: float) -> void:
 
 
 func _keep_clear_of_terrain(snap: bool) -> void:
-	if not flies() or _planet == null:
+	if not flies():
+		if snap:
+			snap_to_ground()
+		return
+	if _planet == null:
 		return
 	var up := _up()
 	var floor_h := flyer_floor()
@@ -496,6 +805,44 @@ func _keep_clear_of_terrain(snap: bool) -> void:
 		velocity += up * down * clampf(1.0 - headroom / 3.5, 0.0, 1.0)
 	if headroom < 1.2:
 		velocity += up * (12.0 * (1.2 - headroom))
+	if snap:
+		_nudge_off_slope()
+
+
+func _nudge_off_slope() -> void:
+	if not flies() or not is_inside_tree() or get_world_3d() == null:
+		return
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return
+	var up := _up()
+	var ahead := velocity - up * velocity.dot(up)
+	if ahead.length_squared() < 0.36:
+		return
+	var reach := maxf(combat_radius() + 3.2, 6.0)
+	var query := PhysicsRayQueryParameters3D.create(
+		global_position + up * 1.4,
+		global_position + ahead.normalized() * reach)
+	query.exclude = [get_rid()]
+	query.collide_with_areas = false
+	var hit := space.intersect_ray(query)
+	if hit.is_empty() or hit.get("collider") is CharacterBody3D:
+		return
+	var normal: Vector3 = hit.get("normal", up)
+	if normal.length_squared() < 0.0001:
+		normal = up
+	normal = normal.normalized()
+	var into := -velocity.dot(normal)
+	if into > 0.0:
+		velocity += normal * (into + maxf(10.0, _cruise * 0.22))
+	velocity += up * maxf(into, 8.0)
+	var at: Vector3 = hit.get("position", global_position)
+	if not at.is_finite():
+		return
+	var pad := maxf(combat_radius() * 0.28, 2.0)
+	var sunk := pad - global_position.distance_to(at)
+	if sunk > 0.0:
+		global_position += normal * sunk
 
 
 func combat_display_name() -> String:
@@ -510,21 +857,371 @@ func combat_radius() -> float:
 	return 0.7
 
 
+func recycle_to(at: Vector3) -> void:
+	chase = false
+	ever_chased = false
+	idle_seconds = 0.0
+	director_push = Vector3.ZERO
+	director_sep = Vector3.ZERO
+	_director_lod = -1
+	if at.is_finite():
+		hang_origin = at
+		_patrol_goal = at
+	warp_to(at)
+
+
+func set_director_lod(lod: int) -> void:
+	if not _is_host() or not _alive:
+		return
+	if lod == _director_lod:
+		return
+	_director_lod = lod
+	set_physics_process(lod == CrawlerRules.MOB_LOD_HOT)
+	set_process(lod != CrawlerRules.MOB_LOD_COLD \
+		or _flash_left > 0.0 or _spotted_left > 0.0)
+
+
+func director_cold_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	var clock := Time.get_ticks_usec()
+	if steer:
+		director_far_steer(step, player, in_city)
+	director_push = director_sep
+	_integrate_director(delta)
+	if step > 0.0:
+		_attack_left = maxf(_attack_left - step, 0.0)
+		_tick_statuses(step)
+		_publish_state(delta)
+	MobSense.note_tick(
+		self, Time.get_ticks_usec() - clock, CrawlerRules.MOB_LOD_COLD, false, _attacking())
+
+
+func director_warm_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	var clock := Time.get_ticks_usec()
+	_attack_left = maxf(_attack_left - delta, 0.0)
+	_tick_statuses(delta)
+	if steer:
+		director_far_steer(step, player, in_city)
+	director_push = director_sep
+	if _faces_motion and not _movement_locked():
+		_face_motion(delta)
+	_integrate_director(delta)
+	_publish_state(delta)
+	MobSense.note_tick(
+		self, Time.get_ticks_usec() - clock, CrawlerRules.MOB_LOD_WARM, false, _attacking())
+
+
+func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
+	if _movement_locked():
+		velocity = Vector3.ZERO
+		return
+	var step := maxf(delta, 0.0)
+	if player != null and _apply_agro(player, step, in_city):
+		var along := _seek_along(player)
+		if along.length_squared() >= 0.04:
+			_match_speed(move_speed(), step, 1.2, 16.0)
+			_steer_toward(along.normalized() * _cruise, step, 10.0)
+	else:
+		_tick_idle(step)
+	if flies():
+		_director_climb()
+
+
+func _director_climb() -> void:
+	if _movement_locked():
+		return
+	if flies():
+		_keep_flyer_loft()
+		return
+	var up := _up()
+	var altitude := _guess_altitude()
+	var want := ground_clearance()
+	var rise := velocity.dot(up)
+	if altitude > want + 0.45:
+		if rise > 0.0:
+			velocity -= up * rise
+		velocity -= up * clampf((altitude - want) * 7.0, 3.0, 20.0)
+		return
+	if rise < 0.0:
+		velocity -= up * rise
+
+
+func stands_off() -> bool:
+	return CrawlerMobs.attack_mode(wild_kind(), maxi(threat_level, 1)) == "standoff"
+
+
+func _seek_along(player: Node) -> Vector3:
+	if player == null:
+		return Vector3.ZERO
+	if stands_off():
+		return _standoff_goal(player) - global_position
+	return _combat_position_of(player) - global_position
+
+
+func _standoff_goal(player: Node) -> Vector3:
+	var at := _combat_position_of(player)
+	var hold := maxf(
+		CrawlerMobs.number(
+			wild_kind(), maxi(threat_level, 1), "standoff_min",
+			CrawlerRules.RANGER_STANDOFF_MIN),
+		CrawlerRules.RANGER_CROWN_CLEAR)
+	var up := _loft_axis()
+	var along := global_position - at
+	var flat := along - up * along.dot(up)
+	if flat.length_squared() < 0.2:
+		flat = _orbit_bias()
+		flat -= up * flat.dot(up)
+	if flat.length_squared() < 0.0001:
+		flat = up.cross(Vector3.RIGHT)
+	if flat.length_squared() < 0.0001:
+		return _clamp_flyer_band(at + up * flyer_floor())
+	return _clamp_flyer_band(at + flat.normalized() * hold)
+
+
+func _loft_axis() -> Vector3:
+	return _up() if _planet != null else Vector3.UP
+
+
+func _track_rank() -> int:
+	return maxi(threat_level, 1)
+
+
+func _track_hold_min() -> float:
+	return CrawlerMobs.number(
+		wild_kind(), _track_rank(), "standoff_min", CrawlerRules.RANGER_STANDOFF_MIN)
+
+
+func _track_hold_max() -> float:
+	return CrawlerMobs.number(
+		wild_kind(), _track_rank(), "standoff_max",
+		CrawlerRules.RANGER_STANDOFF_MAX)
+
+
+func _flyer_track(player: Node, delta: float) -> void:
+	var at := _combat_position_of(player)
+	var distance := global_position.distance_to(at)
+	var player_speed := _player_speed(player)
+	var hold := lerpf(_track_hold_min(), _track_hold_max(), _hold_share())
+	var desired := _hover_hold(at, hold)
+	var gap := global_position.distance_to(desired)
+	if _is_matched(player, player_speed, gap, hold):
+		_drift_in_frame(player, desired, delta)
+	else:
+		_close_on(player, desired, gap, hold, distance, player_speed, delta)
+	_keep_off_crown(player)
+
+
+func _hold_share() -> float:
+	if _hold_cached >= 0.0:
+		return _hold_cached
+	var rng := RandomNumberGenerator.new()
+	rng.seed = int(hash(mob_id) & 0x7fffffff) + 4
+	_hold_cached = rng.randf()
+	return _hold_cached
+
+
+func _flat_gap(player: Node) -> float:
+	var along := global_position - _combat_position_of(player)
+	var up := _loft_axis()
+	along -= up * along.dot(up)
+	return along.length()
+
+
+func _hover_hold(at: Vector3, hold: float) -> Vector3:
+	var up := _loft_axis()
+	var reach := maxf(hold, CrawlerRules.RANGER_CROWN_CLEAR)
+	var along := global_position - at
+	var rise := along.dot(up)
+	var bias := along - up * rise
+	if bias.length_squared() < 0.2:
+		bias = _orbit_bias()
+		bias -= up * bias.dot(up)
+	if bias.length_squared() < 0.0001:
+		bias = up.cross(Vector3.RIGHT)
+	if bias.length_squared() < 0.0001:
+		bias = Vector3.FORWARD
+	bias = bias.normalized()
+	var desired := _clamp_flyer_band(at + bias * reach)
+	var held := desired - at
+	rise = held.dot(up)
+	var flat := held - up * rise
+	if flat.length() >= reach:
+		return desired
+	var out := flat if flat.length_squared() > 0.2 else bias
+	out -= up * out.dot(up)
+	if out.length_squared() < 0.0001:
+		return desired
+	return _clamp_flyer_band(at + out.normalized() * reach + up * rise)
+
+
+func _is_matched(player: Node, player_speed: float, gap: float, hold: float) -> bool:
+	var rank := _track_rank()
+	var target := minf(
+		player_speed, CrawlerRules.ranger_chase_speed(player_speed, rank, false))
+	if absf(_cruise - target) > CrawlerRules.ranger_match_slack(player_speed, rank):
+		return false
+	var flat := _flat_gap(player)
+	if flat < CrawlerRules.RANGER_CROWN_CLEAR:
+		return false
+	return gap <= hold * 1.2 \
+		or (flat >= _track_hold_min() * 0.85 and flat <= _track_hold_max() * 1.2)
+
+
+func _close_on(
+		player: Node,
+		desired: Vector3,
+		gap: float,
+		hold: float,
+		distance: float,
+		player_speed: float,
+		delta: float
+	) -> void:
+	var rank := _track_rank()
+	var urgent := gap > hold * 0.55 or distance > _track_hold_max()
+	var wanted_speed := maxf(
+		CrawlerRules.ranger_chase_speed(player_speed, rank, urgent),
+		move_speed())
+	_match_speed(
+		wanted_speed, delta,
+		CrawlerRules.ranger_match_lag(rank),
+		CrawlerRules.ranger_match_floor(rank))
+	var along := desired - global_position
+	var to_player := _combat_position_of(player) - global_position
+	var up := _loft_axis()
+	var flat_to := to_player - up * to_player.dot(up)
+	if flat_to.length() < _track_hold_min() and along.dot(to_player) > 0.0:
+		if flat_to.length_squared() > 0.2:
+			along = -flat_to
+		else:
+			along = _orbit_bias()
+			along -= up * along.dot(up)
+	var heading := along.normalized() if along.length_squared() > 0.04 \
+		else _orbit_bias()
+	_steer_toward(heading * _cruise, delta, 15.0)
+
+
+func _drift_in_frame(player: Node, desired: Vector3, delta: float) -> void:
+	var rank := _track_rank()
+	var player_speed := _player_speed(player)
+	_match_speed(
+		CrawlerRules.ranger_chase_speed(player_speed, rank, false),
+		delta,
+		CrawlerRules.ranger_match_lag(rank),
+		CrawlerRules.ranger_match_floor(rank))
+	_drift_clock += delta
+	var frame := _player_velocity(player)
+	var up := _up()
+	var ahead := frame - up * frame.dot(up)
+	if ahead.length_squared() < 4.0:
+		ahead = -_orbit_bias()
+		ahead -= up * ahead.dot(up)
+	if ahead.length_squared() < 0.0001:
+		ahead = up.cross(Vector3.RIGHT)
+	ahead = ahead.normalized()
+	var side := up.cross(ahead)
+	if side.length_squared() < 0.0001:
+		side = up.cross(Vector3.FORWARD)
+	side = side.normalized()
+	var sway := maxf(_cruise * 0.09, 11.0)
+	var phase := _hold_share() * TAU
+	var bob := ahead * sin(_drift_clock * 1.28 + phase) * sway \
+		+ side * sin(_drift_clock * 0.84 + phase * 1.7) * (sway * 1.15)
+	var spring := (desired - global_position) * 1.15
+	var ride := frame + bob + spring
+	velocity = velocity.lerp(
+		ride, clampf(CrawlerRules.ranger_match_lock(rank) * delta, 0.0, 1.0))
+	_push_off_terrain(player, desired)
+
+
+func _push_off_terrain(player: Node, desired: Vector3) -> void:
+	var up := _loft_axis()
+	var floor_h := flyer_floor()
+	var altitude := surface_altitude()
+	var down := -velocity.dot(up)
+	if down > 0.0 and altitude <= floor_h + 4.0:
+		velocity += up * down
+	if altitude >= floor_h + 2.4:
+		return
+	var away := global_position - _combat_position_of(player)
+	away -= up * away.dot(up)
+	if away.length_squared() < 0.2:
+		away = desired - global_position
+		away -= up * away.dot(up)
+	if away.length_squared() > 0.2:
+		velocity += away.normalized() * maxf(20.0, _cruise * 0.28)
+	velocity += up * maxf((floor_h + 2.4 - altitude) * 7.0, 12.0)
+
+
+func _keep_off_crown(player: Node) -> void:
+	var at := _combat_position_of(player)
+	var up := _loft_axis()
+	var along := global_position - at
+	var rise := along.dot(up)
+	var flat := along - up * rise
+	var clear := CrawlerRules.RANGER_CROWN_CLEAR
+	if flat.length() >= clear:
+		return
+	var out := flat
+	if out.length_squared() < 0.2:
+		out = _orbit_bias()
+		out -= up * out.dot(up)
+	if out.length_squared() < 0.0001:
+		out = up.cross(Vector3.RIGHT)
+	if out.length_squared() < 0.0001:
+		return
+	var shove := (clear - flat.length()) / clear
+	velocity += out.normalized() * maxf(22.0, _cruise * 0.28) * (0.7 + shove * 1.4)
+	if rise > 2.0:
+		velocity += up * minf(rise * 1.6, 12.0)
+
+
+func _guess_altitude() -> float:
+	if not _cached_alt_at.is_finite() \
+			or global_position.distance_squared_to(_cached_alt_at) > 64.0:
+		return surface_altitude()
+	if global_position.distance_squared_to(_cached_alt_at) < 0.04:
+		return _cached_alt
+	return _cached_alt + (global_position - _cached_alt_at).dot(_up())
+
+
+func _keep_flyer_loft() -> void:
+	var floor_h := flyer_floor()
+	var altitude := _guess_altitude()
+	var up := _up()
+	if altitude < floor_h:
+		var down := -velocity.dot(up)
+		if down > 0.0:
+			velocity += up * down
+		velocity += up * maxf((floor_h - altitude) * 6.0, 10.0)
+		return
+	var headroom := altitude - floor_h
+	if headroom < 3.0:
+		var down := -velocity.dot(up)
+		if down > 0.0:
+			velocity += up * down * clampf(1.0 - headroom / 3.0, 0.0, 1.0)
+
+
 func warp_to(at: Vector3) -> void:
 	if not at.is_finite():
 		return
 	var dest := at
-	if _planet != null:
-		var local := _planet.to_local(at)
-		if local.length_squared() > 0.0001:
-			var surface := _planet.surface_position(local)
-			var up := _planet.up_at(surface)
-			if flies():
-				dest = _clamp_flyer_band(at)
-			else:
-				dest = surface + up * maxf(combat_radius(), 0.55)
+	if flies():
+		dest = _clamp_flyer_band(at)
+	else:
+		var surface := ground_surface(at)
+		if surface.is_finite():
+			var up := _up()
+			if _planet != null:
+				up = _planet.up_at(surface)
+			dest = surface + up * ground_clearance()
 	global_position = dest
 	velocity = Vector3.ZERO
+	if flies():
+		_cached_alt_at = Vector3.INF
+	else:
+		_cached_alt = ground_clearance()
+		_cached_alt_at = dest
 	reset_physics_interpolation()
 	_force_publish()
 
@@ -608,7 +1305,7 @@ func _emit_status_float(kind: int, amount: float) -> void:
 func _player_for_peer(peer: int) -> Node3D:
 	if peer <= 0 or not is_inside_tree():
 		return null
-	MobSense.begin_frame(get_tree())
+	MobSense.ensure_frame(get_tree())
 	for player: Node3D in MobSense.players():
 		if is_instance_valid(player) and player.has_method(&"combat_peer_id") \
 				and int(player.call(&"combat_peer_id")) == peer:
@@ -703,30 +1400,61 @@ func sees_player(player: Node3D) -> bool:
 		<= CrawlerRules.PERCEPTION
 
 
+func is_boss_minion() -> bool:
+	return false
+
+
 func tick_agro(player: Node3D, delta: float) -> bool:
+	var blocked := player != null and MobSense.player_in_city(player)
+	if not blocked and not is_persistent() and player != null \
+			and MobSense.player_in_castle_keep(player):
+		blocked = true
+	if not blocked and not is_boss_minion() and player != null \
+			and _tree_boss_shields(player):
+		blocked = true
+	return _apply_agro(player, delta, blocked)
+
+
+func _tree_boss_shields(player: Node) -> bool:
+	if player == null or not player.is_inside_tree():
+		return false
+	for node_variant: Variant in player.get_tree().get_nodes_in_group(&"crawler_boss"):
+		var boss := node_variant as Node
+		if boss != null and boss.has_method(&"protects") \
+				and bool(boss.call(&"protects", player)):
+			return true
+	return false
+
+
+func _apply_agro(player: Node3D, delta: float, in_city: bool) -> bool:
+	_pull_row()
+	var blocked := in_city or MobSense.player_on_spawn_pad(player)
 	var gap := INF
 	if player != null:
-		gap = global_position.distance_to(_combat_position_of(player))
+		gap = global_position.distance_to(player.global_position)
 	var was_chasing := chase
 	if player == null:
 		chase = false
-	elif MobSense.player_in_city(player):
+	elif blocked:
 		chase = false
-	elif chase and gap > CrawlerMobs.number(
-			wild_kind(), threat_level, "deagro_range", CrawlerRules.DEAGRO_RANGE):
+	elif chase and gap > _row_deagro:
 		chase = false
-	elif not chase and CrawlerMobs.agro_mode(wild_kind(), threat_level) != "calm" \
-			and gap <= CrawlerMobs.number(
-				wild_kind(), threat_level, "agro_range", CrawlerRules.AGRO_RANGE):
+	elif not chase and _row_agro_mode != "calm" and gap <= _row_agro:
 		chase = true
 	if chase:
 		ever_chased = true
 		idle_seconds = 0.0
+		if not was_chasing:
+			_on_agro_started()
 	elif ever_chased:
 		idle_seconds += maxf(delta, 0.0)
 		if was_chasing and not chase:
 			hang_origin = global_position
 	return chase
+
+
+func _on_agro_started() -> void:
+	pass
 
 
 func _match_speed(wanted: float, delta: float, lag := 0.55, floor_rate := 48.0) -> void:
@@ -845,7 +1573,7 @@ func _attach_creature(scene: PackedScene, paint: Texture2D, authored_height: flo
 	root.add_child(model)
 	var scale := visual_height / maxf(authored_height, 0.01)
 	root.scale = Vector3.ONE * scale
-	root.position.y = -visual_height * 0.5
+	_plant_visual(root, visual_height)
 	for node_variant: Variant in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh_instance := node_variant as MeshInstance3D
 		if mesh_instance == null:
@@ -854,8 +1582,116 @@ func _attach_creature(scene: PackedScene, paint: Texture2D, authored_height: flo
 		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		if _visual == null:
 			_visual = mesh_instance
+	_scale_enemy_outline(visual_height)
 	_bind_animator(model)
 	return root
+
+
+func _attach_skinned(scene: PackedScene, visual_height: float) -> Node3D:
+	var root := Node3D.new()
+	root.name = "Creature"
+	add_child(root)
+	var model := scene.instantiate()
+	root.add_child(model)
+	_fit_visual(root, visual_height)
+	_collect_skinned_materials(model)
+	_scale_enemy_outline(visual_height)
+	_bind_animator(model)
+	return root
+
+
+func _fit_visual(root: Node3D, visual_height: float) -> void:
+	var bounds := _model_bounds(root)
+	var scale := visual_height / maxf(bounds.size.y, 0.01)
+	root.scale = Vector3.ONE * scale
+	root.position.y = -visual_height * 0.5 - bounds.position.y * scale
+
+
+func _plant_visual(root: Node3D, visual_height: float) -> void:
+	var saved := root.scale
+	root.scale = Vector3.ONE
+	var bounds := _model_bounds(root)
+	root.scale = saved
+	root.position.y = -visual_height * 0.5 - bounds.position.y * saved.y
+
+
+func _model_bounds(root: Node3D) -> AABB:
+	if root == null or not root.is_inside_tree():
+		return AABB(Vector3.ZERO, Vector3(0.0, 1.8, 0.0))
+	var bounds := AABB()
+	var started := false
+	var inverse := root.global_transform.affine_inverse()
+	for node_variant: Variant in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node_variant as MeshInstance3D
+		if mesh == null or mesh.mesh == null:
+			continue
+		var box := inverse * mesh.global_transform * mesh.get_aabb()
+		if started:
+			bounds = bounds.merge(box)
+		else:
+			bounds = box
+			started = true
+	if not started or bounds.size.y <= 0.05:
+		return AABB(Vector3.ZERO, Vector3(0.0, 1.8, 0.0))
+	return bounds
+
+
+func _collect_skinned_materials(model: Node) -> void:
+	for node_variant: Variant in model.find_children("*", "MeshInstance3D", true, false):
+		if not is_instance_valid(node_variant):
+			continue
+		var mesh := node_variant as MeshInstance3D
+		if mesh == null:
+			continue
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if _visual == null:
+			_visual = mesh
+		_adopt_authored_mesh(mesh)
+
+
+func _adopt_authored_mesh(mesh: MeshInstance3D) -> void:
+	if mesh == null or mesh.mesh == null:
+		return
+	# One override would paint every Blender slot with surface 0. Demons
+	# store obsidian there, so the whole body went black.
+	mesh.material_override = null
+	var count := mesh.mesh.get_surface_count()
+	for surface in count:
+		var material := mesh.get_active_material(surface)
+		if material is BaseMaterial3D:
+			var copy := _authored_enemy_material(material as BaseMaterial3D)
+			mesh.set_surface_override_material(surface, copy)
+		elif material is ShaderMaterial:
+			var existing := material as ShaderMaterial
+			if existing.shader == ENEMY_SHADER:
+				var shader_copy := existing.duplicate() as ShaderMaterial
+				_bind_enemy_outline(shader_copy)
+				mesh.set_surface_override_material(surface, shader_copy)
+				_materials.append(shader_copy)
+				_material = shader_copy
+			else:
+				var colour: Variant = existing.get_shader_parameter(&"albedo")
+				var paint: Variant = existing.get_shader_parameter(&"paint")
+				var ink := Color(0.18, 0.06, 0.07)
+				if colour is Color:
+					ink = colour as Color
+				var tex := paint as Texture2D
+				mesh.set_surface_override_material(surface,
+					_enemy_material(ink, tex, 1.0 if tex != null else 0.0))
+
+
+func _authored_enemy_material(source: BaseMaterial3D) -> ShaderMaterial:
+	var colour := source.albedo_color
+	if colour.a < 0.02:
+		colour.a = 1.0
+	var paint := source.albedo_texture
+	var material := _enemy_material(colour, paint, 1.0 if paint != null else 0.0)
+	var glow := source.emission
+	if source.emission_enabled and (glow.r + glow.g + glow.b) > 0.04:
+		material.set_shader_parameter(&"emit_color", glow)
+		material.set_shader_parameter(&"emit_energy",
+			maxf(source.emission_energy_multiplier, 1.2))
+	return material
 
 
 func _enemy_material(colour: Color, paint: Texture2D, paint_mix: float) -> ShaderMaterial:
@@ -868,11 +1704,43 @@ func _enemy_material(colour: Color, paint: Texture2D, paint_mix: float) -> Shade
 	material.set_shader_parameter(&"flash", 0.0)
 	material.set_shader_parameter(&"paint_mix", paint_mix)
 	material.set_shader_parameter(&"vertex_mix", 0.2 if paint != null else 0.0)
+	material.set_shader_parameter(&"emit_color", Color(0, 0, 0, 1))
+	material.set_shader_parameter(&"emit_energy", 0.0)
 	if paint != null:
 		material.set_shader_parameter(&"paint", paint)
+	_bind_enemy_outline(material)
 	_materials.append(material)
 	_material = material
 	return material
+
+
+func _bind_enemy_outline(material: ShaderMaterial) -> void:
+	if material == null or material.next_pass != null:
+		return
+	var outline := ShaderMaterial.new()
+	outline.shader = ENEMY_OUTLINE_SHADER
+	outline.set_shader_parameter(&"outline_color", RIM)
+	outline.set_shader_parameter(&"outline_width", 0.045)
+	material.next_pass = outline
+
+
+func _scale_enemy_outline(visual_height: float) -> void:
+	_outline_height = maxf(visual_height, 0.5)
+	var grow := 1.0
+	var root := get_node_or_null("Creature") as Node3D
+	if root == null:
+		root = get_node_or_null("Demon") as Node3D
+	if root != null:
+		grow = maxf(absf(root.scale.y), 0.01)
+	var world_width := clampf(_outline_height * 0.016, 0.036, 0.18)
+	var width := world_width / grow
+	for material in _materials:
+		if material == null:
+			continue
+		var outline := material.next_pass as ShaderMaterial
+		if outline == null or outline.shader != ENEMY_OUTLINE_SHADER:
+			continue
+		outline.set_shader_parameter(&"outline_width", width)
 
 
 func _bind_animator(model: Node) -> void:
@@ -880,7 +1748,7 @@ func _bind_animator(model: Node) -> void:
 	if _animator == null:
 		return
 	_animator.playback_default_blend_time = CLIP_BLEND
-	for clip in [CLIP_IDLE, CLIP_WALK, CLIP_RUN]:
+	for clip in [CLIP_IDLE, CLIP_WALK, CLIP_RUN, CLIP_FLY]:
 		var resolved := _resolve_clip(clip)
 		if not resolved.is_empty() and _animator.has_animation(resolved):
 			_animator.get_animation(resolved).loop_mode = Animation.LOOP_LINEAR
@@ -892,15 +1760,40 @@ func _resolve_clip(clip: String) -> String:
 	if _clip_names.has(clip):
 		return str(_clip_names[clip])
 	var resolved := ""
-	if _animator.has_animation(clip):
-		resolved = clip
-	else:
-		for listed in _animator.get_animation_list():
-			if listed == clip or listed.ends_with("/" + clip):
-				resolved = listed
-				break
+	for alias: String in _clip_aliases(clip):
+		var hit := _match_clip_name(alias)
+		if not hit.is_empty():
+			resolved = hit
+			break
 	_clip_names[clip] = resolved
 	return resolved
+
+
+func _clip_aliases(clip: String) -> PackedStringArray:
+	match clip:
+		CLIP_ATTACK:
+			return PackedStringArray([CLIP_ATTACK, "Strike", "Bite", "Cast_Projectile"])
+		CLIP_CAST:
+			return PackedStringArray([CLIP_CAST, "Cast_Projectile", "Strike"])
+		CLIP_HIT:
+			return PackedStringArray([CLIP_HIT, "Hit", "HitReact"])
+		CLIP_FLY:
+			return PackedStringArray([CLIP_FLY, CLIP_RUN])
+		CLIP_IDLE:
+			return PackedStringArray([CLIP_IDLE, "Idle"])
+	return PackedStringArray([clip])
+
+
+func _match_clip_name(need: String) -> String:
+	if _animator.has_animation(need):
+		return need
+	var folded := need.to_lower()
+	for listed: String in _animator.get_animation_list():
+		var tail := listed.get_file().to_lower()
+		if tail == folded or tail.ends_with("/" + folded) \
+				or tail.ends_with("__" + folded) or tail.ends_with("|" + folded):
+			return listed
+	return ""
 
 
 func _begin_attack(seconds: float) -> bool:
@@ -954,10 +1847,18 @@ func _update_clips() -> void:
 		_animator.speed_scale = scale
 
 
+func _look_basis(ahead: Vector3, up: Vector3) -> Basis:
+	return Basis.looking_at(ahead.normalized(), up, _uses_model_front).orthonormalized()
+
+
 func _face_motion(delta: float) -> void:
 	var up := _up()
 	var ahead := velocity
-	if ahead.length_squared() < 1.0:
+	if _attacking():
+		var target := _combat_target()
+		if target != null:
+			ahead = _combat_position_of(target) - global_position
+	elif ahead.length_squared() < 1.0:
 		var player := _nearest_player()
 		if player != null:
 			ahead = _combat_position_of(player) - global_position
@@ -966,7 +1867,7 @@ func _face_motion(delta: float) -> void:
 	ahead -= up * ahead.dot(up)
 	if ahead.length_squared() < 0.0001:
 		return
-	var desired := Basis.looking_at(ahead.normalized(), up).orthonormalized()
+	var desired := _look_basis(ahead, up)
 	if desired.determinant() < 0.0:
 		desired.x = -desired.x
 	if absf(desired.determinant()) < 0.01:
@@ -988,6 +1889,19 @@ func _update_flash() -> void:
 	if _flash_left > 0.0:
 		flash = clampf(_flash_left / DAMAGE_FLASH_SECONDS, 0.0, 1.0)
 		flash = maxf(flash, 0.72)
+	if is_equal_approx(flash, _last_flash):
+		return
+	_last_flash = flash
 	for material in _materials:
 		if material != null:
 			material.set_shader_parameter(&"flash", flash)
+	for index in _skinned_mats.size():
+		var material := _skinned_mats[index]
+		if material == null:
+			continue
+		var rest := _skinned_energy[index] if index < _skinned_energy.size() else 0.0
+		var rest_color := _skinned_emit[index] if index < _skinned_emit.size() \
+			else material.emission
+		material.emission_enabled = flash > 0.04 or rest > 0.02
+		material.emission = Color(1.0, 0.28, 0.18) if flash > 0.04 else rest_color
+		material.emission_energy_multiplier = lerpf(rest, 3.4, flash)

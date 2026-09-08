@@ -185,6 +185,7 @@ func _fill_bag_slots(
 		slot.name = "%s_%d" % [prefix, index]
 		slot.set_edge(INV_EDGE)
 		slot.placeholder = ""
+		slot.use_soft_fx()
 		slot.bind(bag, index)
 		slot.item_dropped.connect(_on_bag_moved)
 		slot.crawler_move_dropped.connect(_on_bag_received_ability)

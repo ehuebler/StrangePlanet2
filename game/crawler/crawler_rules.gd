@@ -26,7 +26,7 @@ const ENABLED_ABILITIES: PackedStringArray = [
 	"charming_aura", "freeze_blast", "static_field", "toxic_field",
 	"freeze_field", "healing_field", "overdrive",
 ]
-const LASER_DAMAGE := 50.0
+const LASER_DAMAGE := 1.0
 const LASER_COOLDOWN := 0.5
 const LASER_DURATION := 0.4
 const LASER_RANGE := 60.0
@@ -34,7 +34,7 @@ const LASER_RANGE_PER_RANK := 15.0
 const LASER_KNOCKBACK := 8.0
 const LASER_KNOCKBACK_PER_RANK := 2.5
 const LASER_SLOTS := 3
-const KAME_DAMAGE := 85.0
+const KAME_DAMAGE := 3.0
 const KAME_COOLDOWN := 2.2
 const KAME_DURATION := 2.2
 const KAME_RANGE := 240.0
@@ -51,11 +51,11 @@ const KAME_COOLDOWN_MIN := 1.1
 const KAME_DURATION_PER_RANK := 0.20
 const KAME_SIZE_PER_RANK := 0.10
 const KAME_SLOTS := 3
-const NAUSICAA_DAMAGE := 95.0
-const NAUSICAA_PLAYER_DAMAGE := 10.0
+const NAUSICAA_DAMAGE := 4.0
+const NAUSICAA_PLAYER_DAMAGE := 1.0
 const NAUSICAA_COOLDOWN := 6.0
 const NAUSICAA_DURATION := 0.75
-const NAUSICAA_RANGE := 18.0
+const NAUSICAA_RANGE := 5.0
 const NAUSICAA_RANGE_PER_RANK := 3.5
 const NAUSICAA_RADIUS := 5.0
 const NAUSICAA_BEAM_WIDTH := 1.0
@@ -75,7 +75,7 @@ const NAUSICAA_COOLDOWN_MIN := 3.4
 const NAUSICAA_DURATION_PER_RANK := 0.08
 const NAUSICAA_SIZE_PER_RANK := 0.10
 const NAUSICAA_SLOTS := 3
-const LIGHTNING_DAMAGE := 42.0
+const LIGHTNING_DAMAGE := 2.0
 const LIGHTNING_COOLDOWN := 0.55
 const LIGHTNING_DURATION := 0.35
 const LIGHTNING_RANGE := 48.0
@@ -95,9 +95,10 @@ const LIGHTNING_ARC_RANGE := 9.0
 const LIGHTNING_SHOCK := 0.0
 const LIGHTNING_SHOCK_PER_RANK := 1.8
 const LIGHTNING_SLOTS := 3
-const STARFIRE_DAMAGE := 350.0
-const STARFIRE_IMPACT := 650.0
-const STARFIRE_COOLDOWN := 2.0
+const STARFIRE_DAMAGE := 7.0
+const STARFIRE_IMPACT := 10.0
+const STARFIRE_PLAYER_DAMAGE := 1.0
+const STARFIRE_COOLDOWN := 2.5
 const STARFIRE_RANGE := 70.0
 const STARFIRE_RADIUS := 4.5
 const STARFIRE_PROJECTILE_RADIUS := 0.36
@@ -110,8 +111,9 @@ const STARFIRE_RANGE_PER_RANK := 12.0
 const STARFIRE_SIZE_PER_RANK := 0.12
 const STARFIRE_KNOCKBACK := 12.0
 const STARFIRE_KNOCKBACK_PER_RANK := 3.5
-const LIGHT_BOLT_DAMAGE := 16.0
-const LIGHT_BOLT_IMPACT := 22.0
+const LIGHT_BOLT_DAMAGE := 1.0
+const LIGHT_BOLT_IMPACT := 1.0
+const LIGHT_BOLT_PLAYER_DAMAGE := 1.0
 const LIGHT_BOLT_COOLDOWN := 0.10
 const LIGHT_BOLT_RANGE := 48.0
 const LIGHT_BOLT_SPEED := 70.0
@@ -128,8 +130,8 @@ const LIGHT_BOLT_RANGE_PER_RANK := 8.0
 const LIGHT_BOLT_SPEED_PER_RANK := 12.0
 const LIGHT_BOLT_SIZE_PER_RANK := 0.10
 const LIGHT_BOLT_KNOCKBACK_PER_RANK := 0.8
-const ICICLE_DAMAGE := 72.0
-const ICICLE_COLD_DAMAGE := 8.0
+const ICICLE_DAMAGE := 3.0
+const ICICLE_COLD_DAMAGE := 1.0
 const ICICLE_COLD := 1.6
 const ICICLE_COOLDOWN := 0.48
 const ICICLE_RANGE := 44.0
@@ -162,7 +164,7 @@ const TELEPORT_GRAVITY := 28.0
 const TELEPORT_LOFT := 0.38
 const TELEPORT_SLOTS := 3
 const TELEPORT_SWAP_MAX := 1
-const FUS_DAMAGE := 8.0
+const FUS_DAMAGE := 1.0
 const FUS_COOLDOWN := 3.2
 const FUS_COOLDOWN_PER_RANK := 0.18
 const FUS_COOLDOWN_MIN := 1.4
@@ -177,8 +179,8 @@ const FUS_SLOTS := 3
 const FUS_DAMAGE_PER_RANK := 2.0
 const FUS_SIZE_PER_RANK := 0.12
 const FUS_KNOCKBACK_PER_RANK := 12.0
-const METEOR_DAMAGE := 180.0
-const METEOR_IMPACT := 320.0
+const METEOR_DAMAGE := 6.0
+const METEOR_IMPACT := 10.0
 const METEOR_COOLDOWN := 3.2
 const METEOR_COOLDOWN_PER_RANK := 0.28
 const METEOR_COOLDOWN_MIN := 1.4
@@ -192,7 +194,7 @@ const METEOR_SIZE_PER_RANK := 0.12
 const METEOR_KNOCKBACK := 18.0
 const METEOR_KNOCKBACK_PER_RANK := 4.0
 const METEOR_SLOTS := 3
-const HERO_PUNCH_DAMAGE := 40.0
+const HERO_PUNCH_DAMAGE := 2.0
 const HERO_PUNCH_COOLDOWN := 0.40
 const HERO_PUNCH_COOLDOWN_PER_RANK := 0.03
 const HERO_PUNCH_COOLDOWN_MIN := 0.22
@@ -219,8 +221,8 @@ const OVERDRIVE_BOOST_STATS: PackedStringArray = [
 	"wall_height", "wall_thickness", "lift", "impact_radius",
 	"shock", "toxic", "freeze", "cold", "cold_damage",
 ]
-const ROAR_DAMAGE := 18.0
-const ROAR_TOXIC_DAMAGE := 8.0
+const ROAR_DAMAGE := 2.0
+const ROAR_TOXIC_DAMAGE := 1.0
 const ROAR_CHARM_DAMAGE := 0.0
 const ROAR_FREEZE_DAMAGE := 0.0
 const ROAR_RADIUS := 14.0
@@ -246,8 +248,8 @@ const FIELD_CAST_MIN := 0.20
 const FIELD_CAST_BREAK := 2.5
 const FIELD_ANIMATION := 0.9
 const FIELD_SLOTS := 3
-const FIELD_STATIC_DAMAGE := 16.0
-const FIELD_TOXIC_DAMAGE := 5.0
+const FIELD_STATIC_DAMAGE := 2.0
+const FIELD_TOXIC_DAMAGE := 1.0
 const FIELD_FREEZE_DAMAGE := 0.0
 const FIELD_SHOCK := 2.0
 const FIELD_SHOCK_PER_RANK := 1.2
@@ -264,7 +266,7 @@ const FIELD_COOLDOWN_MIN := 3.5
 const FIELD_RADIUS_PER_RANK := 1.2
 const FIELD_DURATION_PER_RANK := 0.8
 const FIELD_SIZE_PER_RANK := 0.10
-const ELEM_TOXIC_DPS := 8.0
+const ELEM_TOXIC_DPS := 1.0
 const ELEM_TOXIC_DPS_PER_RANK := 4.0
 const ELEM_TOXIC_HOLD := 4.0
 const ELEM_TOXIC_HOLD_PER_RANK := 0.8
@@ -291,11 +293,14 @@ const WALL_FADE := 4.0
 const WALL_SIZE_PER_RANK := 0.12
 const WALL_SLOTS := 3
 const WALL_PROJECT_SPEED := 3.5
-const WALL_FIRE_DAMAGE := 14.0
+const WALL_FIRE_DAMAGE := 2.0
 const WALL_HOUSE_MAX := 1
 const BIG_SIZE_MAX_RANK := 10
-const BIG_SIZE_BASE := 1.22
+const MOD_BOOST := 0.25
+const BIG_SIZE_BASE := 1.0 + MOD_BOOST
 const BIG_SIZE_GROWTH := 1.26
+const UPGRADE_BOOST := 0.05
+const UPGRADE_BOOST_SHIFT_MAX := 20
 const TYPE_BEAM := "beam"
 const TYPE_SHOCKWAVE := "shockwave"
 const TYPE_PROJECTILE := "projectile"
@@ -303,9 +308,12 @@ const TYPE_LIMITED := "limited"
 const TYPE_MISC := "misc"
 const TYPE_FIELD := "field"
 const NUKE_AMMO := 3
-const MINI_NUKE_DAMAGE := 8000.0
-const MINI_NUKE_IMPACT := 6000.0
-const MINI_NUKE_PLAYER_DAMAGE := 36.0
+const NUKE_DAMAGE := 10.0
+const NUKE_IMPACT := 8.0
+const NUKE_PLAYER_DAMAGE := 1.0
+const MINI_NUKE_DAMAGE := 9.0
+const MINI_NUKE_IMPACT := 7.0
+const MINI_NUKE_PLAYER_DAMAGE := 1.0
 const MINI_NUKE_SPEED := 130.0
 const MINI_NUKE_RANGE := 300.0
 const MINI_NUKE_RADIUS := 38.0
@@ -336,7 +344,7 @@ const MULTI_SPLIT_TRAVEL := 1.6
 const MULTI_ECHO_GAP := 1.0
 const MULTI_WALL_GAP := 0.45
 const MULTI_PUNCH_GAP := 0.36
-const REACH_RANGE_MUL := 1.28
+const REACH_RANGE_MUL := 1.0 + MOD_BOOST
 const REACH_RANGE_PER_RANK := 0.12
 const REACH_MAX_RANK := 8
 const REACH_FAR_CAST := 2.0
@@ -349,7 +357,7 @@ const HOMING_STEER_PER_RANK := 1.5
 const HOMING_RANGE_BASE := 8.0
 const HOMING_RANGE_PER_RANK := 3.0
 const HOMING_MAX_RANK := 6
-const BUBBLE_DAMAGE := 12.0
+const BUBBLE_DAMAGE := 1.0
 const BUBBLE_DAMAGE_PER_RANK := 5.0
 const BUBBLE_SIZE := 0.28
 const BUBBLE_SIZE_PER_RANK := 0.07
@@ -365,10 +373,10 @@ const MISSILE_HAT_INTERVAL := 2.5
 const MISSILE_HAT_INTERVAL_SHRINK := 0.22
 const MISSILE_HAT_DAMAGE := 14.0
 const MISSILE_HAT_DAMAGE_PER_RANK := 0.25
-const MISSILE_HAT_RANGE := 24.0
-const MISSILE_HAT_SPEED := 16.0
-const MISSILE_HAT_SIZE := 0.14
-const MISSILE_HAT_LINGER := 3.6
+const MISSILE_HAT_RANGE := 80.0
+const MISSILE_HAT_SPEED := 28.0
+const MISSILE_HAT_SIZE := 0.34
+const MISSILE_HAT_LINGER := 4.8
 const MISSILE_HAT_STEER := 11.0
 const MINE_HAT_INTERVAL := 3.2
 const MINE_HAT_INTERVAL_SHRINK := 0.18
@@ -386,13 +394,17 @@ const PHASE_CHANCE_MAX := 0.75
 const JUKE_HAT_DAMAGE := 16.0
 const JUKE_HAT_DAMAGE_PER_RANK := 0.30
 const JUKE_HAT_RADIUS := 1.15
-const FOOL_CAPE_MIN := 5.0
-const FOOL_CAPE_LIKELY := 20.0
-const FOOL_CAPE_MAX := 2500.0
-const FOOL_CAPE_CORE_CHANCE := 0.88
-const FOOL_CAPE_TAIL_POWER := 14.0
-const FOOL_CAPE_TRIES := 28
-const FOOL_CAPE_LOCK := 0.35
+const REPEATER_HAT_INTERVAL := 1.0
+const REPEATER_HAT_INTERVAL_SHRINK := 0.25
+const FOOL_HAT_MIN := 5.0
+const FOOL_HAT_LIKELY := 20.0
+const FOOL_HAT_MAX := 2500.0
+const FOOL_HAT_CORE_CHANCE := 0.88
+const FOOL_HAT_TAIL_POWER := 14.0
+const FOOL_HAT_TRIES := 28
+const FOOL_HAT_LOCK := 0.35
+const GOLD_CAPE_DURATION := 4.0
+const GOLD_CAPE_COOLDOWN := 32.0
 const BUBBLE_BEAM_SPACING := 4.0
 const BUBBLE_BEAM_ALONG_MIN := 3
 const BUBBLE_BEAM_ALONG_MAX := 6
@@ -407,7 +419,7 @@ const LINGER_SECONDS := 1.45
 const LINGER_SECONDS_PER_RANK := 0.35
 const LINGER_BEAM_MUL := 0.62
 const LINGER_RADIUS := 1.35
-const LINGER_DAMAGE := 8.0
+const LINGER_DAMAGE := 1.0
 const LINGER_SLOW_PER_RANK := 12.0
 const LINGER_SLOW_MAX := 72.0
 const LINGER_BEAM_SPACING := 2.0
@@ -437,17 +449,19 @@ const START_SITE_TITLE := "Tide Margin"
 const CITY_SITE_TITLE := "Neon Fjord"
 const CITY_CRESCENT_SITE_ID := "city_crescent"
 const CITY_CRESCENT_TITLE := "Crescent Market"
+const CITY_CRESCENT_PATCH := "Far Beacon 4 Northwest"
 const CITY_LEE_SITE_ID := "city_lee"
 const CITY_LEE_TITLE := "Lee Reach"
+const CITY_LEE_PATCH := "Wind Gap 4"
 const CITY_OUTPOST_METRES := 750.0
-const CITY_MAP_DELAY := 2.8
+const CITY_MAP_DELAY := 1.0
 const CRESCENT_VILLAGE := "res://assets/runtime/environment/crescent_market_village.glb"
 const START_ENTER_RADIUS := 100.0
 const TOWER_PATCH := "Far Beacon 4"
 const CASTLE_PATCH := "Long Shore 4"
 const GOBLIN_KINDS: PackedStringArray = ["gruk", "nix", "vex"]
-const GOBLIN_GARRISON := 64
-const GOBLIN_INTERIOR := 28
+const GOBLIN_GARRISON := 240
+const GOBLIN_INTERIOR := 96
 const GOBLIN_INNER_MIN := 12.0
 const GOBLIN_INNER_MAX := 46.0
 const GOBLIN_OUTER_MIN := 62.0
@@ -455,6 +469,25 @@ const GOBLIN_OUTER_MAX := 165.0
 const GOBLIN_STANDOFF := 20.0
 const GOBLIN_MORTAR_SPEED := 16.0
 const GOBLIN_GOLDEN := 2.399963229728653
+## Approach the seated castle and the whole preseeded horde wakes.
+const GOBLIN_WAKE_RANGE := 180.0
+## Instantiates after the wake so hundreds appear as one wave.
+const GOBLIN_SPAWN_BURST := 36
+## Keep around Stormwatch. Wider than the garrison ring so patch combos
+## never field under the goblins, and so a following pack despawns before
+## it spends think tokens on the courtyard.
+const CASTLE_KEEP_RANGE := 200.0
+## Meridian Tower interior, in monument-local metres. Wider than the
+## 100 m footprint so the lobby doors still count as inside.
+const OFFICE_KEEP_X := 48.0
+const OFFICE_KEEP_Z := 52.0
+const OFFICE_KEEP_Y_MIN := -2.0
+const OFFICE_KEEP_Y_MAX := 48.0
+const PATCH_COMBO_WILD := "wild"
+const PATCH_COMBO_DEMON := "demon"
+const PATCH_COMBO_GOBLIN := "goblin"
+const PATCH_COMBO_ROBOT := "robot"
+const PATCH_COMBO_ALIEN := "alien"
 const CITY_RING_PUSH := 420.0
 const CITY_RING_RADIUS := 96.0
 const CITY_RING_HEIGHT := 110.0
@@ -476,9 +509,21 @@ const WILD_KINDS: PackedStringArray = ["ranger", "rammer", "rhino"]
 const START_NEAR_KINDS: PackedStringArray = ["ranger", "rhino"]
 const START_FAR_KINDS: PackedStringArray = ["ranger", "rhino", "rammer"]
 const DEMON_KINDS: PackedStringArray = ["gloam", "vesper", "threnody"]
+const ROBOT_KINDS: PackedStringArray = ["kestrel", "bastion", "weaver"]
+const ALIEN_KINDS: PackedStringArray = ["scout", "gray", "tanglemaw"]
+const SCOUT_AIM := 0.55
+const GRAY_AIM := 0.7
+const GRAY_SHOT_SPEED := 7.0
+const GRAY_HOMING := 2.4
+const TANGLEMAW_BITE_REACH := 1.8
+const TANGLEMAW_BITE := 0.5
+const TANGLEMAW_SLOW := 1.0
+const DEMON_START_PATCH := CITY_PATCH
+const DEMON_START_SE_PATCH := "Quiet Inlet 4 Southeast"
 ## Local keep around Stormwatch and Meridian Tower. The Voronoi cells stay
-## neighbourhood-scale so Tide Margin 4 keeps its name; demons only field
-## inside this ring, not across the whole castle or office tile.
+## neighbourhood-scale so Wind Gap 4 keeps its name; later demons only
+## field inside this ring, not across the whole castle or office tile.
+## The first packs start on Quiet Inlet 4 and Quiet Inlet 4 Southeast.
 const DEMON_SITE_RANGE := 380.0
 const START_NEAR_RANGE := 80.0
 const START_HEALTH_SCALE := 0.1
@@ -488,16 +533,25 @@ const KIND_CAP_BASE := {
 	"rhino": 9,
 	"rammer": 9,
 	"rift_hulk": 1,
-	"gloam": 12,
+	"gloam": 32,
 	"vesper": 5,
 	"threnody": 1,
+	"kestrel": 11,
+	"bastion": 20,
+	"weaver": 26,
+	"scout": 8,
+	"gray": 14,
+	"tanglemaw": 36,
 }
 const GLOAM_BITE_REACH := 1.9
-const GLOAM_BITE_SECONDS := 0.55
+const GLOAM_BITE_SECONDS := 0.48
 const GLOAM_FLEE_GAP := 14.0
-const GLOAM_AIR_MATCH := 1.05
-const GLOAM_LAND_GAP := 8.5
-const GLOAM_FLOCK := 4
+const GLOAM_AIR_MATCH := 1.08
+const GLOAM_LAND_GAP := 10.0
+const GLOAM_CUT_SIDE := 2.2
+const GLOAM_RUN_SPEED := 8.0
+const GLOAM_FLOCK := 8
+const TANGLEMAW_FLOCK := 6
 const VESPER_STANDOFF_MIN := 22.0
 const VESPER_STANDOFF_MAX := 38.0
 const VESPER_ENGAGE_MIN := 18.0
@@ -531,6 +585,24 @@ const START_RING_STEP := TAU * 0.381966
 const SPAWN_LEAD_SPEED := 16.0
 const SPAWN_LEAD_PACK := 6
 const SPAWN_LEAD_KIND := 3
+## Homes dripped around the player each stream tick once the local pack
+## is below [constant LIVE_AROUND]. Patch-enter still queues the roster.
+const RING_FILL_PER_TICK := 3
+const BASTION_CLEAR := 15.0
+const BASTION_GRID := 11.0
+const BASTION_NEAR := 18.0
+const BASTION_FAR := 46.0
+const BASTION_FILL := 6
+const BASTION_LOFT := 0.72
+const BASTION_GRAVITY := 32.0
+## Cheap horde separation: distance checks, not physics colliders.
+const HORDE_SEPARATION := 3.4
+const HORDE_SEPARATION_PUSH := 5.0
+const HORDE_SEPARATION_CAP := 10.0
+const HORDE_CELL := 4.0
+## One in twelve field homes arrives already hunting. Serials 0 and 1
+## stay calm so tests and the first pad bodies do not pop agroed.
+const SPAWN_AGRO_EVERY := 12
 const MOB_LOD_COLD := 0
 const MOB_LOD_WARM := 1
 const MOB_LOD_HOT := 2
@@ -539,8 +611,9 @@ const MOB_LOD_WARM_RANGE := 160.0
 const MOB_THINK_BUDGET := 14
 const MOB_ATTACK_BUDGET := 3
 const MOB_SPAWN_BUILD := 2
-const MOB_SPAWN_QUEUE := 48
+const MOB_SPAWN_QUEUE := 384
 const MOB_COLD_STRIDE := 8
+const MOB_WARM_STRIDE := 2
 const KILL_COOLDOWN := 5.0
 const KILL_RADIUS := 34.0
 const KILL_REFILL := 3.5
@@ -556,6 +629,12 @@ const DEAGRO_RANGE := 110.0
 const IDLE_DESPAWN := 7.5
 const CITY_SAFE_PAD := 48.0
 const CITY_ENTER_RADIUS := CITY_RING_RADIUS + CITY_SAFE_PAD
+## Cities, castles, and offices keep this circle clear of flora. Patch
+## mobs despawn in the same circle; coop cities wait until every player
+## is inside. The teleporter is flora-only at 1 m and never culls packs.
+## Field packs still ignore a player standing on the teleporter deck.
+const SITE_CLEAR_RADIUS := 100.0
+const START_FLORA_RADIUS := 1.0
 const PERCEPTION := 120.0
 const PATROL_RADIUS := 72.0
 const RANGER_STANDOFF_MIN := 24.0
@@ -605,19 +684,110 @@ const CITY_DESTROY_RATIO := 0.6
 const CITY_INFLUENCE_METRES := 560.0
 const CITY_WAYPOINT_GROUP := &"crawler_city_waypoint"
 const SITE_GROUP := &"crawler_sites"
+## Level 1 cities stay sunflower yellow; later tiles walk toward a bright red.
+const CITY_WAYPOINT_YELLOW := Color("f7d23b")
+const CITY_WAYPOINT_RED := Color("ff2418")
+const CITY_WAYPOINT_LEVEL_MAX := 8
+const OFFICE_WAYPOINT_TINT := Color("3d8cff")
+const CASTLE_WAYPOINT_TINT := Color("6a1016")
+const BOSS_WAYPOINT_TINT := Color("3d0a4a")
+const BOSS_SITE_RADIUS := 100.0
+const TREE_BATTLE_RADIUS := 50.0
+const TREE_FLORA_CLEAR := 1.0
+const BOSS_ENCOUNTER_EMPTY := "empty"
+const BOSS_ENCOUNTER_TREE := "tree"
+const NETWORK_PLAYERS := &"network_players"
+## Living teammate hold-E revive. The body stays where it fell.
+const REVIVE_HOLD := 1.6
+const REVIVE_REACH := 3.2
 
 
 ## Neon Fjord is the opening destination: tilde can name it from the first
 ## frame, and the spawn reveal points the player at it before tilde is needed.
-## Spawn, monuments, and later cities wait until the player walks in.
+## Tide Margin and later cities wait until the first city is entered.
 static func starts_visible(site_id: String) -> bool:
+	if CrawlerRun.active():
+		return site_id == CITY_SITE_ID or site_id == CrawlerRun.first_city_id()
 	return site_id == CITY_SITE_ID
 
 
+## Diamond colour for a crawler mark. Cities heat from yellow to bright red
+## with tile level; offices stay blue, castles stay dark red, and bosses
+## stay dark purple.
+static func crawler_waypoint_tint(landmark: Landmark) -> Color:
+	if landmark is PatchMonument:
+		var monument_id := (landmark as PatchMonument).monument_id
+		if is_boss_id(monument_id):
+			return BOSS_WAYPOINT_TINT
+		if is_castle_id(monument_id):
+			return CASTLE_WAYPOINT_TINT
+		if is_office_id(monument_id):
+			return OFFICE_WAYPOINT_TINT
+	return city_waypoint_tint(city_waypoint_level(landmark))
+
+
+static func apply_crawler_waypoint_tint(landmark: Landmark) -> Color:
+	var tint := crawler_waypoint_tint(landmark)
+	if landmark != null:
+		landmark.tint = tint
+	return tint
+
+
+static func city_waypoint_tint(level: int) -> Color:
+	var span := maxf(float(CITY_WAYPOINT_LEVEL_MAX - 1), 1.0)
+	var rank := clampf(float(maxi(level, 1) - 1) / span, 0.0, 1.0)
+	return CITY_WAYPOINT_YELLOW.lerp(CITY_WAYPOINT_RED, rank)
+
+
+static func city_waypoint_level(landmark: Landmark) -> int:
+	var site_id := _waypoint_site_id(landmark)
+	if site_id == START_SITE_ID or site_id == CITY_SITE_ID or is_first_city(site_id):
+		return 1
+	var facing := _waypoint_dir(landmark)
+	if facing.length_squared() < 0.25:
+		return 1
+	if CrawlerRun.active():
+		return CrawlerRun.level_at_dir(facing)
+	return maxi(field_mob_level(city_direction(), facing), 1)
+
+
+static func _waypoint_site_id(landmark: Landmark) -> String:
+	if landmark is CrawlerSite:
+		return (landmark as CrawlerSite).site_id
+	if landmark is PatchMonument:
+		return (landmark as PatchMonument).monument_id
+	if landmark == null:
+		return ""
+	var host := landmark.get_parent()
+	if host is CrawlerCityRing:
+		return (host as CrawlerCityRing).site_id
+	return ""
+
+
+static func _waypoint_dir(landmark: Landmark) -> Vector3:
+	if landmark == null:
+		return Vector3.ZERO
+	if landmark.is_inside_tree() and landmark.global_position.length_squared() > 1.0:
+		return landmark.global_position.normalized()
+	if landmark.direction.length_squared() > 0.25:
+		return landmark.direction.normalized()
+	return Vector3.ZERO
+
+
 static func later_city_ids() -> PackedStringArray:
+	if CrawlerRun.active():
+		return CrawlerRun.later_city_ids()
 	var ids: PackedStringArray = []
 	ids.append(CITY_CRESCENT_SITE_ID)
 	ids.append(CITY_LEE_SITE_ID)
+	return ids
+
+
+static func first_city_map_ids() -> PackedStringArray:
+	var ids: PackedStringArray = []
+	ids.append(START_SITE_ID)
+	for id: String in later_city_ids():
+		ids.append(id)
 	return ids
 
 
@@ -683,6 +853,9 @@ static func _tangent_at(origin: Vector3, toward: Vector3) -> Vector3:
 
 static func is_first_city(city_key: String) -> bool:
 	var clean := city_key.strip_edges()
+	if CrawlerRun.active() and (clean == CrawlerRun.first_city_id() \
+			or clean == CITY_SITE_ID or clean.is_empty()):
+		return true
 	if clean.is_empty() or clean == CITY_SITE_ID:
 		return true
 	if NetworkManager == null:
@@ -703,10 +876,18 @@ static func direction_from_plate(latitude_deg: float, longitude_deg: float) -> V
 
 
 static func spawn_direction() -> Vector3:
+	if CrawlerRun.active():
+		var at := CrawlerRun.spawn_direction()
+		if at.length_squared() > 0.25:
+			return at
 	return direction_from_plate(SPAWN_LATITUDE_DEG, SPAWN_LONGITUDE_DEG)
 
 
 static func city_direction() -> Vector3:
+	if CrawlerRun.active():
+		var at := CrawlerRun.city_direction()
+		if at.length_squared() > 0.25:
+			return at
 	return direction_from_plate(CITY_LATITUDE_DEG, CITY_LONGITUDE_DEG)
 
 
@@ -736,11 +917,86 @@ static func coop() -> bool:
 	return NetworkManager != null and not NetworkManager.is_single_player
 
 
+## Every crawler body in the tree is down. An empty tree is not a wipe.
+static func crawler_party_wiped() -> bool:
+	var living := 0
+	var counted := 0
+	for player_variant: Variant in crawler_party():
+		var player := player_variant as Node
+		counted += 1
+		if player != null and player.has_method(&"is_dead") \
+				and not bool(player.call(&"is_dead")):
+			living += 1
+	return counted > 0 and living == 0
+
+
+static func crawler_has_respawn_ticket() -> bool:
+	if int(CrawlerProgress.session_payload.get("tickets", 0)) > 0:
+		return true
+	for player_variant: Variant in crawler_party():
+		var player := player_variant as Node
+		if player == null:
+			continue
+		var progress: Variant = player.get("crawler_progress")
+		if progress != null and progress.has_method(&"has_respawn_ticket") \
+				and bool(progress.call(&"has_respawn_ticket")):
+			return true
+	return false
+
+
+static func crawler_party() -> Array:
+	var out: Array = []
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return out
+	for node_variant: Variant in tree.get_nodes_in_group(NETWORK_PLAYERS):
+		var player := node_variant as Node
+		if player == null or not is_instance_valid(player):
+			continue
+		if player.has_method(&"is_training_enemy") \
+				and bool(player.call(&"is_training_enemy")):
+			continue
+		if not player.has_method(&"is_dead"):
+			continue
+		out.append(player)
+	return out
+
+
+## Closest downed teammate in revive reach, or null.
+static func nearest_downed_teammate(from: Node3D) -> Node3D:
+	if from == null or not active() or not coop():
+		return null
+	if duel_active() or training_active():
+		return null
+	var best: Node3D = null
+	var best_d := REVIVE_REACH
+	var origin := from.global_position
+	for player_variant: Variant in crawler_party():
+		var player := player_variant as Node3D
+		if player == null or player == from:
+			continue
+		if not player.has_method(&"is_dead") or not bool(player.call(&"is_dead")):
+			continue
+		var gap := origin.distance_to(player.global_position)
+		if gap <= best_d:
+			best_d = gap
+			best = player
+	return best
+
+
 static func duel_active() -> bool:
 	if NetworkManager == null or NetworkManager.active_world == null:
 		return false
 	var world := NetworkManager.active_world
 	return world.has_method(&"duel_active") and bool(world.call(&"duel_active"))
+
+
+static func training_active() -> bool:
+	if NetworkManager == null or NetworkManager.active_world == null:
+		return false
+	var world := NetworkManager.active_world
+	return world.has_method(&"training_active") \
+		and bool(world.call(&"training_active"))
 
 
 static func sandbox_no_mobs() -> bool:
@@ -806,13 +1062,13 @@ static func ability_slots() -> int:
 
 ## Most hops land in 5–20 m. Past that the leftover chance decays hard toward
 ## zero, so a 2500 m throw is possible and almost never happens.
-static func fool_cape_distance(rng: RandomNumberGenerator) -> float:
+static func fool_hat_distance(rng: RandomNumberGenerator) -> float:
 	if rng == null:
-		return FOOL_CAPE_MIN
-	if rng.randf() < FOOL_CAPE_CORE_CHANCE:
-		return rng.randf_range(FOOL_CAPE_MIN, FOOL_CAPE_LIKELY)
-	var tail := pow(rng.randf(), FOOL_CAPE_TAIL_POWER)
-	return FOOL_CAPE_LIKELY + (FOOL_CAPE_MAX - FOOL_CAPE_LIKELY) * tail
+		return FOOL_HAT_MIN
+	if rng.randf() < FOOL_HAT_CORE_CHANCE:
+		return rng.randf_range(FOOL_HAT_MIN, FOOL_HAT_LIKELY)
+	var tail := pow(rng.randf(), FOOL_HAT_TAIL_POWER)
+	return FOOL_HAT_LIKELY + (FOOL_HAT_MAX - FOOL_HAT_LIKELY) * tail
 
 
 static func ability_enabled(id: String) -> bool:
@@ -907,11 +1163,11 @@ static func wall_start_stats() -> Dictionary:
 
 
 static func wall_project_speed(rank: int) -> float:
-	return WALL_PROJECT_SPEED * float(maxi(rank, 0))
+	return WALL_PROJECT_SPEED * upgrade_steps(rank)
 
 
 static func wall_firewall_damage(rank: int) -> float:
-	return WALL_FIRE_DAMAGE * float(maxi(rank, 0))
+	return WALL_FIRE_DAMAGE * upgrade_steps(rank)
 
 
 static func meteor_start_stats() -> Dictionary:
@@ -1150,9 +1406,47 @@ static func display_stats_for(catalog_id: String) -> PackedStringArray:
 	return PackedStringArray()
 
 
+## Shop rank 1 is +5%. Each later rank doubles that bonus: 10%, 20%, 40%...
+static func upgrade_steps(rank: int) -> float:
+	if rank <= 0:
+		return 0.0
+	return float(1 << mini(rank - 1, UPGRADE_BOOST_SHIFT_MAX))
+
+
+static func upgrade_boost(rank: int) -> float:
+	return UPGRADE_BOOST * upgrade_steps(rank)
+
+
+static func upgrade_boost_f(rank: float) -> float:
+	if rank <= 0.0:
+		return 0.0
+	return UPGRADE_BOOST * pow(2.0, minf(rank - 1.0, float(UPGRADE_BOOST_SHIFT_MAX)))
+
+
+static func upgrade_scale(rank: int) -> float:
+	return 1.0 + upgrade_boost(rank)
+
+
+static func upgrade_scale_f(rank: float) -> float:
+	return 1.0 + upgrade_boost_f(rank)
+
+
+static func scaled_stat(base: float, rank: int) -> float:
+	return base * upgrade_scale(rank)
+
+
+## Mods that multiply a host stat start at +25%. Shop ranks add the usual
+## 5%, 10%, 20%... on top of that 25%.
+static func mod_boost(rank: int) -> float:
+	return MOD_BOOST + upgrade_boost(rank)
+
+
+static func mod_scale(rank: int) -> float:
+	return 1.0 + mod_boost(rank)
+
+
 static func big_size_scale(rank: int) -> float:
-	var clamped := clampi(rank, 0, BIG_SIZE_MAX_RANK)
-	return BIG_SIZE_BASE * pow(BIG_SIZE_GROWTH, float(clamped))
+	return mod_scale(rank)
 
 
 static func upgrade_max_rank(catalog_id: String, stat_id: String) -> int:
@@ -1184,6 +1478,17 @@ static func upgrade_max_rank(catalog_id: String, stat_id: String) -> int:
 	if catalog_id == "teleport" and stat_id == "swap":
 		return TELEPORT_SWAP_MAX
 	return 0
+
+
+## Infinite stores drop the usual rank ceiling so a stat can keep going.
+## Slots stay capped because they are seats, not a scaling stat.
+static func upgrade_at_cap(
+		catalog_id: String, stat_id: String, rank: int, unlimited := false
+	) -> bool:
+	if unlimited and stat_id != "slots":
+		return false
+	var cap := upgrade_max_rank(catalog_id, stat_id)
+	return cap > 0 and rank >= cap
 
 
 static func format_mul(mul: float) -> String:
@@ -1276,6 +1581,7 @@ static func light_bolt_start_stats() -> Dictionary:
 	return {
 		"damage": LIGHT_BOLT_DAMAGE,
 		"impact": LIGHT_BOLT_IMPACT,
+		"player_damage": LIGHT_BOLT_PLAYER_DAMAGE,
 		"speed": LIGHT_BOLT_SPEED,
 		"range": LIGHT_BOLT_RANGE,
 		"size": 1.0,
@@ -1338,39 +1644,31 @@ static func fus_start_stats() -> Dictionary:
 
 
 static func clip_ammo_mul(rank: int) -> int:
-	return CLIP_BASE_MUL + clampi(rank, 0, CLIP_MAX_RANK)
+	return CLIP_BASE_MUL + maxi(rank, 0)
 
 
 static func multi_shots(rank: int) -> int:
-	return clampi(
-		MULTI_SHOTS_BASE + clampi(rank, 0, MULTI_MAX_RANK),
-		MULTI_SHOTS_BASE, MULTI_SHOTS_MAX)
+	return MULTI_SHOTS_BASE + maxi(rank, 0)
 
 
 static func reach_range_mul(rank: int) -> float:
-	return REACH_RANGE_MUL + REACH_RANGE_PER_RANK \
-		* float(clampi(rank, 0, REACH_MAX_RANK))
+	return mod_scale(rank)
 
 
 static func far_cast_meters(rank: int) -> float:
-	return REACH_FAR_CAST + REACH_FAR_CAST_PER_RANK \
-		* float(clampi(rank, 0, REACH_MAX_RANK))
+	return REACH_FAR_CAST * upgrade_scale(maxi(rank, 0))
 
 
 static func bounce_count(rank: int) -> int:
-	return clampi(
-		BOUNCE_BASE + clampi(rank, 0, BOUNCE_MAX_RANK),
-		BOUNCE_BASE, BOUNCE_MAX)
+	return BOUNCE_BASE + maxi(rank, 0)
 
 
 static func homing_steer(rank: int) -> float:
-	return HOMING_STEER_BASE + HOMING_STEER_PER_RANK \
-		* float(clampi(rank, 0, HOMING_MAX_RANK))
+	return HOMING_STEER_BASE * upgrade_scale(maxi(rank, 0))
 
 
 static func homing_range(rank: int) -> float:
-	return HOMING_RANGE_BASE + HOMING_RANGE_PER_RANK \
-		* float(clampi(rank, 0, HOMING_MAX_RANK))
+	return HOMING_RANGE_BASE * upgrade_scale(maxi(rank, 0))
 
 
 static func is_roar_ability(catalog_id: String) -> bool:
@@ -1493,7 +1791,7 @@ static func upgrade_stat_title(stat_id: String, catalog_id := "") -> String:
 			return "Particle Speed" if is_particle_ability(catalog_id) \
 				or catalog_id == "bubble" else "Speed"
 		"cold":
-			return "Cold"
+			return "Slow"
 		"swap":
 			return "Swap"
 		"size":
@@ -1509,7 +1807,7 @@ static func upgrade_stat_title(stat_id: String, catalog_id := "") -> String:
 		"toxic":
 			return "Toxic"
 		"freeze":
-			return "Freeze"
+			return "Slow" if catalog_id == "ice" else "Freeze"
 		"charm":
 			return "Charm"
 		"wobble":
@@ -1544,7 +1842,7 @@ static func upgrade_stat_blurb(catalog_id: String, stat_id: String) -> String:
 	if catalog_id == "wobble":
 		return "Stronger wave. Wider spray, less damage on a tight point."
 	if catalog_id == "big":
-		return "Exponential size. Starts at %s and reaches %s at level %d." % [
+		return "Size starts at %s. Shop ranks add 5%%, 10%%, 20%%... on top of that 25%%, up to %s at level %d." % [
 			format_mul(big_size_scale(0)),
 			format_mul(big_size_scale(BIG_SIZE_MAX_RANK)),
 			BIG_SIZE_MAX_RANK,
@@ -1600,7 +1898,7 @@ static func upgrade_stat_blurb(catalog_id: String, stat_id: String) -> String:
 	if catalog_id == "charm":
 		return "Charms enemies this attack hits. Two cards last longer, and it scales with Elemental."
 	if catalog_id == "ice":
-		return "Freezes what this attack hits. On a field it also slows bodies and shots inside."
+		return "Slows what this attack hits. On a field it also slows bodies and shots inside."
 	if catalog_id == "clip":
 		return "Starts at %s shots. Upgrade to %s, then %s." % [
 			format_mul(float(clip_ammo_mul(0))),
@@ -1629,7 +1927,7 @@ static func upgrade_stat_blurb(catalog_id: String, stat_id: String) -> String:
 	if catalog_id == "reach":
 		match stat_id:
 			"range":
-				return "Beams and shots travel farther. Starts at %s and reaches %s at level %d." % [
+				return "Beams and shots travel farther. Starts at %s. Shop ranks add 5%%, 10%%, 20%%... on top of that 25%%, up to %s at level %d." % [
 					format_mul(reach_range_mul(0)),
 					format_mul(reach_range_mul(REACH_MAX_RANK)),
 					REACH_MAX_RANK,
@@ -1731,7 +2029,7 @@ static func upgrade_stat_blurb(catalog_id: String, stat_id: String) -> String:
 			"speed":
 				return "The icicles fly faster."
 			"cold":
-				return "Colder bite. Longer freeze, more frost damage, and a wider snow burst."
+				return "Colder bite. Longer slow, more frost damage, and a wider snow burst."
 			"slots":
 				return "One more modifier seat."
 			_:
@@ -1933,61 +2231,231 @@ static func safe_patch(_name: String) -> bool:
 
 
 static func start_patch(name: String) -> bool:
+	if CrawlerRun.active():
+		return CrawlerRun.is_start_patch(name)
 	var clean := name.strip_edges()
 	return clean == START_PATCH or clean.begins_with(START_PATCH + " ")
 
 
 static func city_patch(name: String) -> bool:
 	var clean := name.strip_edges()
-	return clean == CITY_PATCH or clean.begins_with(CITY_PATCH + " ")
+	if clean == CITY_PATCH or clean.begins_with(CITY_PATCH + " "):
+		return true
+	if clean == CITY_CRESCENT_PATCH \
+			or clean.begins_with(CITY_CRESCENT_PATCH + " "):
+		return true
+	return clean == CITY_LEE_PATCH or clean.begins_with(CITY_LEE_PATCH + " ")
 
 
 static func opening_route_patch(name: String) -> bool:
 	var clean := name.strip_edges()
-	return clean == "Tide Margin" or clean.begins_with("Tide Margin ") \
+	return clean == START_PATCH or clean.begins_with(START_PATCH + " ") \
 		or clean == "Quiet Inlet" or clean.begins_with("Quiet Inlet ")
 
 
-static func demon_grounds(name: String) -> bool:
+static func demon_start_grounds(name: String) -> bool:
 	var clean := name.strip_edges()
-	return clean == CASTLE_PATCH or clean == TOWER_PATCH \
-		or clean.begins_with(CASTLE_PATCH + " ") \
-		or clean.begins_with(TOWER_PATCH + " ")
+	if clean == DEMON_START_PATCH:
+		return true
+	return clean == DEMON_START_SE_PATCH \
+		or clean.begins_with(DEMON_START_SE_PATCH + " ")
+
+
+static func castle_grounds(name: String) -> bool:
+	var clean := name.strip_edges()
+	return clean == CASTLE_PATCH or clean.begins_with(CASTLE_PATCH + " ")
+
+
+static func demon_grounds(name: String) -> bool:
+	return demon_start_grounds(name)
+
+
+static func robot_grounds(name: String) -> bool:
+	var clean := name.strip_edges()
+	return clean == TOWER_PATCH or clean.begins_with(TOWER_PATCH + " ")
+
+
+static func patch_combo(name: String) -> String:
+	if CrawlerRun.active():
+		return CrawlerRun.combo_for_patch(name)
+	if castle_grounds(name):
+		return PATCH_COMBO_GOBLIN
+	if robot_grounds(name):
+		return PATCH_COMBO_ROBOT
+	if demon_grounds(name):
+		return PATCH_COMBO_DEMON
+	return PATCH_COMBO_WILD
 
 
 static func is_demon_kind(kind: String) -> bool:
 	return DEMON_KINDS.has(kind.strip_edges())
 
 
+static func is_robot_kind(kind: String) -> bool:
+	return ROBOT_KINDS.has(kind.strip_edges())
+
+
+static func is_alien_kind(kind: String) -> bool:
+	return ALIEN_KINDS.has(kind.strip_edges())
+
+
+static func is_castle_id(monument_id: String) -> bool:
+	var clean := monument_id.strip_edges()
+	return clean == CrawlerProgress.QUEST_CASTLE or clean.begins_with("castle")
+
+
+static func is_office_id(monument_id: String) -> bool:
+	var clean := monument_id.strip_edges()
+	return clean == CrawlerProgress.QUEST_TOWER or clean.begins_with("office")
+
+
+static func is_boss_id(monument_id: String) -> bool:
+	var clean := monument_id.strip_edges()
+	return clean == CrawlerProgress.QUEST_BOSS or clean.begins_with("boss")
+
+
+static func in_site_clear(
+		center: Vector3,
+		at: Vector3,
+		radius := SITE_CLEAR_RADIUS
+	) -> bool:
+	return center.is_finite() and at.is_finite() \
+		and center.distance_squared_to(at) <= radius * radius
+
+
+static func all_players_inside_city(players: Array, ring: CrawlerCityRing) -> bool:
+	if ring == null or players.is_empty():
+		return false
+	for item: Variant in players:
+		var player := item as Node3D
+		if player == null or not is_instance_valid(player) \
+				or not ring.contains_player(player):
+			return false
+	return true
+
+
+static func in_office_site_clear(at: Vector3) -> bool:
+	if not at.is_finite():
+		return false
+	for site in _monuments():
+		if is_office_id(site.monument_id) \
+				and in_site_clear(site.global_position, at):
+			return true
+	return false
+
+
+static func castle_keep_center() -> Vector3:
+	var castle := _nearest_monument("", true, false)
+	if castle == null:
+		return Vector3.INF
+	return castle.global_position
+
+
+static func in_castle_keep(at: Vector3) -> bool:
+	if not at.is_finite():
+		return false
+	for site in _monuments():
+		if is_castle_id(site.monument_id) \
+				and at.distance_to(site.global_position) <= CASTLE_KEEP_RANGE:
+			return true
+	return false
+
+
+static func office_tower_center() -> Vector3:
+	var tower := _nearest_monument("", false, true)
+	if tower == null:
+		return Vector3.INF
+	return tower.global_position
+
+
+static func in_office_tower(at: Vector3, pad := 0.0) -> bool:
+	if not at.is_finite():
+		return false
+	for site in _monuments():
+		if not is_office_id(site.monument_id):
+			continue
+		var local := site.to_local(at)
+		var grow := maxf(pad, 0.0)
+		if absf(local.x) <= OFFICE_KEEP_X + grow \
+				and absf(local.z) <= OFFICE_KEEP_Z + grow \
+				and local.y >= OFFICE_KEEP_Y_MIN - grow \
+				and local.y <= OFFICE_KEEP_Y_MAX + grow:
+			return true
+	return false
+
+
+static func _monuments() -> Array[PatchMonument]:
+	var found: Array[PatchMonument] = []
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return found
+	for node_variant: Variant in tree.get_nodes_in_group(PatchMonument.KEEP_GROUP):
+		var site := node_variant as PatchMonument
+		if site != null:
+			found.append(site)
+	return found
+
+
+static func _nearest_monument(from_id: String, castle: bool, office: bool) -> PatchMonument:
+	if not from_id.is_empty():
+		var exact := PatchMonument.find_id(from_id)
+		if exact != null:
+			return exact
+	for site in _monuments():
+		if castle and is_castle_id(site.monument_id):
+			return site
+		if office and is_office_id(site.monument_id):
+			return site
+	return null
+
+
 static func near_demon_site(at: Vector3) -> bool:
 	if not at.is_finite():
 		return false
-	var castle := PatchMonument.find_id(CrawlerProgress.QUEST_CASTLE)
-	if castle != null and at.distance_to(castle.global_position) <= DEMON_SITE_RANGE:
-		return true
 	var tower := PatchMonument.find_id(CrawlerProgress.QUEST_TOWER)
 	return tower != null and at.distance_to(tower.global_position) <= DEMON_SITE_RANGE
 
 
 static func demon_sites_ready() -> bool:
-	return PatchMonument.find_id(CrawlerProgress.QUEST_CASTLE) != null \
-		or PatchMonument.find_id(CrawlerProgress.QUEST_TOWER) != null
+	return PatchMonument.find_id(CrawlerProgress.QUEST_TOWER) != null
 
 
-static func can_field_demons(patch_name: String, at := Vector3.INF) -> bool:
-	if reserved_patch(patch_name) or opening_route_patch(patch_name) \
-			or not demon_grounds(patch_name):
+static func can_field_demons(patch_name: String, _at := Vector3.INF) -> bool:
+	if CrawlerRun.active():
+		return patch_combo(patch_name) == PATCH_COMBO_DEMON
+	return demon_grounds(patch_name)
+
+
+static func combo_allows_kind(combo: String, kind: String) -> bool:
+	var clean := kind.strip_edges()
+	if clean.is_empty() or is_goblin_kind(clean):
 		return false
-	if not at.is_finite() or not demon_sites_ready():
-		return true
-	return near_demon_site(at)
+	match combo:
+		PATCH_COMBO_GOBLIN:
+			return false
+		PATCH_COMBO_DEMON:
+			return is_demon_kind(clean)
+		PATCH_COMBO_ROBOT:
+			return is_robot_kind(clean)
+		PATCH_COMBO_ALIEN:
+			return is_alien_kind(clean)
+		_:
+			return not is_demon_kind(clean) and not is_robot_kind(clean) \
+				and not is_alien_kind(clean)
+
+
+static func same_patch_combo(left: String, right: String) -> bool:
+	return patch_combo(left) == patch_combo(right)
 
 
 static func field_kinds(patch_name: String, from_start := -1.0,
 		at := Vector3.INF) -> PackedStringArray:
+	if in_castle_keep(at) or patch_combo(patch_name) == PATCH_COMBO_GOBLIN:
+		return PackedStringArray()
+	var combo := patch_combo(patch_name)
 	var kinds := PackedStringArray()
 	for kind: String in _recipe_kinds(patch_name, from_start):
-		if is_demon_kind(kind) and not can_field_demons(patch_name, at):
+		if not combo_allows_kind(combo, kind):
 			continue
 		kinds.append(kind)
 	return kinds
@@ -1996,7 +2464,7 @@ static func field_kinds(patch_name: String, from_start := -1.0,
 static func patch_recipe(patch_key: Variant = "", from_start := -1.0) -> Dictionary:
 	var name := _recipe_name(patch_key)
 	var kinds := CrawlerMobs.kinds_for(name, from_start)
-	if kinds.is_empty():
+	if kinds.is_empty() and patch_combo(name) == PATCH_COMBO_WILD:
 		kinds = START_FAR_KINDS if start_patch(name) \
 				and from_start > START_NEAR_RANGE else (
 			START_NEAR_KINDS if start_patch(name) else WILD_KINDS)
@@ -2026,6 +2494,24 @@ static func pack_limit(kinds: PackedStringArray, level: int) -> int:
 	return maxi(total, 0)
 
 
+static func think_budget_for(chasing: int) -> int:
+	if chasing >= 40:
+		return 4
+	if chasing >= 16:
+		return 6
+	if chasing >= 8:
+		return 8
+	return MOB_THINK_BUDGET
+
+
+static func attack_budget_for(chasing: int) -> int:
+	if chasing >= 24:
+		return 1
+	if chasing >= 8:
+		return 2
+	return MOB_ATTACK_BUDGET
+
+
 static func is_goblin_kind(kind: String) -> bool:
 	return GOBLIN_KINDS.has(kind.strip_edges())
 
@@ -2051,17 +2537,30 @@ static func goblin_garrison_reach(index: int) -> float:
 
 
 static func flies(kind: String) -> bool:
-	return kind == "ranger" or kind == "rammer" or is_demon_kind(kind)
+	return kind == "ranger" or kind == "rammer" or kind == "kestrel" \
+		or kind == "scout" or is_demon_kind(kind)
 
 
 static func spawn_weight(kind: String) -> int:
 	match kind:
 		"gloam":
-			return 8
+			return 18
 		"vesper":
 			return 2
 		"threnody":
 			return 1
+		"bastion":
+			return 1
+		"kestrel":
+			return 5
+		"weaver":
+			return 18
+		"tanglemaw":
+			return 18
+		"gray":
+			return 6
+		"scout":
+			return 4
 		_:
 			return 3
 
@@ -2166,6 +2665,10 @@ static func rammer_launch_point(from: Vector3, look: Vector3, up: Vector3,
 
 static func rhino_running(player_speed: float) -> bool:
 	return maxf(player_speed, 0.0) >= RHINO_RUN_SPEED
+
+
+static func gloam_running(player_speed: float) -> bool:
+	return maxf(player_speed, 0.0) >= GLOAM_RUN_SPEED
 
 
 static func rhino_chase_speed(player_speed: float, level: int, urgent := false) -> float:
@@ -2372,8 +2875,21 @@ static func _spawn_rise(up: Vector3, at: Vector3) -> Vector3:
 	return Vector3.UP
 
 
-static func spawn_is_agro(_serial: int) -> bool:
-	return false
+static func spawn_is_agro(serial: int) -> bool:
+	return serial > 1 and posmod(serial, SPAWN_AGRO_EVERY) == 0
+
+
+static func bastion_keepout(at: Vector3, player_at: Vector3, up := Vector3.ZERO) -> bool:
+	if not at.is_finite() or not player_at.is_finite():
+		return true
+	return _flat_span(at, player_at, _spawn_rise(up, player_at)) < BASTION_CLEAR
+
+
+static func bastion_in_grid(at: Vector3, player_at: Vector3, up := Vector3.ZERO) -> bool:
+	if not at.is_finite() or not player_at.is_finite():
+		return false
+	var span := _flat_span(at, player_at, _spawn_rise(up, player_at))
+	return span >= BASTION_CLEAR and span <= BASTION_FAR
 
 
 static func should_agro(distance: float) -> bool:
@@ -2397,6 +2913,8 @@ static func patch_level(from_dir: Vector3, patch_dir: Vector3) -> int:
 ## Field difficulty for a tile. Geographic only: player level and siege
 ## clears do not change it, and a pack already on the tile keeps this rank.
 static func field_mob_level(from_dir: Vector3, patch_dir: Vector3) -> int:
+	if CrawlerRun.active():
+		return CrawlerRun.level_at_dir(patch_dir)
 	return maxi(patch_level(from_dir, patch_dir), 1)
 
 
@@ -2407,7 +2925,7 @@ static func patch_mob_count(from_dir: Vector3, patch_dir: Vector3) -> int:
 static func wild_kind(patch_key: Variant, slot: int, from_start := -1.0) -> String:
 	var kinds := _recipe_kinds(patch_key, from_start)
 	if kinds.is_empty():
-		return "ranger"
+		return ""
 	return kinds[posmod(slot, kinds.size())]
 
 
@@ -2459,6 +2977,48 @@ static func lead_launch(from: Vector3, target: Vector3, velocity: Vector3,
 			break
 		flight = along.length() / speed
 	var aim := at - from + lift * 0.5 * gravity * flight * flight
+	if aim.is_zero_approx():
+		return Vector3.ZERO
+	return aim.normalized() * speed
+
+
+static func high_lob_intercept(from: Vector3, target: Vector3, velocity: Vector3,
+		speed: float, gravity: float, up: Vector3,
+		loft := BASTION_LOFT) -> Vector3:
+	if speed <= 0.001 or not from.is_finite() or not target.is_finite():
+		return Vector3.INF
+	var motion := velocity if velocity.is_finite() else Vector3.ZERO
+	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
+	var at := target
+	var flight := from.distance_to(at) / speed * (1.35 + clampf(loft, 0.2, 1.2))
+	for _step in 5:
+		at = target + motion * flight
+		var along := at - from + lift * 0.5 * gravity * flight * flight
+		if along.is_zero_approx():
+			break
+		flight = along.length() / speed
+	return at if at.is_finite() else Vector3.INF
+
+
+static func high_lob_launch(from: Vector3, target: Vector3, velocity: Vector3,
+		speed: float, gravity: float, up: Vector3,
+		loft := BASTION_LOFT) -> Vector3:
+	if speed <= 0.001 or not from.is_finite() or not target.is_finite():
+		return Vector3.ZERO
+	var motion := velocity if velocity.is_finite() else Vector3.ZERO
+	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
+	var at := target
+	var flight := from.distance_to(at) / speed * (1.35 + clampf(loft, 0.2, 1.2))
+	for _step in 5:
+		at = target + motion * flight
+		var along := at - from + lift * 0.5 * gravity * flight * flight
+		if along.is_zero_approx():
+			break
+		flight = along.length() / speed
+	var aim := at - from + lift * 0.5 * gravity * flight * flight
+	if aim.is_zero_approx():
+		return Vector3.ZERO
+	aim += lift * speed * clampf(loft, 0.0, 1.4)
 	if aim.is_zero_approx():
 		return Vector3.ZERO
 	return aim.normalized() * speed

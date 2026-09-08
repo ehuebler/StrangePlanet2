@@ -9,8 +9,8 @@ const GRUK_INK := Color(0.28, 0.40, 0.16)
 
 
 func _ready() -> void:
-	_base_health = 70.0
-	_base_damage = 14.0
+	_base_health = 6.0
+	_base_damage = 8.0
 	_base_speed = 8.5
 	super._ready()
 

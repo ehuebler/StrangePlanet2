@@ -15,8 +15,6 @@ const INK := Color(0.22, 0.34, 0.16)
 
 var _swing_left := 0.0
 var _staff: Node3D
-var _authored_mats: Array[StandardMaterial3D] = []
-var _authored_energy: Array[float] = []
 
 
 func _ready() -> void:
@@ -56,6 +54,10 @@ func flies() -> bool:
 	return false
 
 
+func ground_clearance() -> float:
+	return body_height() * 0.5
+
+
 func is_persistent() -> bool:
 	return true
 
@@ -76,6 +78,10 @@ func swing_reach() -> float:
 	return body_width() + 1.35
 
 
+func _on_agro_started() -> void:
+	MobSense.rouse_kinds(CrawlerRules.GOBLIN_KINDS, self)
+
+
 func _hunt_target(delta: float) -> Node3D:
 	if is_charmed():
 		return super._hunt_target(delta)
@@ -85,15 +91,29 @@ func _hunt_target(delta: float) -> Node3D:
 	return player
 
 
+func _tick_idle(delta: float) -> void:
+	_match_speed(move_speed() * 0.42, delta, 1.6)
+	_patrol_left -= delta
+	if _patrol_left <= 0.0 or _flat_toward(_patrol_goal).length() < 2.2:
+		_patrol_serial += 1
+		_patrol_left = PATROL_RETARGET + float(_patrol_serial % 7) * 0.35
+		_patrol_goal = _wander_point()
+	var along := _flat_toward(_patrol_goal)
+	if along.length_squared() < 0.2:
+		velocity = velocity.move_toward(Vector3.ZERO, 8.0 * delta)
+		return
+	_steer_toward(along.normalized() * _cruise, delta, 10.0)
+
+
 func _tick_ai(delta: float) -> void:
 	_swing_left = maxf(_swing_left - delta, 0.0)
-	_stick_to_ground()
+	snap_to_ground()
 	if _attacking():
 		velocity = velocity.move_toward(Vector3.ZERO, 28.0 * delta)
 		return
 	var player := _hunt_target(delta)
 	if player == null:
-		velocity = velocity.move_toward(Vector3.ZERO, 16.0 * delta)
+		_tick_idle(delta)
 		return
 	_charge_melee(player, delta)
 
@@ -148,15 +168,7 @@ func staff_tip() -> Vector3:
 
 
 func _stick_to_ground() -> void:
-	if _planet == null:
-		return
-	var local := _planet.to_local(global_position)
-	if local.length_squared() < 0.0001:
-		local = Vector3.UP
-	var surface := _planet.surface_position(local)
-	var up := _planet.up_at(surface)
-	global_position = surface + up * (body_height() * 0.5)
-	velocity -= up * velocity.dot(up)
+	snap_to_ground()
 
 
 func _flat_toward(at: Vector3) -> Vector3:
@@ -217,7 +229,8 @@ func _match_clip(clip: String) -> String:
 	var need := clip.to_lower()
 	for listed: String in _animator.get_animation_list():
 		var tail := listed.get_file().to_lower()
-		if tail == need or tail.ends_with("/" + need) or tail.ends_with("|" + need):
+		if tail == need or tail.ends_with("/" + need) \
+				or tail.ends_with("__" + need) or tail.ends_with("|" + need):
 			return listed
 	return ""
 
@@ -238,52 +251,11 @@ func _attach_authored(scene: PackedScene, visual_height: float) -> void:
 	add_child(root)
 	var model := scene.instantiate()
 	root.add_child(model)
-	var authored := _model_height(model)
-	var scale := visual_height / maxf(authored, 0.01)
-	root.scale = Vector3.ONE * scale
-	root.position.y = -visual_height * 0.5
-	_collect_authored_materials(model)
+	_fit_visual(root, visual_height)
+	_collect_skinned_materials(model)
+	_scale_enemy_outline(visual_height)
 	_bind_animator(model)
 	_cache_staff(model)
-
-
-func _model_height(model: Node) -> float:
-	var bounds := AABB()
-	var started := false
-	for node_variant: Variant in model.find_children("*", "MeshInstance3D", true, false):
-		var mesh := node_variant as MeshInstance3D
-		if mesh == null:
-			continue
-		var box := mesh.transform * mesh.get_aabb()
-		if started:
-			bounds = bounds.merge(box)
-		else:
-			bounds = box
-			started = true
-	if not started or bounds.size.y <= 0.05:
-		return 1.8
-	return bounds.size.y
-
-
-func _collect_authored_materials(model: Node) -> void:
-	for node_variant: Variant in model.find_children("*", "MeshInstance3D", true, false):
-		var mesh := node_variant as MeshInstance3D
-		if mesh == null:
-			continue
-		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		if _visual == null:
-			_visual = mesh
-		var material := mesh.get_active_material(0)
-		if material is StandardMaterial3D:
-			var copy := (material as StandardMaterial3D).duplicate() as StandardMaterial3D
-			mesh.material_override = copy
-			_authored_mats.append(copy)
-			_authored_energy.append(copy.emission_energy_multiplier)
-		elif material is ShaderMaterial:
-			var shader_copy := (material as ShaderMaterial).duplicate() as ShaderMaterial
-			mesh.material_override = shader_copy
-			_materials.append(shader_copy)
-			_material = shader_copy
 
 
 func _cache_staff(model: Node) -> void:
@@ -341,19 +313,3 @@ func _build_fallback(colour: Color) -> void:
 	_make_mesh(mesh, colour, 1.1)
 	if _visual != null:
 		_visual.position.y = 0.0
-
-
-func _update_flash() -> void:
-	super._update_flash()
-	var flash := 0.0
-	if _flash_left > 0.0:
-		flash = clampf(_flash_left / DAMAGE_FLASH_SECONDS, 0.0, 1.0)
-	for index in _authored_mats.size():
-		var material := _authored_mats[index]
-		if material == null:
-			continue
-		var rest := _authored_energy[index] if index < _authored_energy.size() else 0.0
-		material.emission_enabled = flash > 0.04 or rest > 0.02
-		material.emission = Color(1.0, 0.28, 0.18) if flash > 0.04 \
-			else material.emission
-		material.emission_energy_multiplier = lerpf(rest, 3.4, flash)

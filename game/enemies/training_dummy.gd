@@ -46,8 +46,11 @@ func _physics_process(delta: float) -> void:
 			if _flash_left > 0.0 else 1.0
 		_visuals.scale = Vector3.ONE * pulse
 	if _grappled:
-		if is_instance_valid(_carrier):
-			grapple_follow(_carrier.grapple_carry_point(), _carrier.global_basis.y)
+		if is_instance_valid(_carrier) \
+				and _carrier.has_method(&"grapple_carry_point"):
+			grapple_follow(
+				_carrier.call(&"grapple_carry_point"),
+				_carrier.global_basis.y)
 		else:
 			end_grapple(global_position, global_basis.y)
 		return

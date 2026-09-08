@@ -100,6 +100,7 @@ const LOOPING_CLIPS := [
 	"Climb_Wall", "Pipe_Climb", "Ladder_Idle", "Ledge_Hang", "Meditate",
 	"Sleeping", "Sitting_Idle", "Sitting_Talking", "Shivering", "Dizzy",
 	"NinjaJump_Idle", "Pistol_Idle",
+	"Dance_Body_Roll", "Dance_Charleston", "Dance_Reach_Hip", "Dance_Simple",
 ]
 
 
@@ -192,6 +193,26 @@ static func has_clip(animator: AnimationPlayer, clip: String) -> bool:
 	if animator == null or clip.is_empty():
 		return false
 	return animator.has_animation(resolve_clip(animator, clip))
+
+
+## Mixamo dances shipped on the character-3 sidecar. Only names that are
+## actually on this body are returned, so a click in a safe zone never asks
+## for a clip that is not there.
+static func dance_clips(animator: AnimationPlayer) -> PackedStringArray:
+	var found := PackedStringArray()
+	if animator == null:
+		return found
+	for clip_name in animator.get_animation_list():
+		if String(clip_name).begins_with("Dance_"):
+			found.append(clip_name)
+	return found
+
+
+static func random_dance_clip(animator: AnimationPlayer) -> String:
+	var found := dance_clips(animator)
+	if found.is_empty():
+		return ""
+	return found[randi() % found.size()]
 
 
 static var _extra_clip_cache: Dictionary = {}

@@ -3,12 +3,14 @@ extends Node3D
 
 ## Vertical shock cylinder dropped by a Threnody. Hurts players the way a
 ## static field hurts mobs: a full first tick, then a 4 Hz drip, plus shock.
+## The shaft uses the same iridescent film as a player static field.
 
 const GROUP := &"crawler_demon_columns"
 const TICK_HZ := 4.0
 const TICK_STEP := 1.0 / TICK_HZ
-const BASE_ALPHA := 0.48
-const TINT := Color(0.72, 0.22, 0.95)
+const BASE_ALPHA := 0.62
+const TINT := Color(0.48, 0.84, 1.0)
+const IRIS_SHADER := preload("res://shaders/crawler/crawler_iris_cloud.gdshader")
 
 
 var reach := 7.5
@@ -21,7 +23,7 @@ var source_path := NodePath()
 var _age := 0.0
 var _since_tick := 0.0
 var _inside: Dictionary = {}
-var _material: StandardMaterial3D
+var _material: ShaderMaterial
 var _visual: MeshInstance3D
 var _up_axis := Vector3.UP
 
@@ -39,7 +41,10 @@ static func place(host: Node, source: CrawlerMob, at: Vector3, radius: float,
 	column.authoritative = true
 	if source != null:
 		column.source_path = source.get_path()
-		column._up_axis = source._up()
+		if source.get(&"_planet") != null:
+			column._up_axis = source._up()
+		else:
+			column._up_axis = Vector3.UP
 	host.add_child(column)
 	column.global_position = at
 	column._align_up()
@@ -69,22 +74,18 @@ func _ready() -> void:
 	set_process(true)
 	set_physics_process(true)
 	_align_up()
-	if DisplayServer.get_name() == "headless":
-		return
-	_material = StandardMaterial3D.new()
-	_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_material.albedo_color = Color(TINT, BASE_ALPHA)
-	_material.emission_enabled = true
-	_material.emission = TINT
-	_material.emission_energy_multiplier = 2.2
-	_material.disable_receive_shadows = true
+	_material = ShaderMaterial.new()
+	_material.shader = IRIS_SHADER
+	_material.set_shader_parameter(&"tint", TINT)
+	_material.set_shader_parameter(&"alpha", BASE_ALPHA)
+	_material.set_shader_parameter(&"spark", 1.2)
+	_material.set_shader_parameter(&"iris", 1.05)
+	_material.set_shader_parameter(&"edge_width", 0.24)
 	var shaft := CylinderMesh.new()
 	shaft.top_radius = 1.0
 	shaft.bottom_radius = 1.0
 	shaft.height = 1.0
-	shaft.radial_segments = 20
+	shaft.radial_segments = 32
 	var visual := MeshInstance3D.new()
 	visual.name = "ColumnMesh"
 	visual.mesh = shaft
@@ -134,8 +135,9 @@ func _draw() -> void:
 	var fade := BASE_ALPHA
 	if duration > 0.0 and _age > duration * 0.7:
 		fade = BASE_ALPHA * clampf(1.0 - (_age - duration * 0.7) / (duration * 0.3), 0.0, 1.0)
-	_material.albedo_color = Color(TINT, fade)
-	_material.emission_energy_multiplier = 1.2 + fade * 2.4
+	_material.set_shader_parameter(&"tint", TINT)
+	_material.set_shader_parameter(&"alpha", fade)
+	_material.set_shader_parameter(&"spark", 0.85 + fade * 0.7)
 
 
 func _tick_inside() -> void:
@@ -143,6 +145,8 @@ func _tick_inside() -> void:
 		return
 	var seen: Dictionary = {}
 	for node_variant: Variant in get_tree().get_nodes_in_group(&"network_players"):
+		if not is_instance_valid(node_variant):
+			continue
 		_try_hit(node_variant as Node, seen)
 	for key_variant: Variant in _inside.keys():
 		if not seen.has(key_variant):

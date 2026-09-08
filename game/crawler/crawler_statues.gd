@@ -2,26 +2,52 @@ class_name CrawlerStatues
 extends Node3D
 
 ## Scatters crawler shrines on inland ground. Three sit on the spawn-to-city
-## walk so a run meets them; the rest fill land at the same stride.
+## walk so a run meets them; the rest pack the named cells.
 
 const OPENING_COUNT := 3
 const MIN_SEPARATION := 250.0
-const OPENING_SEPARATION := 250.0
-const FIELD_SEPARATION := 380.0
-const SITE_KEEP := 150.0
-const OPENING_PER_PATCH := 4
-const TARGET_COUNT := 80
-const KEEP_OUT := 8.0
+const OPENING_SEPARATION := 150.0
+const FIELD_SEPARATION := 96.0
+const SITE_KEEP := 130.0
+const OPENING_PER_PATCH := 8
+const FIELD_PER_PATCH := 6
+const TARGET_COUNT := 420
 const OPENING_CORRIDOR := 120.0
 const PLACE_TRIES := 240
 
 var _place_tries := 0
+var _watch_left := 0.0
 
 
 func _ready() -> void:
 	name = "CrawlerStatues"
+	set_process(true)
 	if CrawlerRules.active():
 		call_deferred(&"ensure_placed")
+
+
+func _process(delta: float) -> void:
+	_watch_left -= delta
+	if _watch_left > 0.0:
+		return
+	_watch_left = 0.25
+	_wake_near()
+
+
+func _wake_near() -> void:
+	var at := Vector3.INF
+	if is_inside_tree():
+		var camera := get_viewport().get_camera_3d()
+		if camera != null:
+			at = camera.global_position
+	var reach2 := 80.0 * 80.0
+	for child in get_children():
+		var statue := child as CrawlerStatue
+		if statue == null:
+			continue
+		var near := at.is_finite() \
+			and statue.global_position.distance_squared_to(at) <= reach2
+		statue.set_physics_process(statue.should_simulate(near))
 
 
 func ensure_placed() -> bool:
@@ -66,7 +92,17 @@ static func pick_directions(
 	var field_dot := cos(FIELD_SEPARATION / radius)
 	var site_dot := cos(SITE_KEEP / radius)
 	var spawn := CrawlerRules.spawn_direction()
+	var start_id := overlay.crawler_start_patch_id()
+	if start_id >= 0:
+		var pad: Vector3 = overlay.flat_direction_for_patch(start_id)
+		if pad.length_squared() >= 0.25:
+			spawn = pad.normalized()
 	var city := CrawlerRules.city_direction()
+	var city_id := overlay.patch_id_named(CrawlerRules.CITY_PATCH)
+	if city_id >= 0:
+		var inland: Vector3 = overlay.flat_direction_for_patch(city_id)
+		if inland.length_squared() >= 0.25:
+			city = inland.normalized()
 	var near: Array[Vector3] = []
 	var far: Array[Vector3] = []
 	for patch in _statue_patches(overlay.partition):
@@ -83,9 +119,9 @@ static func pick_directions(
 					overlay, cell_id, radius, OPENING_SEPARATION, OPENING_PER_PATCH):
 				near.append(at)
 		else:
-			var inland: Vector3 = overlay.flat_direction_for_patch(cell_id)
-			if inland.length_squared() >= 0.25:
-				far.append(inland.normalized())
+			for at: Vector3 in _dense_dirs(
+					overlay, cell_id, radius, FIELD_SEPARATION, FIELD_PER_PATCH):
+				far.append(at)
 	_shuffle(near, rng)
 	_shuffle(far, rng)
 	for at: Vector3 in near:
@@ -140,6 +176,7 @@ func _rebuild(picks: PackedVector3Array, overlay: LandPatchOverlay) -> void:
 	_clear_statues()
 	for index in picks.size():
 		_place(kind_at(index), picks[index], index, overlay)
+	_wake_near()
 
 
 func _place(
@@ -153,14 +190,6 @@ func _place(
 	var statue := CrawlerStatue.new()
 	statue.configure(kind, direction, slot)
 	add_child(statue)
-	var planet := get_parent() as Planet
-	if planet != null:
-		BuildingFloraClear.register(
-			"statue_%s_%d" % [kind, slot],
-			statue.direction,
-			KEEP_OUT,
-			planet.shape.radius if planet.shape != null else 8000.0
-		)
 
 
 func _matches_layout(expected: int) -> bool:
@@ -220,7 +249,7 @@ static func _dense_dirs(
 	if dirs.is_empty() or picked.size() >= limit:
 		return picked
 	var min_dot := cos(separation / maxf(radius, 1.0))
-	var stride := maxi(1, int(ceil(float(dirs.size()) / 48.0)))
+	var stride := maxi(1, int(ceil(float(dirs.size()) / float(maxi(limit * 10, 48)))))
 	var index := 0
 	while index < dirs.size() and picked.size() < limit:
 		var at: Vector3 = dirs[index]
@@ -235,10 +264,10 @@ static func _dense_dirs(
 
 
 static func _statue_patches(partition: LandPartition) -> Array:
-	if partition != null and partition.territories.size() > 0:
-		return partition.territories
-	if partition != null:
+	if partition != null and partition.patches.size() > 0:
 		return partition.patches
+	if partition != null:
+		return partition.territories
 	return []
 
 

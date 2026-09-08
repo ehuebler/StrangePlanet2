@@ -4,7 +4,6 @@ extends StaticBody3D
 ## A basic city hat resting in the world as its own mesh, lit and spinning.
 
 const DISPLAY_REACH := 0.78
-const CLEARANCE := 0.14
 const TARGET_SIZE := Vector3(0.82, 0.88, 0.82)
 
 var pickup_id := 0
@@ -35,8 +34,16 @@ func interact(player: OnlinePlayer) -> void:
 		ancestor = ancestor.get_parent()
 
 
+func begin_settle() -> void:
+	_motion = DroppedWorldMotion.start(self, DroppedWorldMotion.HOVER_HEIGHT)
+
+
 func begin_settle_to(at: Vector3) -> void:
 	_motion = DroppedWorldMotion.start_to(self, at)
+
+
+func begin_hover() -> void:
+	_motion = DroppedWorldMotion.hover(self)
 
 
 func _ready() -> void:
@@ -45,11 +52,15 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_PAUSABLE
 	_build_visual()
 	_build_collision()
-	if _motion.is_empty():
-		_motion = DroppedWorldMotion.start(self, CLEARANCE)
+	var tint := ItemDB.tint(item_id)
+	if tint.a <= 0.0:
+		tint = DroppedWorldMotion.BEACON_TINT
+	DroppedWorldMotion.attach_beacon(self, tint.lerp(DroppedWorldMotion.BEACON_TINT, 0.45))
 
 
 func _process(delta: float) -> void:
+	if _motion.is_empty():
+		begin_hover()
 	DroppedWorldMotion.tick(self, _visual, _motion, delta, _visual_origin)
 
 

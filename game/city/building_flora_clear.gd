@@ -7,18 +7,40 @@ extends RefCounted
 
 const PAD_METRES := 10.0
 
+const BIN := 8
+const LINEAR_LIMIT := 16
+
 static var _ids: PackedStringArray = PackedStringArray()
 static var _dirs: PackedVector3Array = PackedVector3Array()
 static var _coss: PackedFloat32Array = PackedFloat32Array()
+static var _bins: Dictionary = {}
+
+
+static func is_empty() -> bool:
+	return _dirs.is_empty()
 
 
 static func covers(direction: Vector3) -> bool:
 	if _dirs.is_empty() or not direction.is_finite():
 		return false
-	var at := direction.normalized()
-	for index in _dirs.size():
-		if at.dot(_dirs[index]) >= _coss[index]:
-			return true
+	var span := direction.length_squared()
+	if span < 0.0001:
+		return false
+	var at := direction if absf(span - 1.0) <= 0.02 else direction.normalized()
+	if _dirs.size() <= LINEAR_LIMIT or _bins.is_empty():
+		for index in _dirs.size():
+			if at.dot(_dirs[index]) >= _coss[index]:
+				return true
+		return false
+	var here := _cell(at)
+	for ox in range(-1, 2):
+		for oy in range(-1, 2):
+			for oz in range(-1, 2):
+				var bucket: PackedInt32Array = _bins.get(
+					here + Vector3i(ox, oy, oz), PackedInt32Array())
+				for index in bucket:
+					if at.dot(_dirs[index]) >= _coss[index]:
+						return true
 	return false
 
 
@@ -26,11 +48,12 @@ static func register(
 		id: String,
 		direction: Vector3,
 		radius_m: float,
-		planet_radius := 8000.0
+		planet_radius := 8000.0,
+		pad_m := PAD_METRES
 	) -> void:
 	if id.is_empty() or not direction.is_finite() or direction.length_squared() < 0.25:
 		return
-	var reach := maxf(radius_m, 0.0) + PAD_METRES
+	var reach := maxf(radius_m, 0.0) + maxf(pad_m, 0.0)
 	var cosine := cos(reach / maxf(planet_radius, 1.0))
 	var at := direction.normalized()
 	var found := _ids.find(id)
@@ -41,10 +64,17 @@ static func register(
 		_ids.append(id)
 		_dirs.append(at)
 		_coss.append(cosine)
+	_rebuild_bins()
 	_replant(at, reach)
 
 
-static func register_node(host: Node, model: Node3D, direction: Vector3) -> void:
+static func register_node(
+		host: Node,
+		model: Node3D,
+		direction: Vector3,
+		radius_m := -1.0,
+		pad_m := PAD_METRES
+	) -> void:
 	if host == null:
 		return
 	var planet_radius := 8000.0
@@ -61,7 +91,8 @@ static func register_node(host: Node, model: Node3D, direction: Vector3) -> void
 					planet_radius = planet.shape.radius
 				break
 			walk = walk.get_parent()
-	register(str(host.get_instance_id()), direction, mesh_radius(model), planet_radius)
+	var reach := radius_m if radius_m >= 0.0 else mesh_radius(model)
+	register(str(host.get_instance_id()), direction, reach, planet_radius, pad_m)
 
 
 static func unregister(id: String) -> void:
@@ -71,6 +102,7 @@ static func unregister(id: String) -> void:
 	_ids.remove_at(found)
 	_dirs.remove_at(found)
 	_coss.remove_at(found)
+	_rebuild_bins()
 
 
 static func unregister_node(host: Node) -> void:
@@ -110,6 +142,24 @@ static func mesh_radius(root: Node) -> float:
 	if not found:
 		return 24.0
 	return maxf(maxf(bounds.size.x, bounds.size.z) * 0.5, 8.0)
+
+
+static func _cell(at: Vector3) -> Vector3i:
+	return Vector3i(
+		clampi(int(floor((at.x * 0.5 + 0.5) * float(BIN))), 0, BIN - 1),
+		clampi(int(floor((at.y * 0.5 + 0.5) * float(BIN))), 0, BIN - 1),
+		clampi(int(floor((at.z * 0.5 + 0.5) * float(BIN))), 0, BIN - 1))
+
+
+static func _rebuild_bins() -> void:
+	_bins.clear()
+	if _dirs.size() <= LINEAR_LIMIT:
+		return
+	for index in _dirs.size():
+		var key := _cell(_dirs[index])
+		var bucket: PackedInt32Array = _bins.get(key, PackedInt32Array())
+		bucket.append(index)
+		_bins[key] = bucket
 
 
 static func _replant(direction: Vector3, reach: float) -> void:

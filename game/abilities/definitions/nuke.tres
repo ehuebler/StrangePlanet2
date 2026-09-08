@@ -8,7 +8,7 @@
 script = ExtResource("1_definition")
 ability_id = "nuke"
 title = "Nuke"
-description = "Launch a giant energy core from the front of both hands. Its host-authoritative detonation tears out a massive crater, ragdolls and hurls everything nearby, and can launch its caster without dealing self-damage."
+description = "Launch a giant energy core from the front of both hands. Its host-authoritative detonation tears out a massive crater, ragdolls and hurls everything nearby, and can launch its caster. The blast hurts you, not other players, unless you have explosion immunity."
 implementation = ExtResource("2_implementation")
 icon = ExtResource("3_icon")
 tint = Color(1.000000, 0.478431, 0.184314, 1.000000)

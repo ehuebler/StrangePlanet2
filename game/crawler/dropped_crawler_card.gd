@@ -35,8 +35,16 @@ func interact_prompt() -> String:
 	return "Pick up %s" % title
 
 
+func begin_settle() -> void:
+	_motion = DroppedWorldMotion.start(self, DroppedWorldMotion.HOVER_HEIGHT)
+
+
 func begin_settle_to(at: Vector3) -> void:
 	_motion = DroppedWorldMotion.start_to(self, at)
+
+
+func begin_hover() -> void:
+	_motion = DroppedWorldMotion.hover(self)
 
 
 func interact(player: OnlinePlayer) -> void:
@@ -56,11 +64,12 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_PAUSABLE
 	_build_visual()
 	_build_collision()
-	if _motion.is_empty():
-		_motion = DroppedWorldMotion.start(self, THICKNESS)
+	DroppedWorldMotion.attach_beacon(self)
 
 
 func _process(delta: float) -> void:
+	if _motion.is_empty():
+		begin_hover()
 	DroppedWorldMotion.tick(self, _visual, _motion, delta, _visual_origin)
 
 

@@ -6,14 +6,20 @@ render_mode unshaded, blend_mix;
 // rastered glyphs or each letter becomes a solid brick.
 //
 // Source RGB is kept so HUD ink, menu green, and warning red all survive.
-// `glitch` is the tear / cell-shift / snow. HUD sets it to 0; menus keep 1.
-// Chromatic aberration and scanlines stay on either way.
+// `glitch` is the tear / cell-shift / snow. HUD sets it to 0; menu type
+// uses a low amount. Border CRT is a different shader and stays full.
+// Chromatic aberration is only for large titles (`chromatic` from CrtType).
+// Scanlines stay on either way.
 
 uniform vec4 red_tint : source_color = vec4(0.937, 0.082, 0.122, 1.0);
 uniform float hover : hint_range(0.0, 1.0) = 0.0;
 uniform float destructive : hint_range(0.0, 1.0) = 0.0;
 uniform float disabled : hint_range(0.0, 1.0) = 0.0;
 uniform float glitch : hint_range(0.0, 1.0) = 1.0;
+uniform float chromatic : hint_range(0.0, 1.0) = 1.0;
+// Wall clock from CrtType. Shader TIME freezes on paused menus that
+// Godot does not redraw, which left every in-game label on one tear.
+uniform float clock = 0.0;
 
 
 float hash21(vec2 p) {
@@ -31,8 +37,8 @@ void fragment() {
 	float live = 1.0 - disabled;
 	float amp = live * glitch * (1.0 + hover * 0.55);
 
-	float tear_tick = floor(TIME * 4.8);
-	float jit_tick = floor(TIME * 18.0);
+	float tear_tick = floor(clock * 4.8);
+	float jit_tick = floor(clock * 18.0);
 	float row = floor((uv.y / max(px.y, 0.0001)) * 0.5);
 	float n_tear = hash21(vec2(row, tear_tick));
 	float n_jit = hash21(vec2(row, jit_tick));
@@ -50,11 +56,15 @@ void fragment() {
 	uv.y += cell_y * amp;
 
 	float ca = (2.6 + glitch * 1.6 + hover * 2.4 + tearing * glitch * 1.8)
-		* px.x * live;
-	ca *= 1.0 + 0.28 * sin(TIME * 7.1 + row * 0.35) * mix(0.35, 1.0, glitch);
-	vec4 red_ink = texture(TEXTURE, uv + vec2(ca, 0.0));
+		* px.x * live * chromatic;
+	ca *= 1.0 + 0.28 * sin(clock * 7.1 + row * 0.35) * mix(0.35, 1.0, glitch);
 	vec4 mid_ink = texture(TEXTURE, uv);
-	vec4 blu_ink = texture(TEXTURE, uv - vec2(ca * 0.92, ca * 0.18));
+	vec4 red_ink = mid_ink;
+	vec4 blu_ink = mid_ink;
+	if (ca > 0.0001) {
+		red_ink = texture(TEXTURE, uv + vec2(ca, 0.0));
+		blu_ink = texture(TEXTURE, uv - vec2(ca * 0.92, ca * 0.18));
+	}
 	float alpha = max(mid_ink.a, max(red_ink.a, blu_ink.a));
 	vec3 rgb = vec3(0.0);
 	if (alpha >= 0.01) {
@@ -67,9 +77,9 @@ void fragment() {
 		rgb = mix(rgb, red_ramp * max(luma, alpha), destructive);
 		float scan = mix(0.94, 0.90, glitch)
 			+ mix(0.06, 0.10, glitch)
-			* sin(uv.y / max(px.y, 0.0001) * 3.14159 + TIME * 7.0);
+			* sin(uv.y / max(px.y, 0.0001) * 3.14159 + clock * 7.0);
 		rgb *= scan;
-		float snow = hash21(uv * vec2(210.0, 380.0) + vec2(TIME * 17.0, jit_tick));
+		float snow = hash21(uv * vec2(210.0, 380.0) + vec2(clock * 17.0, jit_tick));
 		rgb += (snow - 0.5) * 0.07 * alpha * glitch;
 		rgb *= mix(1.0, 1.12, hover);
 		rgb *= mix(1.0, 0.42, disabled);

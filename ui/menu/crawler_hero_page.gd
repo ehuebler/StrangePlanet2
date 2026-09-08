@@ -2,16 +2,20 @@ class_name CrawlerHeroPage
 extends RedHeroPage
 
 ## Crawler Hero tab: three ability cards with nested modifier slots, a shared
-## inventory grid, and a description of the selected card.
+## inventory grid in the bottom-right, and a description of the selected card,
+## worn hat, worn cape, or juke.
 ##
 ## An ability is the whole card. Dragging it moves the portrait and every
 ## seated modifier together. Dragging one off the page drops that same card
-## into the world as a floating icon tile.
+## into the world as a floating icon tile. Three loadout rows fit without a
+## scrollbar; a fourth (learned-cap) row is what opens the scroll.
 
 signal drop_requested(source: String, index: int, token: String)
 
-const ROW_MIN := 110.0
+const ROW_MIN := 96.0
+const VISIBLE_ABILITY_ROWS := 3
 const INV_EDGE := 44.0
+const INV_VISIBLE_ROWS := 3
 
 var _kit: CrawlerKit
 var _selected_token := ""
@@ -21,6 +25,7 @@ var _inventory_slots: Array[RedItemSlot] = []
 var _inventory_scroll: ScrollContainer
 var _inventory_grid: GridContainer
 var _inventory_frame: PanelContainer
+var _ability_scroll: ScrollContainer
 var _ability_list: VBoxContainer
 var _desc_title: Label
 var _desc_types: HBoxContainer
@@ -75,8 +80,8 @@ func _fill_stats() -> void:
 		return
 	_clear_children(_stats_rows)
 	if _stats_heading != null:
-		_stats_heading.text = "PLAYER STATS  //  LV %d   %dG" % [
-			progress.level, progress.gold
+		_stats_heading.text = "PLAYER STATS  //  LV %d   %sG" % [
+			progress.level, progress.gold_text()
 		]
 	for row_variant: Variant in progress.hero_stat_rows(_player):
 		if typeof(row_variant) != TYPE_DICTIONARY:
@@ -86,7 +91,8 @@ func _fill_stats() -> void:
 			str(row.get("id", "")),
 			str(row.get("title", "")),
 			str(row.get("description", "")),
-			str(row.get("text", ""))
+			str(row.get("text", "")),
+			str(row.get("kind", ""))
 		)
 
 
@@ -99,42 +105,50 @@ func _build_ability_column() -> VBoxContainer:
 	column.size_flags_stretch_ratio = 3.0
 	column.add_theme_constant_override(&"separation", 10)
 
-	var top := HBoxContainer.new()
-	top.name = "CrawlerLoadoutRow"
-	top.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	top.size_flags_stretch_ratio = 1.15
-	top.add_theme_constant_override(&"separation", 10)
-	column.add_child(top)
+	var row := HBoxContainer.new()
+	row.name = "CrawlerLoadoutRow"
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	row.add_theme_constant_override(&"separation", 10)
+	column.add_child(row)
 
-	var scroll := ScrollContainer.new()
-	scroll.name = "CrawlerAbilityScroll"
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.size_flags_stretch_ratio = 1.35
-	scroll.clip_contents = true
-	scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	_ability_scroll = ScrollContainer.new()
+	_ability_scroll.name = "CrawlerAbilityScroll"
+	_ability_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_ability_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_ability_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_ability_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_ability_scroll.size_flags_stretch_ratio = 1.35
+	_ability_scroll.clip_contents = true
+	_ability_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 	var bay := CrawlerAbilityBay.new()
 	bay.host = self
 	_ability_list = bay
 	_ability_list.name = "CrawlerAbilityRows"
 	_ability_list.mouse_filter = Control.MOUSE_FILTER_STOP
 	_ability_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_ability_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_ability_list.add_theme_constant_override(&"separation", 8)
+	_ability_list.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_ability_list.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_ability_list.add_theme_constant_override(&"separation", 5)
 	for index in _ability_slot_count():
 		_ability_list.add_child(_build_ability_row(index))
-	scroll.add_child(_ability_list)
-	top.add_child(_menu_frame(scroll, "CrawlerAbilityFrame"))
+	_ability_scroll.add_child(_ability_list)
+	var ability_frame := _menu_frame(_ability_scroll, "CrawlerAbilityFrame")
+	ability_frame.size_flags_stretch_ratio = 1.35
+	row.add_child(ability_frame)
+
+	var side := VBoxContainer.new()
+	side.name = "CrawlerSideColumn"
+	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side.size_flags_stretch_ratio = 0.78
+	side.add_theme_constant_override(&"separation", 10)
 
 	var desc_column := VBoxContainer.new()
 	desc_column.name = "CrawlerDescriptionContent"
 	desc_column.custom_minimum_size = Vector2(160.0, 120.0)
 	desc_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	desc_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	desc_column.size_flags_stretch_ratio = 0.72
 	desc_column.add_theme_constant_override(&"separation", 6)
 	_desc_title = _label("DESCRIPTION", 14, RED_BRIGHT, true)
 	_desc_title.name = "CrawlerDescriptionTitle"
@@ -142,27 +156,29 @@ func _build_ability_column() -> VBoxContainer:
 	_desc_types = CrawlerTypeMarks.make_row("CrawlerDescriptionTypes", PackedStringArray(), 26.0)
 	desc_column.add_child(_desc_types)
 	_desc_body = _label(
-		"CLICK AN ABILITY OR MODIFIER TO READ IT.",
+		"CLICK AN ABILITY, MODIFIER, HAT, CAPE, OR JUKE TO READ IT.",
 		11,
 		RED_TEXT,
 		true
 	)
 	_desc_body.name = "CrawlerDescriptionBody"
 	desc_column.add_child(_scroll_text(_desc_body, "CrawlerDescriptionScroll"))
-	top.add_child(_menu_frame(desc_column, "CrawlerDescriptionFrame"))
+	var desc_frame := _menu_frame(desc_column, "CrawlerDescriptionFrame")
+	desc_frame.size_flags_stretch_ratio = 1.4
+	side.add_child(desc_frame)
 
 	var inventory_column := VBoxContainer.new()
 	inventory_column.name = "CrawlerInventoryContent"
 	inventory_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	inventory_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	inventory_column.size_flags_vertical = Control.SIZE_SHRINK_END
 	inventory_column.add_theme_constant_override(&"separation", 6)
 	_inventory_scroll = ScrollContainer.new()
 	_inventory_scroll.name = "CrawlerInventoryScroll"
 	_inventory_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_inventory_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_inventory_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_inventory_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_inventory_scroll.custom_minimum_size.y = INV_EDGE + 4.0
+	_inventory_scroll.size_flags_vertical = Control.SIZE_SHRINK_END
+	_inventory_scroll.custom_minimum_size.y = _inventory_span(INV_VISIBLE_ROWS)
 	_inventory_scroll.clip_contents = true
 	_inventory_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 	inventory_column.add_child(_inventory_scroll)
@@ -175,13 +191,16 @@ func _build_ability_column() -> VBoxContainer:
 	_inventory_scroll.add_child(_inventory_grid)
 	_inventory_scroll.resized.connect(_fit_inventory_columns)
 	_inventory_frame = _menu_frame(inventory_column, "CrawlerInventoryFrame")
-	_inventory_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_inventory_frame.size_flags_vertical = Control.SIZE_SHRINK_END
+	_inventory_frame.size_flags_stretch_ratio = 0.0
 	_inventory_frame.clip_contents = true
-	column.add_child(_inventory_frame)
+	side.add_child(_inventory_frame)
+	row.add_child(side)
 
 	_description_title = _desc_title
 	_description_body = _desc_body
 	_build_inventory_slots()
+	_fit_ability_scroll()
 	return column
 
 
@@ -190,6 +209,7 @@ func _build_ability_row(index: int) -> CrawlerAbilityTile:
 	tile.name = "CrawlerAbilityTile_%d" % index
 	tile.custom_minimum_size.y = ROW_MIN
 	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tile.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	tile.setup(index, _kit)
 	tile.picked.connect(_on_ability_picked)
 	tile.drop_requested.connect(_on_ability_world_drop)
@@ -213,6 +233,7 @@ func _build_inventory_slots() -> void:
 		slot.name = "CrawlerBag_%d" % index
 		slot.set_edge(INV_EDGE)
 		slot.placeholder = ""
+		slot.use_soft_fx()
 		slot.bind(_kit.inventory, index)
 		slot.picked.connect(_on_inventory_picked)
 		slot.item_dropped.connect(_on_inventory_moved)
@@ -280,6 +301,7 @@ func _sync_ability_tiles() -> void:
 
 func _refresh_ability_rows() -> void:
 	_sync_ability_tiles()
+	_fit_ability_scroll()
 	for tile: CrawlerAbilityTile in _ability_tiles:
 		tile.selected = not _selected_token.is_empty() \
 			and tile.token() == _selected_token
@@ -355,9 +377,14 @@ func _fill_description() -> void:
 func _fill_crawler_description() -> void:
 	if _desc_title == null:
 		return
+	if not _selected_apparel_slot.is_empty():
+		CrawlerTypeMarks.fill(_desc_types, PackedStringArray())
+		_fill_apparel_description()
+		_fit_description_scroll()
+		return
 	if _selected_token.is_empty() or _kit == null:
 		_desc_title.text = "DESCRIPTION"
-		_desc_body.text = "CLICK AN ABILITY OR MODIFIER TO READ IT."
+		_desc_body.text = "CLICK AN ABILITY, MODIFIER, HAT, CAPE, OR JUKE TO READ IT."
 		CrawlerTypeMarks.fill(_desc_types, PackedStringArray())
 		_fit_description_scroll()
 		return
@@ -468,8 +495,15 @@ func _stat_lines_for(card: CrawlerCard) -> PackedStringArray:
 
 
 func select_token(token: String) -> void:
+	_clear_apparel_selection()
 	_selected_token = token
 	_paint_selection()
+
+
+func _on_apparel_selected() -> void:
+	_selected_token = ""
+	_refresh_ability_rows()
+	_refresh_inventory()
 
 
 func _on_ability_picked(tile: CrawlerAbilityTile) -> void:
@@ -479,11 +513,13 @@ func _on_ability_picked(tile: CrawlerAbilityTile) -> void:
 
 
 func _on_mod_picked(slot: RedItemSlot) -> void:
+	_clear_apparel_selection()
 	_selected_token = slot.item_id() if slot != null else ""
 	_paint_selection()
 
 
 func _on_inventory_picked(slot: RedItemSlot) -> void:
+	_clear_apparel_selection()
 	_selected_token = slot.item_id() if slot != null else ""
 	_paint_selection()
 
@@ -650,7 +686,8 @@ func _request_icons() -> void:
 	var ids: Array = []
 	for id: String in ItemDB.ability_ids():
 		ids.append(id)
-	for id: String in ["wobble", "big", "bubble", "linger", "clip", "endless"]:
+	for id: String in ["wobble", "big", "bubble", "linger", "clip", "endless",
+			CrawlerProgress.STAT_JUKE]:
 		ids.append(id)
 	if _kit != null:
 		for card: CrawlerCard in _kit.cards.values():
@@ -669,7 +706,34 @@ func _on_icon_ready(_id: String, _texture: Texture2D) -> void:
 
 func _update_responsive_layout() -> void:
 	super._update_responsive_layout()
+	_fit_ability_scroll()
 	_fit_inventory_columns()
+
+
+func _ability_span(count: int) -> float:
+	var rows := maxi(count, 1)
+	return ROW_MIN * float(rows) + 5.0 * float(maxi(rows - 1, 0))
+
+
+func _inventory_span(count: int) -> float:
+	var rows := maxi(count, 1)
+	return INV_EDGE * float(rows) + 4.0 * float(maxi(rows - 1, 0))
+
+
+func _fit_ability_scroll() -> void:
+	if _ability_scroll == null:
+		return
+	var count := _ability_tiles.size()
+	# Do not pin a three-row minimum onto the scroll. That grew the page
+	# past the red frame once the bag moved off this column.
+	_ability_scroll.custom_minimum_size.y = 0.0
+	_ability_scroll.vertical_scroll_mode = (
+		ScrollContainer.SCROLL_MODE_AUTO
+		if count > VISIBLE_ABILITY_ROWS
+		else ScrollContainer.SCROLL_MODE_DISABLED
+	)
+	if _ability_list != null:
+		_ability_list.custom_minimum_size.y = _ability_span(maxi(count, 1))
 
 
 func _fit_inventory_columns() -> void:
@@ -679,11 +743,15 @@ func _fit_inventory_columns() -> void:
 	if available <= 0.0:
 		return
 	var gap := 4.0
-	_inventory_grid.columns = clampi(
+	var columns := clampi(
 		int((available + gap) / (INV_EDGE + gap)),
 		1,
 		CrawlerRules.INVENTORY_COLUMNS
 	)
+	_inventory_grid.columns = columns
+	var rows := ceili(float(CrawlerRules.INVENTORY_SLOTS) / float(columns))
+	var shown := clampi(rows, 1, INV_VISIBLE_ROWS)
+	_inventory_scroll.custom_minimum_size.y = _inventory_span(shown)
 
 
 func _menu_frame(content: Control, node_name: String) -> PanelContainer:

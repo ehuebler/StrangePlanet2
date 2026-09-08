@@ -10,7 +10,8 @@ extends RefCounted
 ##
 ## Far bodies stay cheap: LOD, a think budget, and an attack token keep
 ## unique shot logic on the nearest hunters so a denser field does not
-## plan every attack on the same physics frame.
+## plan every attack on the same physics frame. Seek, climb, and
+## separation run once for the whole pack.
 
 const MOB_GROUP := &"crawler_mobs"
 const PLAYER_GROUP := &"network_players"
@@ -20,6 +21,8 @@ const FIELD_GROUP := &"ability_fields"
 const LINGER_GROUP := &"crawler_lingers"
 const MONUMENT_GROUP := &"patch_monuments"
 const OVERLAY_GROUP := &"land_patch_overlay"
+const PAD_GROUP := &"crawler_spawn_pads"
+const THINK_LOG_GAP := 1.5
 
 static var _physics_frame := -1
 static var _players: Array = []
@@ -30,6 +33,7 @@ static var _city_rings: Array = []
 static var _fields: Array = []
 static var _clouds: Array = []
 static var _monuments: Array = []
+static var _spawn_pads: Array = []
 static var _overlay: Node
 static var _ticked := 0
 static var _chasing := 0
@@ -38,26 +42,99 @@ static var _last_live := -1
 static var _last_chase := -1
 static var _think_left := 0
 static var _attack_left := 0
+static var _think_cap := 0
+static var _attack_cap := 0
+static var _window_think_cap := 0
+static var _window_attack_cap := 0
 static var _player_at := Vector3.ZERO
+static var _think_usec := 0
+static var _hot := 0
+static var _warm := 0
+static var _cold := 0
+static var _windup := 0
+static var _frame_think_ok := 0
+static var _frame_think_denied := 0
+static var _frame_attack_ok := 0
+static var _frame_attack_denied := 0
+static var _pile := 0
+static var _phys_pairs := 0
+static var _phys_bodies := 0
+static var _window_started := -1.0
+static var _window_frames := 0
+static var _window_think_ok := 0
+static var _window_think_denied := 0
+static var _window_attack_ok := 0
+static var _window_attack_denied := 0
+static var _window_live_sum := 0
+static var _window_chase_sum := 0
+static var _window_windup_sum := 0
+static var _window_hot_sum := 0
+static var _window_warm_sum := 0
+static var _window_cold_sum := 0
+static var _window_pile_sum := 0
+static var _window_ai_usec := 0
+static var _window_think_usec := 0
+static var _peak_live := 0
+static var _peak_chase := 0
+static var _peak_windup := 0
+static var _peak_pile := 0
+static var _peak_pairs := 0
+static var _peak_bodies := 0
+static var _peak_ai_ms := 0.0
+static var _think_kinds: Dictionary = {}
+static var _attack_kinds: Dictionary = {}
+static var _deny_think_kinds: Dictionary = {}
+static var _deny_attack_kinds: Dictionary = {}
+static var _directed_frame := -1
+static var _static_frame := -1
+static var _city_frame := -1
+static var _pad_frame := -1
+static var _player_city := {}
+static var _player_pad := {}
 
 
 static func begin_frame(tree: SceneTree) -> void:
 	var frame := Engine.get_physics_frames()
-	if frame != _physics_frame:
-		_publish()
-		var rescan := _physics_frame < 0
-		_physics_frame = frame
-		_ticked = 0
-		_chasing = 0
-		_ai_usec = 0
-		_think_left = CrawlerRules.MOB_THINK_BUDGET
-		_attack_left = CrawlerRules.MOB_ATTACK_BUDGET
-		_refresh(tree, rescan)
+	if frame == _physics_frame:
 		return
+	_publish()
+	var rescan := _physics_frame < 0
+	_physics_frame = frame
+	_ticked = 0
+	_chasing = 0
+	_ai_usec = 0
+	_think_usec = 0
+	_hot = 0
+	_warm = 0
+	_cold = 0
+	_windup = 0
+	_frame_think_ok = 0
+	_frame_think_denied = 0
+	_frame_attack_ok = 0
+	_frame_attack_denied = 0
+	_think_cap = CrawlerRules.think_budget_for(maxi(_last_chase, 0))
+	_attack_cap = CrawlerRules.attack_budget_for(maxi(_last_chase, 0))
+	_think_left = _think_cap
+	_attack_left = _attack_cap
+	_refresh(tree, rescan, frame)
+
+
+static func ensure_frame(tree: SceneTree) -> void:
+	if _physics_frame != Engine.get_physics_frames():
+		begin_frame(tree)
 
 
 static func invalidate() -> void:
 	_physics_frame = -1
+	_last_chase = -1
+	_last_live = -1
+	_directed_frame = -1
+	_static_frame = -1
+	_city_frame = -1
+	_pad_frame = -1
+	_player_city.clear()
+	_player_pad.clear()
+	_reset_think_window(-1.0)
 
 
 static func players() -> Array[Node3D]:
@@ -80,29 +157,26 @@ static func live_count() -> int:
 static func nearest_player(from: Node3D) -> Node3D:
 	if not _living(from) or not from.is_inside_tree():
 		return null
-	begin_frame(from.get_tree())
-	var nearest: Node3D
-	var nearest_squared := INF
-	var from_world := DamageHit.game_world_of(from)
-	for item: Variant in _players:
-		var player := _node3d(item)
-		if player == null:
-			continue
-		if player.has_method(&"is_dead") and bool(player.call(&"is_dead")):
-			continue
-		if not DamageHit.in_same_world(from, player) and from_world != null:
-			continue
-		var away := from.global_position.distance_squared_to(player.global_position)
-		if away < nearest_squared:
-			nearest_squared = away
-			nearest = player
-	return nearest
+	ensure_frame(from.get_tree())
+	return _nearest_cached_player(from.global_position)
+
+
+static func player_in_castle_keep(player: Node3D) -> bool:
+	return player != null and CrawlerRules.in_castle_keep(player.global_position)
 
 
 static func player_in_city(player: Node3D) -> bool:
 	if not _living(player) or not player.is_inside_tree():
 		return false
-	begin_frame(player.get_tree())
+	ensure_frame(player.get_tree())
+	var frame := Engine.get_physics_frames()
+	if frame != _city_frame:
+		_city_frame = frame
+		_player_city.clear()
+	var id := player.get_instance_id()
+	if _player_city.has(id):
+		return bool(_player_city[id])
+	var inside := false
 	var saw_live := false
 	for item: Variant in _city_rings:
 		var ring := _city_ring(item)
@@ -110,16 +184,39 @@ static func player_in_city(player: Node3D) -> bool:
 			continue
 		saw_live = true
 		if ring.contains_player(player):
-			return true
+			inside = true
+			break
 	if not saw_live:
-		return CrawlerCityRing.contains_any(player)
-	return false
+		inside = CrawlerCityRing.contains_any(player)
+	_player_city[id] = inside
+	return inside
+
+
+static func player_on_spawn_pad(player: Node3D) -> bool:
+	if not _living(player) or not player.is_inside_tree():
+		return false
+	ensure_frame(player.get_tree())
+	var frame := Engine.get_physics_frames()
+	if frame != _pad_frame:
+		_pad_frame = frame
+		_player_pad.clear()
+	var id := player.get_instance_id()
+	if _player_pad.has(id):
+		return bool(_player_pad[id])
+	var inside := false
+	for item: Variant in _spawn_pads:
+		var pad := _spawn_pad(item)
+		if pad != null and pad.holds_standing(player.global_position):
+			inside = true
+			break
+	_player_pad[id] = inside
+	return inside
 
 
 static func nearest_charmed(from: Node) -> Node:
 	if not _living(from) or not from.is_inside_tree():
 		return null
-	begin_frame(from.get_tree())
+	ensure_frame(from.get_tree())
 	if _charmed.is_empty():
 		return null
 	return _nearest_from(from, _charmed, true)
@@ -128,14 +225,14 @@ static func nearest_charmed(from: Node) -> Node:
 static func nearest_other(from: Node) -> Node:
 	if not _living(from) or not from.is_inside_tree():
 		return null
-	begin_frame(from.get_tree())
+	ensure_frame(from.get_tree())
 	return _nearest_from(from, _live_mobs, false)
 
 
 static func field_slow(from: Node, at: Vector3) -> float:
 	if not _living(from) or not from.is_inside_tree() or not at.is_finite():
 		return 1.0
-	begin_frame(from.get_tree())
+	ensure_frame(from.get_tree())
 	var field_scale := 1.0
 	var linger_scale := 1.0
 	for item: Variant in _fields:
@@ -152,14 +249,14 @@ static func field_slow(from: Node, at: Vector3) -> float:
 static func keepout_blocks(from: Node, at: Vector3) -> bool:
 	if not _living(from) or not from.is_inside_tree() or not at.is_finite():
 		return false
-	begin_frame(from.get_tree())
+	ensure_frame(from.get_tree())
 	for item: Variant in _safe_boxes:
 		var zone := _safe_box(item)
 		if zone != null and zone.blocks_point(at):
 			return true
 	for item: Variant in _city_rings:
 		var ring := _city_ring(item)
-		if ring != null and ring.blocks_near(at):
+		if ring != null and ring.clears_patch_mobs_at(at, _players):
 			return true
 	var overlay := _overlay_node()
 	return overlay != null and overlay.keeps_mobs_out(at)
@@ -168,7 +265,7 @@ static func keepout_blocks(from: Node, at: Vector3) -> bool:
 static func monument_blocks(from: Node, at: Vector3) -> bool:
 	if not _living(from) or not from.is_inside_tree() or not at.is_finite():
 		return false
-	begin_frame(from.get_tree())
+	ensure_frame(from.get_tree())
 	for item: Variant in _monuments:
 		var site := _monument(item)
 		if site != null and site.blocks_spawn(at):
@@ -179,7 +276,7 @@ static func monument_blocks(from: Node, at: Vector3) -> bool:
 static func keep_clear(mob: Node3D) -> void:
 	if not _living(mob) or not mob.is_inside_tree():
 		return
-	begin_frame(mob.get_tree())
+	ensure_frame(mob.get_tree())
 	var body := _body(mob)
 	var at := mob.global_position
 	var pad := 0.7
@@ -233,7 +330,6 @@ static func note_spawned(mob: Node) -> void:
 	if mob.has_method(&"is_charmed") and bool(mob.call(&"is_charmed")) \
 			and not _charmed.has(mob):
 		_charmed.append(mob)
-	_write_gauges()
 
 
 static func note_gone(mob: Node) -> void:
@@ -241,7 +337,6 @@ static func note_gone(mob: Node) -> void:
 		return
 	_live_mobs.erase(mob)
 	_charmed.erase(mob)
-	_write_gauges()
 
 
 static func note_charmed(mob: Node, on: bool) -> void:
@@ -253,15 +348,31 @@ static func note_charmed(mob: Node, on: bool) -> void:
 			_charmed.append(mob)
 	else:
 		_charmed.erase(mob)
-	_write_gauges()
 
 
-static func note_tick(mob: Node, usec: int) -> void:
+static func note_tick(
+		mob: Node,
+		usec: int,
+		lod := -1,
+		_thought := false,
+		attacking := false
+	) -> void:
 	_ticked += 1
 	if _living(mob) and bool(mob.get("chase")):
 		_chasing += 1
+	if attacking:
+		_windup += 1
+	if lod == CrawlerRules.MOB_LOD_HOT:
+		_hot += 1
+	elif lod == CrawlerRules.MOB_LOD_WARM:
+		_warm += 1
+	elif lod == CrawlerRules.MOB_LOD_COLD:
+		_cold += 1
 	_ai_usec += maxi(usec, 0)
-	_write_gauges()
+
+
+static func note_think_usec(usec: int) -> void:
+	_think_usec += maxi(usec, 0)
 
 
 static func player_anchor() -> Vector3:
@@ -271,24 +382,218 @@ static func player_anchor() -> Vector3:
 static func lod_of(from: Node3D) -> int:
 	if not _living(from) or not from.is_inside_tree():
 		return CrawlerRules.MOB_LOD_COLD
-	begin_frame(from.get_tree())
-	return CrawlerRules.mob_lod(from.global_position.distance_to(_player_at))
+	ensure_frame(from.get_tree())
+	return lod_at(from.global_position)
 
 
-static func take_think(_mob: Node, chasing: bool) -> bool:
-	if _think_left <= 0:
-		return false
-	if not chasing and _think_left <= 2:
+static func lod_at(at: Vector3) -> int:
+	return CrawlerRules.mob_lod(at.distance_to(_player_at))
+
+
+static func take_think(mob: Node, chasing: bool) -> bool:
+	var kind := _kind_of(mob)
+	if _think_left <= 0 or (not chasing and _think_left <= 2):
+		_frame_think_denied += 1
+		_window_think_denied += 1
+		_count_kind(_deny_think_kinds, kind)
 		return false
 	_think_left -= 1
+	_frame_think_ok += 1
+	_window_think_ok += 1
+	_count_kind(_think_kinds, kind)
 	return true
 
 
-static func take_attack(_kind: String = "") -> bool:
+static func was_directed(mob: Node) -> bool:
+	if mob == null or not (mob is CrawlerMob):
+		return false
+	return (mob as CrawlerMob).directed_frame == _directed_frame \
+		and _directed_frame == Engine.get_physics_frames()
+
+
+static func shot_targets(charmed: bool) -> Array:
+	return _live_mobs if charmed else _players
+
+
+static func any_chasing_kind(kind: String, except: Node = null) -> bool:
+	if kind.is_empty():
+		return false
+	for item: Variant in _live_mobs:
+		var mob := _node(item) as CrawlerMob
+		if mob == null or mob == except or not mob.is_alive():
+			continue
+		if mob.wild_kind() == kind and mob.chase:
+			return true
+	return false
+
+
+static func rouse_kinds(kinds: PackedStringArray, except: Node = null) -> void:
+	if kinds.is_empty():
+		return
+	for item: Variant in _live_mobs:
+		var mob := _node(item) as CrawlerMob
+		if mob == null or mob == except or not mob.is_alive():
+			continue
+		if not mob.is_persistent() or not kinds.has(mob.wild_kind()):
+			continue
+		mob.chase = true
+		mob.ever_chased = true
+		mob.idle_seconds = 0.0
+
+
+static func each_kind(kind: String, except: Node = null) -> Array:
+	var out: Array = []
+	if kind.is_empty():
+		return out
+	for item: Variant in _live_mobs:
+		var mob := _node(item) as CrawlerMob
+		if mob == null or mob == except or not mob.is_alive():
+			continue
+		if mob.wild_kind() == kind:
+			out.append(mob)
+	return out
+
+
+## One loop writes seek, climb, and separation for the whole pack. Unique
+## aim/fire still lives on the think-token bodies.
+static func direct_horde(delta: float) -> void:
+	var frame := Engine.get_physics_frames()
+	if frame == _directed_frame:
+		return
+	_directed_frame = frame
+	var pack: Array[CrawlerMob] = []
+	var cells := {}
+	for item: Variant in _live_mobs:
+		var mob := item as CrawlerMob
+		if mob == null or not is_instance_valid(mob) or not mob.is_alive():
+			continue
+		pack.append(mob)
+		var key := _horde_cell(mob.global_position)
+		if not cells.has(key):
+			cells[key] = []
+		var occupants: Array = cells[key]
+		occupants.append(mob)
+	if pack.is_empty():
+		return
+	var stride := maxi(CrawlerRules.MOB_COLD_STRIDE, 1)
+	var warm_stride := maxi(CrawlerRules.MOB_WARM_STRIDE, 1)
+	var hunt := _nearest_cached_player(_player_at)
+	var hunt_city := hunt != null and (
+		player_in_city(hunt) or player_on_spawn_pad(hunt))
+	var reach := CrawlerRules.HORDE_SEPARATION
+	var reach2 := reach * reach
+	for mob in pack:
+		var lod := lod_at(mob.global_position)
+		var slot := _directed_frame + mob.get_instance_id()
+		var need_sep := lod == CrawlerRules.MOB_LOD_HOT \
+			or (lod == CrawlerRules.MOB_LOD_WARM and slot % warm_stride == 0) \
+			or (lod == CrawlerRules.MOB_LOD_COLD and slot % stride == 0)
+		if need_sep:
+			var push := Vector3.ZERO
+			var here := _horde_cell(mob.global_position)
+			for ox in range(-1, 2):
+				for oy in range(-1, 2):
+					for oz in range(-1, 2):
+						var neighbor: Variant = cells.get(
+							here + Vector3i(ox, oy, oz))
+						if neighbor == null:
+							continue
+						var nearby: Array = neighbor
+						for other_variant: Variant in nearby:
+							var other := other_variant as CrawlerMob
+							if other == null or other == mob:
+								continue
+							var along := mob.global_position - other.global_position
+							var away2 := along.length_squared()
+							if away2 < 0.0001 or away2 > reach2:
+								continue
+							var away := sqrt(away2)
+							push += along / away * (reach - away)
+			var separate := push * CrawlerRules.HORDE_SEPARATION_PUSH
+			if separate.length() > CrawlerRules.HORDE_SEPARATION_CAP:
+				separate = separate.normalized() * CrawlerRules.HORDE_SEPARATION_CAP
+			mob.director_sep = separate
+		mob.director_push = mob.director_sep
+		mob.directed_frame = _directed_frame
+		mob.set_director_lod(lod)
+		if lod == CrawlerRules.MOB_LOD_COLD:
+			var period := stride if mob.chase else stride * 2
+			var step := 0.0
+			var steer := slot % period == 0
+			if steer:
+				step = delta * float(period)
+			mob.director_cold_tick(delta, step, steer, hunt, hunt_city)
+			continue
+		if lod == CrawlerRules.MOB_LOD_WARM:
+			var warm_period := warm_stride if mob.chase else warm_stride * 2
+			var warm_step := 0.0
+			var warm_steer := slot % warm_period == 0
+			if warm_steer:
+				warm_step = delta * float(warm_period)
+			mob.director_warm_tick(delta, warm_step, warm_steer, hunt, hunt_city)
+			continue
+
+
+static func _horde_cell(at: Vector3) -> Vector3i:
+	var span := maxf(CrawlerRules.HORDE_CELL, 0.5)
+	return Vector3i(
+		floori(at.x / span), floori(at.y / span), floori(at.z / span))
+
+
+static func _nearest_cached_player(from: Vector3) -> Node3D:
+	var nearest: Node3D
+	var nearest2 := INF
+	for item: Variant in _players:
+		var player := _node3d(item)
+		if player == null:
+			continue
+		if player.has_method(&"is_dead") and bool(player.call(&"is_dead")):
+			continue
+		if player_on_spawn_pad(player):
+			continue
+		var away := player.global_position.distance_squared_to(from)
+		if away < nearest2:
+			nearest2 = away
+			nearest = player
+	return nearest
+
+
+static func take_attack(kind: String = "") -> bool:
 	if _attack_left <= 0:
+		_frame_attack_denied += 1
+		_window_attack_denied += 1
+		_count_kind(_deny_attack_kinds, kind)
 		return false
 	_attack_left -= 1
+	_frame_attack_ok += 1
+	_window_attack_ok += 1
+	_count_kind(_attack_kinds, kind)
 	return true
+
+
+static func director_counts() -> Dictionary:
+	return {
+		"think_ok": _window_think_ok,
+		"think_denied": _window_think_denied,
+		"attack_ok": _window_attack_ok,
+		"attack_denied": _window_attack_denied,
+		"frames": _window_frames,
+		"frame_think_ok": _frame_think_ok,
+		"frame_think_denied": _frame_think_denied,
+		"frame_attack_ok": _frame_attack_ok,
+		"frame_attack_denied": _frame_attack_denied,
+		"think_budget": _think_cap,
+		"attack_budget": _attack_cap,
+		"chase": _chasing,
+		"ai_usec": _ai_usec,
+		"pile": _count_pile(),
+		"phys_pairs": _phys_pairs,
+		"phys_bodies": _phys_bodies,
+		"think_kinds": _think_kinds.duplicate(),
+		"attack_kinds": _attack_kinds.duplicate(),
+		"deny_think_kinds": _deny_think_kinds.duplicate(),
+		"deny_attack_kinds": _deny_attack_kinds.duplicate(),
+	}
 
 
 static func think_left() -> int:
@@ -328,13 +633,12 @@ static func _nearest_from(from: Node, pack: Array, charmed_only: bool) -> Node:
 	return nearest
 
 
-static func _refresh(tree: SceneTree, rescan := false) -> void:
+static func _refresh(tree: SceneTree, rescan := false, frame := -1) -> void:
 	_players.clear()
 	_fields.clear()
 	_clouds.clear()
 	if tree == null:
 		_player_at = Vector3.ZERO
-		_write_gauges()
 		return
 	for player_variant: Variant in tree.get_nodes_in_group(PLAYER_GROUP):
 		var player := _node3d(player_variant)
@@ -352,12 +656,14 @@ static func _refresh(tree: SceneTree, rescan := false) -> void:
 		var cloud := _cloud(cloud_variant)
 		if cloud != null:
 			_clouds.append(cloud)
-	_refresh_static(tree)
+	if rescan or _static_frame < 0 \
+			or (frame - _static_frame) >= 8 or _city_rings.is_empty():
+		_refresh_static(tree)
+		_static_frame = maxi(frame, 0)
 	if rescan:
 		_rescan_mobs(tree)
 	else:
 		_prune_mobs()
-	_write_gauges()
 
 
 static func _anchor_players() -> void:
@@ -380,6 +686,7 @@ static func _refresh_static(tree: SceneTree) -> void:
 	_safe_boxes.clear()
 	_city_rings.clear()
 	_monuments.clear()
+	_spawn_pads.clear()
 	_overlay = null
 	for zone_variant: Variant in tree.get_nodes_in_group(SAFE_GROUP):
 		var zone := _safe_box(zone_variant)
@@ -393,6 +700,10 @@ static func _refresh_static(tree: SceneTree) -> void:
 		var site := _monument(site_variant)
 		if site != null:
 			_monuments.append(site)
+	for pad_variant: Variant in tree.get_nodes_in_group(PAD_GROUP):
+		var pad := _spawn_pad(pad_variant)
+		if pad != null:
+			_spawn_pads.append(pad)
 	var overlay_variant: Variant = tree.get_first_node_in_group(OVERLAY_GROUP)
 	_overlay = _node(overlay_variant)
 
@@ -482,6 +793,12 @@ static func _monument(node: Variant) -> PatchMonument:
 	return node as PatchMonument
 
 
+static func _spawn_pad(node: Variant) -> CrawlerSpawnPad:
+	if not _living(node):
+		return null
+	return node as CrawlerSpawnPad
+
+
 static func _overlay_node() -> LandPatchOverlay:
 	if not _living(_overlay):
 		_overlay = null
@@ -489,34 +806,75 @@ static func _overlay_node() -> LandPatchOverlay:
 	return _overlay as LandPatchOverlay
 
 
-static func _write_gauges() -> void:
-	LagTracker.set_gauge("mobs", float(_live_mobs.size()))
-	LagTracker.set_gauge("mob_ai", float(_ai_usec) * 0.001)
-
-
 static func _publish() -> void:
 	if _physics_frame < 0:
 		return
-	var live := _live_mobs.size()
-	var ai_ms := float(_ai_usec) * 0.001
-	_write_gauges()
-	if live != _last_live and (_last_live < 0 or absi(live - _last_live) >= 8):
-		LagTracker.note_throttled("mobs", "mob_count",
-			"%d crawler mobs  %d chasing  %d charmed" % [
-				live, _chasing, _charmed.size()], 0.35)
-	if _chasing != _last_chase and (_last_chase < 0 or absi(_chasing - _last_chase) >= 6):
-		LagTracker.note_throttled("mobs", "mob_chase",
-			"%d chasing the player (%d live)" % [_chasing, live], 0.35)
-	if ai_ms >= 4.0:
-		LagTracker.note_throttled("mobs", "mob_ai",
-			"mob targeting %.1f ms  %d live  %d chase" % [ai_ms, live, _chasing],
-			0.4, {
-				"ai_ms": snappedf(ai_ms, 0.01),
-				"live": live,
-				"ticked": _ticked,
-				"chase": _chasing,
-				"charm": _charmed.size(),
-				"players": _players.size(),
-			})
-	_last_live = live
+	_window_frames += 1
+	if (_window_frames & 7) == 0:
+		_pile = _count_pile()
+	_phys_pairs = int(Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS))
+	_phys_bodies = int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS))
+	_last_live = _live_mobs.size()
 	_last_chase = _chasing
+	var now := float(Time.get_ticks_msec()) * 0.001
+	if _window_started < 0.0:
+		_window_started = now
+	if now - _window_started >= THINK_LOG_GAP:
+		_reset_think_window(now)
+
+
+static func _reset_think_window(now: float) -> void:
+	_window_started = now
+	_window_frames = 0
+	_window_think_ok = 0
+	_window_think_denied = 0
+	_window_attack_ok = 0
+	_window_attack_denied = 0
+	_window_live_sum = 0
+	_window_chase_sum = 0
+	_window_windup_sum = 0
+	_window_hot_sum = 0
+	_window_warm_sum = 0
+	_window_cold_sum = 0
+	_window_pile_sum = 0
+	_window_ai_usec = 0
+	_window_think_usec = 0
+	_window_think_cap = 0
+	_window_attack_cap = 0
+	_peak_live = 0
+	_peak_chase = 0
+	_peak_windup = 0
+	_peak_pile = 0
+	_peak_pairs = 0
+	_peak_bodies = 0
+	_peak_ai_ms = 0.0
+	_think_kinds.clear()
+	_attack_kinds.clear()
+	_deny_think_kinds.clear()
+	_deny_attack_kinds.clear()
+
+
+static func _count_pile() -> int:
+	if _live_mobs.is_empty():
+		return 0
+	if _players.is_empty() and _player_at == Vector3.ZERO:
+		return 0
+	var piled := 0
+	var reach2 := 3.61
+	for item: Variant in _live_mobs:
+		var mob := _node3d(item)
+		if mob != null \
+				and mob.global_position.distance_squared_to(_player_at) <= reach2:
+			piled += 1
+	return piled
+
+
+static func _kind_of(mob: Node) -> String:
+	if not _living(mob) or not mob.has_method(&"wild_kind"):
+		return ""
+	return str(mob.call(&"wild_kind"))
+
+
+static func _count_kind(bag: Dictionary, kind: String) -> void:
+	var key := kind if not kind.is_empty() else "?"
+	bag[key] = int(bag.get(key, 0)) + 1

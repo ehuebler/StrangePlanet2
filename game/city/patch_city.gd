@@ -1127,6 +1127,7 @@ func ensure_crawler_waypoint() -> Landmark:
 		add_child(mark)
 	if not mark.is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP):
 		mark.add_to_group(CrawlerRules.CITY_WAYPOINT_GROUP)
+	CrawlerRules.apply_crawler_waypoint_tint(mark)
 	if mark.is_inside_tree() and mark.planet != null:
 		mark.place()
 	return mark
@@ -1194,9 +1195,15 @@ func hover_point(clearance := 96.0) -> Vector3:
 
 
 static func flora_covers(direction: Vector3) -> bool:
-	var at := direction.normalized()
-	if BuildingFloraClear.covers(at):
+	if not direction.is_finite():
+		return false
+	if BuildingFloraClear.is_empty() and _flora_pads.is_empty():
+		return false
+	if BuildingFloraClear.covers(direction):
 		return true
+	if _flora_pads.is_empty():
+		return false
+	var at := direction.normalized()
 	for pad in _flora_pads:
 		if pad.covers(at):
 			return true
@@ -3105,8 +3112,6 @@ func _build_fabric(shape: PlanetShape, buckets: Dictionary) -> void:
 		_deck_pad(street_st, shape, row["at"], float(row["half"]), colour)
 	_fabric_streets = _commit_ghost(street_st, "FabricStreets")
 	_emit_fabric_buildings(shape)
-	print("patch_city: fabric %s — %d streets, %d buildings"
-		% [plan.patch_name, streets.size(), fabric.get("lots", []).size()])
 
 
 func _refill_fabric_gaps() -> void:
@@ -3139,8 +3144,6 @@ func _build_city(shape: PlanetShape) -> void:
 	if is_instance_valid(_fabric_buildings):
 		_fabric_buildings.visible = false
 	set_process(true)
-	print("patch_city: built %s — %d buildings, %d lamps"
-		% [plan.patch_name, fabric.get("lots", []).size(), _lamp_spots.size()])
 	if _pad != null:
 		_stamp_flora_lots(_pad.keys, _pad.cell)
 		_publish_flora_pads()
@@ -3151,15 +3154,11 @@ func _dress_city(shape: PlanetShape) -> void:
 	_dressed = true
 	_assign_paint_styles()
 	_bake_wall_shade()
-	print("patch_city: painting walks %s" % plan.patch_name)
 	_paint_ground_map()
 	if not _pad_islands.is_empty():
 		_emit_island_aprons(shape, _pad_islands)
-	print("patch_city: painting facades %s" % plan.patch_name)
 	_dress_buildings(shape)
 	_refresh_night_glow(shape)
-	print("patch_city: painted %s — %d buildings"
-		% [plan.patch_name, fabric.get("lots", []).size()])
 
 
 func _assign_paint_styles() -> void:
@@ -3559,8 +3558,6 @@ func _paint_ground_map() -> void:
 	_ground_image = img
 	_ground_tex = ImageTexture.create_from_image(img)
 	_remap_pavement_map()
-	print("patch_city:     ground map %dx%d  %.2f m/px" % [
-		size, size, span_m / float(size)])
 
 
 func _pad_uv_bounds() -> Rect2:
@@ -6051,8 +6048,6 @@ func _cull_overlapping_lots() -> int:
 			kept.append(lots[index])
 	fabric["lots"] = kept
 	_prune_lot_places()
-	print("patch_city: dropped %d overlapping buildings (%d remain)"
-		% [drop.size(), kept.size()])
 	return drop.size()
 
 

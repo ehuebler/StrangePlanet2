@@ -20,7 +20,7 @@ var _travelled := 0.0
 var _trail_travelled := 0.0
 var _linger_travelled := 0.0
 var _shooter_rid := RID()
-var _disk: MeshInstance3D
+var _disk: Node3D
 var _halo: MeshInstance3D
 var _core_material: StandardMaterial3D
 var _halo_material: StandardMaterial3D
@@ -30,6 +30,8 @@ var _pulse := 0.0
 var _persist_trail: AbilityTrail
 var _struck: Node
 var _shock: MeteorShock
+var _cone_beam: EnergyVfx
+var _cone_origin := Vector3.INF
 var _pierced: Dictionary = {}
 var _bounces_left := 0
 
@@ -79,6 +81,7 @@ static func launch(world: Node, source: OnlinePlayer, ability_id: String,
 	if absf(facing.dot(up)) < 0.98:
 		projectile.look_at(from + facing, up)
 	if projectile._is_energy_cone():
+		projectile._cone_origin = from
 		projectile._aim_cone()
 	return projectile
 
@@ -187,44 +190,11 @@ func _build_energy_bolt() -> void:
 	var quoted_radius := maxf(
 		float(stats.get("projectile_radius",
 			CrawlerRules.LIGHT_BOLT_PROJECTILE_RADIUS)), 0.04)
-	var tint := _cast_tint()
-	var core := SphereMesh.new()
-	core.radius = quoted_radius
-	core.height = quoted_radius * 2.0
-	core.radial_segments = 16
-	core.rings = 8
-	_core_material = StandardMaterial3D.new()
-	_core_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_core_material.albedo_color = tint.lerp(Color(1.0, 0.45, 0.82), 0.35)
-	_core_material.emission_enabled = true
-	_core_material.emission = tint
-	_core_material.emission_energy_multiplier = 6.4
-	core.material = _core_material
-	_disk = MeshInstance3D.new()
-	_disk.mesh = core
-	_disk.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_disk)
-
-	var halo_mesh := SphereMesh.new()
-	halo_mesh.radius = quoted_radius * 1.7
-	halo_mesh.height = quoted_radius * 3.4
-	halo_mesh.radial_segments = 12
-	halo_mesh.rings = 6
-	_halo_material = StandardMaterial3D.new()
-	_halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	_halo_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_halo_material.albedo_color = Color(tint, 0.42)
-	_halo_material.emission_enabled = true
-	_halo_material.emission = tint.lerp(Color(1.0, 0.42, 0.78), 0.5)
-	_halo_material.emission_energy_multiplier = 3.6
-	halo_mesh.material = _halo_material
-	_halo = MeshInstance3D.new()
-	_halo.mesh = halo_mesh
-	_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_halo)
-
+	var tint := EnergyVfx.TINT_PINK
+	var ball := EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, tint)
+	add_child(ball)
+	ball.set_ball_radius(quoted_radius)
+	_disk = ball
 	var light := OmniLight3D.new()
 	light.light_color = tint.lerp(Color(1.0, 0.5, 0.85), 0.4)
 	light.light_energy = 1.8
@@ -292,44 +262,11 @@ func _build_teleport_orb() -> void:
 	var quoted_radius := maxf(
 		float(stats.get("projectile_radius",
 			CrawlerRules.TELEPORT_PROJECTILE_RADIUS)), 0.08)
-	var tint := Color.WHITE
-	var core := SphereMesh.new()
-	core.radius = quoted_radius
-	core.height = quoted_radius * 2.0
-	core.radial_segments = 18
-	core.rings = 10
-	_core_material = StandardMaterial3D.new()
-	_core_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_core_material.albedo_color = tint
-	_core_material.emission_enabled = true
-	_core_material.emission = tint
-	_core_material.emission_energy_multiplier = 7.2
-	core.material = _core_material
-	_disk = MeshInstance3D.new()
-	_disk.mesh = core
-	_disk.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_disk)
-
-	var halo_mesh := SphereMesh.new()
-	halo_mesh.radius = quoted_radius * 1.7
-	halo_mesh.height = quoted_radius * 3.4
-	halo_mesh.radial_segments = 14
-	halo_mesh.rings = 8
-	_halo_material = StandardMaterial3D.new()
-	_halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	_halo_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	_halo_material.albedo_color = Color(tint, 0.42)
-	_halo_material.emission_enabled = true
-	_halo_material.emission = tint
-	_halo_material.emission_energy_multiplier = 3.8
-	halo_mesh.material = _halo_material
-	_halo = MeshInstance3D.new()
-	_halo.mesh = halo_mesh
-	_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_halo)
-
+	var tint := EnergyVfx.TINT_WHITE
+	var ball := EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, tint)
+	add_child(ball)
+	ball.set_ball_radius(quoted_radius)
+	_disk = ball
 	var light := OmniLight3D.new()
 	light.light_color = tint
 	light.light_energy = 3.2
@@ -349,10 +286,13 @@ func _build_energy_cone() -> void:
 	dummy.mesh = mesh
 	_disk = dummy
 	add_child(dummy)
+	_cone_beam = EnergyVfx.make(EnergyVfx.Kind.BEAM_STREAMS, EnergyVfx.TINT_WHITE)
+	_cone_beam.top_level = true
+	add_child(_cone_beam)
 	_shock = MeteorShock.new()
 	_shock.radius = _cone_radius()
+	_shock.visible = false
 	add_child(_shock)
-	_shock.set_tint(_cast_tint())
 	_aim_cone()
 
 
@@ -611,17 +551,13 @@ func _pulse_bolt(delta: float) -> void:
 	_pulse += delta * 8.5
 	var wave := 0.74 + 0.26 * (0.5 + 0.5 * sin(_pulse * TAU))
 	if is_instance_valid(_disk):
-		_disk.scale = Vector3.ONE * wave
+		var radius := _quoted_radius()
+		if _disk is EnergyVfx:
+			(_disk as EnergyVfx).set_ball_radius(radius * wave)
+		else:
+			_disk.scale = Vector3.ONE * wave
 	if is_instance_valid(_halo):
 		_halo.scale = Vector3.ONE * (0.88 + (1.0 - wave) * 0.45)
-	var tint := _cast_tint()
-	var blush := tint.lerp(Color(1.0, 0.42, 0.78), 0.5 + 0.5 * sin(_pulse * TAU))
-	if _core_material != null:
-		_core_material.emission = blush
-		_core_material.emission_energy_multiplier = 5.2 + 2.4 * wave
-	if _halo_material != null:
-		_halo_material.albedo_color = Color(blush, 0.28 + 0.22 * wave)
-		_halo_material.emission = blush
 
 
 func _emit_impact_cast(facing: Vector3) -> void:
@@ -678,13 +614,16 @@ func _world_probe_radius() -> float:
 
 
 func _aim_cone() -> void:
-	if not is_instance_valid(_shock):
+	if is_instance_valid(_shock):
+		_shock.visible = false
+	if not is_instance_valid(_cone_beam):
 		return
-	_shock.radius = _cone_radius()
-	var along := _velocity.normalized() \
-		if _velocity.length_squared() > 0.001 else _along
-	_shock.set_tint(_cast_tint())
-	_shock.aim(global_position, along, _speed)
+	if not _cone_origin.is_finite():
+		_cone_origin = global_position
+	_cone_beam.set_tint(EnergyVfx.TINT_WHITE)
+	_cone_beam.place_beam(
+		_cone_origin, global_position,
+		clampf(_cone_radius() * 0.06, 0.14, 0.36))
 
 
 func _pierce_cone() -> void:

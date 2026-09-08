@@ -13,7 +13,7 @@ const HOLD := 7.0
 const FADE := 1.4
 const LINE_SIZE := 11
 const TITLE_SIZE := 8
-const WIDTH := 176.0
+const WIDTH := 220.0
 
 var _rows: VBoxContainer
 var _entries: Array[Dictionary] = []
@@ -61,12 +61,13 @@ func _ready() -> void:
 	column.add_child(_rows)
 
 
-func record(source: String, amount: float, ability := "") -> void:
+func record(source: String, amount: float, ability := "",
+		tags: PackedStringArray = PackedStringArray()) -> void:
 	if amount <= 0.0:
 		return
 	if _rows == null:
 		return
-	var who := _who(source, ability)
+	var who := _who(source, ability, tags)
 	var row := _make_row(who, amount)
 	_rows.add_child(row)
 	_entries.append({"row": row, "left": HOLD})
@@ -138,11 +139,16 @@ func _make_row(who: String, amount: float) -> HBoxContainer:
 	return row
 
 
-func _who(source: String, ability: String) -> String:
+func _who(source: String, ability: String,
+		tags: PackedStringArray = PackedStringArray()) -> String:
 	var named := source.strip_edges()
 	if named.is_empty():
 		named = ability.strip_edges()
-	return named if not named.is_empty() else "Hit"
+	if named.is_empty():
+		named = "Hit"
+	if tags.is_empty():
+		return named
+	return "%s · %s" % [named, " · ".join(tags)]
 
 
 func _drop(index: int) -> void:

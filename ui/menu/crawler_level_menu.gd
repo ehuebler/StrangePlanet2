@@ -6,6 +6,8 @@ extends Control
 
 signal closed
 
+enum Tab { SPEND, PREFS }
+
 const THEME: Theme = preload("res://ui/themes/main_theme.tres")
 const RED := Color("ef151f")
 const GREEN := Color("39d98a")
@@ -15,19 +17,29 @@ const BLACK := Color(0.0, 0.0, 0.0, 0.86)
 const HOLD_SECONDS := 0.12
 
 var _player: OnlinePlayer
+var _prefs_only := false
+var _tab := Tab.SPEND
 var _closing := false
 var _title: Label
+var _tabs: HBoxContainer
+var _spend_page: VBoxContainer
+var _prefs_page: VBoxContainer
+var _auto: Button
 var _reroll: Button
 var _tile_host: GridContainer
 var _tiles: Dictionary = {}
+var _pref_boxes: Dictionary = {}
 var _offer_sig := ""
 var _hold_stat := ""
 var _hold_elapsed := 0.0
 var _hold_tick_usec := 0
+var _fonts_dirty := false
 
 
-func configure(player: OnlinePlayer) -> void:
+func configure(player: OnlinePlayer, prefs_only := false) -> void:
 	_player = player
+	_prefs_only = prefs_only
+	_tab = Tab.PREFS if prefs_only else Tab.SPEND
 
 
 func _init() -> void:
@@ -41,12 +53,26 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	_build()
 	CrtType.watch(self)
+	_build()
 	_refresh()
+	_queue_fonts()
 	if _player != null and _player.crawler_progress != null \
 			and not _player.crawler_progress.changed.is_connected(_refresh):
 		_player.crawler_progress.changed.connect(_refresh)
+
+
+func _queue_fonts() -> void:
+	if _fonts_dirty:
+		return
+	_fonts_dirty = true
+	call_deferred(&"_flush_fonts")
+
+
+func _flush_fonts() -> void:
+	_fonts_dirty = false
+	for tile_variant: Variant in _tiles.values():
+		_scale_tile_fonts(tile_variant as PanelContainer)
 
 
 func _input(event: InputEvent) -> void:
@@ -63,23 +89,48 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_K:
+		get_viewport().set_input_as_handled()
+		_on_auto_key()
+		return
 	if event.is_action_pressed(&"inventory") or event.is_action_pressed(&"pause") \
 			or event.is_action_pressed(&"interact"):
 		get_viewport().set_input_as_handled()
-		if _player != null and _player.crawler_progress != null \
-				and _player.crawler_progress.unspent <= 0:
+		if _can_close():
 			close()
 
 
 func close() -> void:
 	if _closing:
 		return
-	if _player != null and _player.crawler_progress != null \
-			and _player.crawler_progress.unspent > 0:
+	if not _can_close():
 		return
 	_closing = true
 	closed.emit()
 	queue_free()
+
+
+func _can_close() -> bool:
+	if _prefs_only:
+		return true
+	return _player == null or _player.crawler_progress == null \
+		or _player.crawler_progress.unspent <= 0
+
+
+func show_tab(tab: Tab) -> void:
+	_tab = tab
+	if _spend_page != null:
+		_spend_page.visible = _tab == Tab.SPEND and not _prefs_only
+	if _prefs_page != null:
+		_prefs_page.visible = _tab == Tab.PREFS
+	if _reroll != null:
+		_reroll.visible = not _prefs_only and _tab == Tab.SPEND
+	_paint_tabs()
+
+
+func current_tab() -> Tab:
+	return _tab
 
 
 func _build() -> void:
@@ -93,11 +144,15 @@ func _build() -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var box := StyleBoxFlat.new()
 	box.bg_color = BLACK
-	box.border_color = RED
-	box.set_border_width_all(3)
-	box.shadow_color = Color(RED, 0.35)
-	box.shadow_size = 10
+	box.set_border_width_all(0)
 	panel.add_theme_stylebox_override(&"panel", box)
+	var rim := RedGlowPanel.add_to(panel)
+	rim.fill_color = Color.TRANSPARENT
+	rim.border_color = Color(RED, 0.95)
+	rim.border_width = 3.0
+	rim.glow_intensity = 1.35
+	rim.glow_spread = 10.0
+	rim.glow_layers = 5
 	add_child(panel)
 
 	var column := VBoxContainer.new()
@@ -112,19 +167,33 @@ func _build() -> void:
 
 	_title = Label.new()
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_title.add_theme_font_size_override(&"font_size", 22)
+	_title.add_theme_font_size_override(&"font_size", 20)
 	_title.add_theme_color_override(&"font_color", RED)
 	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(_title)
+
+	_tabs = HBoxContainer.new()
+	_tabs.name = "LevelTabs"
+	_tabs.add_theme_constant_override(&"separation", 8)
+	_tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.add_child(_tabs)
+	_fill_tabs()
+
+	_spend_page = VBoxContainer.new()
+	_spend_page.name = "SpendPage"
+	_spend_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_spend_page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_spend_page.add_theme_constant_override(&"separation", 10)
+	column.add_child(_spend_page)
 
 	var hint := Label.new()
 	hint.name = "SpendHint"
 	hint.text = "HOLD A TILE TO SPEND"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.add_theme_font_size_override(&"font_size", 12)
+	hint.add_theme_font_size_override(&"font_size", 11)
 	hint.add_theme_color_override(&"font_color", Color(1, 1, 1, 0.72))
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	column.add_child(hint)
+	_spend_page.add_child(hint)
 
 	_tile_host = GridContainer.new()
 	_tile_host.name = "SpendTiles"
@@ -134,18 +203,48 @@ func _build() -> void:
 	_tile_host.add_theme_constant_override(&"h_separation", 8)
 	_tile_host.add_theme_constant_override(&"v_separation", 8)
 	_tile_host.mouse_filter = Control.MOUSE_FILTER_STOP
-	column.add_child(_tile_host)
+	_spend_page.add_child(_tile_host)
+
+	_prefs_page = VBoxContainer.new()
+	_prefs_page.name = "AutoSelectPrefs"
+	_prefs_page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_prefs_page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_prefs_page.add_theme_constant_override(&"separation", 8)
+	column.add_child(_prefs_page)
+	_fill_prefs()
+
+	var footer := HBoxContainer.new()
+	footer.name = "LevelFooter"
+	footer.add_theme_constant_override(&"separation", 8)
+	footer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	footer.size_flags_vertical = Control.SIZE_SHRINK_END
+	column.add_child(footer)
+
+	_auto = Button.new()
+	_auto.name = "AutoSelectToggle"
+	_auto.custom_minimum_size.y = 48.0
+	_auto.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_auto.size_flags_vertical = Control.SIZE_SHRINK_END
+	_auto.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_auto.add_theme_font_size_override(&"font_size", 12)
+	_auto.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_auto.clip_text = false
+	_auto.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_auto.pressed.connect(_on_auto_pressed)
+	footer.add_child(_auto)
+	_refresh_auto()
 
 	_reroll = Button.new()
 	_reroll.name = "RerollOffers"
-	_reroll.custom_minimum_size.y = 42.0
+	_reroll.custom_minimum_size.y = 48.0
 	_reroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_reroll.size_flags_vertical = Control.SIZE_SHRINK_END
 	_reroll.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	_reroll.add_theme_font_size_override(&"font_size", 15)
+	_reroll.add_theme_font_size_override(&"font_size", 13)
 	_reroll.pressed.connect(_on_reroll)
 	_style_reroll(false)
-	column.add_child(_reroll)
+	footer.add_child(_reroll)
+	show_tab(_tab)
 
 
 func _make_tile(offer: Dictionary) -> PanelContainer:
@@ -177,7 +276,7 @@ func _make_tile(offer: Dictionary) -> PanelContainer:
 	host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	host.resized.connect(_scale_tile_fonts.bind(tile))
+	host.resized.connect(_queue_fonts)
 	tile.add_child(host)
 
 	var fill := ColorRect.new()
@@ -207,32 +306,38 @@ func _make_tile(offer: Dictionary) -> PanelContainer:
 	var ink := CrawlerProgress.rarity_color(rarity)
 	var title := Label.new()
 	title.name = "SpendTitle"
-	_fit_label(title, 42, ink, true, 2)
+	title.set_meta(&"crt_chromatic", true)
+	_fit_label(title, 36, ink, true, 2)
 	title.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(title)
 
 	var rarity_label := Label.new()
 	rarity_label.name = "SpendRarity"
-	_fit_label(rarity_label, 20, ink)
+	_fit_label(rarity_label, 17, ink)
 	body.add_child(rarity_label)
 
 	var boost := Label.new()
 	boost.name = "SpendBoost"
-	_fit_label(boost, 32, ink, true, 2)
+	_fit_label(boost, 28, ink, true, 2)
 	boost.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(boost)
 
 	var values := Label.new()
 	values.name = "SpendValues"
-	_fit_label(values, 22, ink, true, 2)
+	_fit_label(values, 19, ink, true, 2)
 	body.add_child(values)
 
 	var blurb := Label.new()
 	blurb.name = "SpendBlurb"
 	blurb.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_fit_label(blurb, 18, ink, true, 3)
+	_fit_label(blurb, 16, ink, true, 3)
 	body.add_child(blurb)
 
+	tile.set_meta(&"title", title)
+	tile.set_meta(&"rarity_label", rarity_label)
+	tile.set_meta(&"boost", boost)
+	tile.set_meta(&"values", values)
+	tile.set_meta(&"blurb", blurb)
 	_tiles[stat_id] = tile
 	return tile
 
@@ -329,10 +434,18 @@ func _paint_tile(stat_id: String, hovered: bool, tile: PanelContainer = null) ->
 		if hovered else Color(accent.r * 0.10, accent.g * 0.08, accent.b * 0.12, 0.92)
 	var box := StyleBoxFlat.new()
 	box.bg_color = fill
-	box.border_color = accent
-	box.set_border_width_all(2 if hovered else 1)
+	box.set_border_width_all(0)
 	box.set_content_margin_all(8)
 	tile.add_theme_stylebox_override(&"panel", box)
+	var rim := tile.get_node_or_null("RedGlowPanel") as RedGlowPanel
+	if rim == null:
+		rim = RedGlowPanel.add_to(tile)
+		rim.fill_color = Color.TRANSPARENT
+		rim.glow_spread = 7.0
+		rim.glow_layers = 4
+	rim.border_color = Color(accent, 0.95)
+	rim.border_width = 2.0 if hovered else 1.5
+	rim.glow_intensity = 1.4 if hovered else 1.15
 
 
 func _fit_label(
@@ -364,16 +477,16 @@ func _scale_tile_fonts(tile: PanelContainer) -> void:
 	var ink := CrawlerProgress.rarity_color(
 		int(tile.get_meta(&"rarity", CrawlerProgress.RARITY_COMMON)))
 	var tall := host.size.y
-	_paint_copy(tile.find_child("SpendTitle", true, false) as Label,
-		clampf(tall * 0.26, 32.0, 72.0), ink)
-	_paint_copy(tile.find_child("SpendRarity", true, false) as Label,
-		clampf(tall * 0.11, 18.0, 34.0), ink)
-	_paint_copy(tile.find_child("SpendBoost", true, false) as Label,
-		clampf(tall * 0.18, 24.0, 52.0), ink)
-	_paint_copy(tile.find_child("SpendValues", true, false) as Label,
-		clampf(tall * 0.12, 18.0, 36.0), ink)
-	_paint_copy(tile.find_child("SpendBlurb", true, false) as Label,
-		clampf(tall * 0.09, 16.0, 28.0), ink)
+	_paint_copy(tile.get_meta(&"title") as Label,
+		clampf(tall * 0.22, 28.0, 62.0), ink)
+	_paint_copy(tile.get_meta(&"rarity_label") as Label,
+		clampf(tall * 0.095, 16.0, 30.0), ink)
+	_paint_copy(tile.get_meta(&"boost") as Label,
+		clampf(tall * 0.155, 21.0, 45.0), ink)
+	_paint_copy(tile.get_meta(&"values") as Label,
+		clampf(tall * 0.105, 16.0, 32.0), ink)
+	_paint_copy(tile.get_meta(&"blurb") as Label,
+		clampf(tall * 0.08, 14.0, 24.0), ink)
 
 
 func _paint_copy(label: Label, size: float, colour: Color) -> void:
@@ -388,13 +501,155 @@ func _paint_copy(label: Label, size: float, colour: Color) -> void:
 			crt.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 
+func _fill_tabs() -> void:
+	if _tabs == null:
+		return
+	for child: Node in _tabs.get_children():
+		_tabs.remove_child(child)
+		child.queue_free()
+	_add_tab_button("Level Up", Tab.SPEND)
+	_add_tab_button("Auto Select Prefs", Tab.PREFS)
+	_paint_tabs()
+
+
+func _add_tab_button(label: String, tab: Tab) -> void:
+	var button := Button.new()
+	button.name = "LevelTab_%s" % ("Spend" if tab == Tab.SPEND else "Prefs")
+	button.text = label.to_upper()
+	button.custom_minimum_size.y = 34.0
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.add_theme_font_size_override(&"font_size", 12)
+	button.pressed.connect(func() -> void: show_tab(tab))
+	_tabs.add_child(button)
+
+
+func _paint_tabs() -> void:
+	if _tabs == null:
+		return
+	for child: Node in _tabs.get_children():
+		var button := child as Button
+		if button == null:
+			continue
+		var spend := button.name == "LevelTab_Spend"
+		var active := (_tab == Tab.SPEND) == spend
+		if _prefs_only and spend:
+			button.disabled = true
+			active = false
+		_style_tab(button, active)
+
+
+func _style_tab(button: Button, active: bool) -> void:
+	var accent := GREEN if active else Color(RED, 0.75)
+	var fill := Color(0.0, 0.15, 0.045, 0.82) if active \
+		else Color(0.08, 0.02, 0.02, 0.9)
+	button.add_theme_color_override(&"font_color", accent)
+	button.add_theme_color_override(&"font_hover_color", GREEN)
+	button.add_theme_color_override(&"font_pressed_color", GREEN)
+	button.add_theme_color_override(&"font_disabled_color", Color(1, 1, 1, 0.35))
+	var box := StyleBoxFlat.new()
+	box.bg_color = fill
+	box.border_color = Color(accent, 0.95)
+	box.set_border_width_all(2 if active else 1)
+	box.set_content_margin_all(8)
+	button.add_theme_stylebox_override(&"normal", box)
+	var hover := box.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(0.0, 0.2, 0.06, 0.88)
+	hover.border_color = GREEN
+	button.add_theme_stylebox_override(&"hover", hover)
+	button.add_theme_stylebox_override(&"pressed", hover)
+	var dead := box.duplicate() as StyleBoxFlat
+	dead.bg_color = Color(0.08, 0.02, 0.02, 0.9)
+	dead.border_color = Color(1, 1, 1, 0.28)
+	button.add_theme_stylebox_override(&"disabled", dead)
+
+
+func _fill_prefs() -> void:
+	if _prefs_page == null:
+		return
+	for child: Node in _prefs_page.get_children():
+		_prefs_page.remove_child(child)
+		child.queue_free()
+	_pref_boxes.clear()
+	var intro := Label.new()
+	intro.text = "When auto select is on, it takes the highest rarity match."
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	intro.add_theme_font_size_override(&"font_size", 13)
+	intro.add_theme_color_override(&"font_color", Color(1, 1, 1, 0.72))
+	intro.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prefs_page.add_child(intro)
+	for pref_id: String in CrawlerAutoSelect.PREF_ORDER:
+		var box := CheckBox.new()
+		box.name = "AutoPref_%s" % pref_id
+		box.text = "%s  —  %s" % [
+			CrawlerAutoSelect.pref_title(pref_id),
+			CrawlerAutoSelect.pref_blurb(pref_id),
+		]
+		box.button_pressed = CrawlerMeta.auto_pref_on(pref_id)
+		box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		box.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		box.add_theme_font_size_override(&"font_size", 16)
+		box.add_theme_color_override(&"font_color", Color(1, 1, 1, 0.92))
+		box.add_theme_color_override(&"font_hover_color", GREEN)
+		box.add_theme_color_override(&"font_pressed_color", GREEN)
+		var chosen := pref_id
+		box.toggled.connect(func(on: bool) -> void:
+			CrawlerMeta.set_auto_pref(chosen, on)
+		)
+		_prefs_page.add_child(box)
+		_pref_boxes[pref_id] = box
+
+
+func _refresh_auto() -> void:
+	if _auto == null:
+		return
+	var on := CrawlerMeta.auto_select()
+	_auto.text = "%s\nPRESS K TO TOGGLE" % ("AUTO SELECT    ON" if on \
+		else "AUTO SELECT    OFF")
+	var accent := GREEN if on else Color(RED, 0.75)
+	var fill := Color(0.0, 0.15, 0.045, 0.82) if on \
+		else Color(0.08, 0.02, 0.02, 0.9)
+	_auto.add_theme_color_override(&"font_color", accent)
+	_auto.add_theme_color_override(&"font_hover_color", GREEN)
+	_auto.add_theme_color_override(&"font_pressed_color", GREEN)
+	var box := StyleBoxFlat.new()
+	box.bg_color = fill
+	box.border_color = Color(accent, 0.95)
+	box.set_border_width_all(2)
+	box.set_content_margin_all(8)
+	_auto.add_theme_stylebox_override(&"normal", box)
+	var hover := box.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(0.0, 0.2, 0.06, 0.88)
+	hover.border_color = GREEN
+	_auto.add_theme_stylebox_override(&"hover", hover)
+	_auto.add_theme_stylebox_override(&"pressed", hover)
+
+
+func _on_auto_pressed() -> void:
+	if _player != null and _player.has_method(&"toggle_crawler_auto_select"):
+		_player.toggle_crawler_auto_select()
+	else:
+		CrawlerMeta.set_auto_select(not CrawlerMeta.auto_select())
+	_refresh_auto()
+
+
+func _on_auto_key() -> void:
+	if CrawlerRules.coop() or _prefs_only:
+		close()
+		return
+	_on_auto_pressed()
+
+
 func _refresh() -> void:
 	var progress := _player.crawler_progress if _player != null else null
+	_refresh_auto()
 	if progress == null:
 		return
-	_title.text = "LEVEL %d    %dg" % [progress.level, progress.gold]
-	if progress.unspent <= 0:
+	_title.text = "LEVEL %d    %sg" % [progress.level, progress.gold_text()]
+	if progress.unspent <= 0 and not _prefs_only:
 		close()
+		return
+	if _prefs_only:
 		return
 	_sync_tiles(progress)
 	_refresh_reroll(progress)
@@ -406,31 +661,31 @@ func _refresh() -> void:
 		var rarity := int(tile.get_meta(&"rarity", CrawlerProgress.RARITY_COMMON))
 		var rank := progress.rank_of(stat_id)
 		var accent := CrawlerProgress.rarity_color(rarity)
-		var title := tile.find_child("SpendTitle", true, false) as Label
-		var rarity_label := tile.find_child("SpendRarity", true, false) as Label
-		var boost := tile.find_child("SpendBoost", true, false) as Label
-		var values := tile.find_child("SpendValues", true, false) as Label
-		var blurb := tile.find_child("SpendBlurb", true, false) as Label
+		var title := tile.get_meta(&"title") as Label
+		var rarity_label := tile.get_meta(&"rarity_label") as Label
+		var boost := tile.get_meta(&"boost") as Label
+		var values := tile.get_meta(&"values") as Label
+		var blurb := tile.get_meta(&"blurb") as Label
 		if title != null:
 			title.text = CrawlerProgress.stat_title(stat_id).to_upper()
+			title.add_theme_color_override(&"font_color", accent)
 		if rarity_label != null:
 			rarity_label.text = CrawlerProgress.rarity_title(rarity).to_upper()
+			rarity_label.add_theme_color_override(&"font_color", accent)
 		if boost != null:
-			boost.text = CrawlerProgress.offer_boost_text(stat_id, amount)
+			boost.text = CrawlerProgress.offer_boost_text(stat_id, amount, rank)
+			boost.add_theme_color_override(&"font_color", accent)
 		if values != null:
 			values.text = "%s  →  %s" % [
 				_preview(progress, stat_id, rank),
 				_preview(progress, stat_id, rank + amount),
 			]
+			values.add_theme_color_override(&"font_color", accent)
 		if blurb != null:
 			blurb.text = CrawlerProgress.stat_blurb(stat_id)
-		_paint_copy(title, 42.0, accent)
-		_paint_copy(rarity_label, 20.0, accent)
-		_paint_copy(boost, 32.0, accent)
-		_paint_copy(values, 22.0, accent)
-		_paint_copy(blurb, 18.0, accent)
-		_scale_tile_fonts(tile)
+			blurb.add_theme_color_override(&"font_color", accent)
 		tile.mouse_filter = Control.MOUSE_FILTER_STOP
+	_queue_fonts()
 
 
 func _sync_tiles(progress: CrawlerProgress) -> void:
@@ -470,18 +725,18 @@ func _preview(_progress: CrawlerProgress, stat_id: String, rank: float) -> Strin
 			return "%d HP" % int(CrawlerProgress.HEALTH_BASE \
 				+ CrawlerProgress.HEALTH_PER_RANK * float(rank))
 		CrawlerProgress.STAT_DEXTERITY:
-			return "%d%%" % int(round((1.0 + CrawlerProgress.DEX_PER_RANK * float(rank)) * 100.0))
+			return "%d%%" % int(round(CrawlerRules.upgrade_scale_f(rank) * 100.0))
 		CrawlerProgress.STAT_FLIGHT:
 			return "%.1fs" % (CrawlerRules.FLIGHT_SECONDS \
-				* (1.0 + CrawlerProgress.FLIGHT_PER_RANK * float(rank)))
+				* CrawlerRules.upgrade_scale_f(rank))
 		CrawlerProgress.STAT_DODGE:
 			return "%d%%" % int(round(minf(
 				CrawlerProgress.DODGE_MAX,
-				CrawlerProgress.DODGE_PER_RANK * float(rank)) * 100.0))
+				CrawlerRules.upgrade_boost_f(rank)) * 100.0))
 		CrawlerProgress.STAT_DEFENSE:
 			return "%d%%" % int(round(minf(
 				CrawlerProgress.DEFENSE_MAX,
-				CrawlerProgress.DEFENSE_PER_RANK * float(rank)) * 100.0))
+				CrawlerRules.upgrade_boost_f(rank)) * 100.0))
 		CrawlerProgress.STAT_JUKE:
 			return "%.2fs" % maxf(
 				CrawlerProgress.JUKE_COOLDOWN_MIN,
@@ -491,11 +746,13 @@ func _preview(_progress: CrawlerProgress, stat_id: String, rank: float) -> Strin
 			return "%.1fm" % (CrawlerProgress.JUKE_DISTANCE_BASE
 				+ CrawlerProgress.JUKE_DISTANCE_PER_RANK * float(rank))
 		CrawlerProgress.STAT_DAMAGE:
-			return "%.2fX" % (1.0 + CrawlerProgress.DAMAGE_PER_RANK * float(rank))
+			return "%.2fX" % CrawlerRules.upgrade_scale_f(rank)
 		CrawlerProgress.STAT_KNOCKBACK:
-			return "%.2fX" % (1.0 + CrawlerProgress.KNOCKBACK_PER_RANK * float(rank))
+			return "%.2fX" % CrawlerRules.upgrade_scale_f(rank)
 		CrawlerProgress.STAT_RANGE:
-			return "%.2fX" % (1.0 + CrawlerProgress.RANGE_PER_RANK * float(rank))
+			return "%.2fX" % CrawlerRules.upgrade_scale_f(rank)
+		CrawlerProgress.STAT_ELEMENTAL:
+			return "%.2fX" % CrawlerRules.upgrade_scale_f(rank)
 		CrawlerProgress.STAT_CAST:
 			return "%.2fs" % CrawlerRules.field_cast_time(
 				CrawlerRules.FIELD_CAST,
@@ -503,11 +760,11 @@ func _preview(_progress: CrawlerProgress, stat_id: String, rank: float) -> Strin
 		CrawlerProgress.STAT_LUCK:
 			return "+%.2f" % float(rank)
 		CrawlerProgress.STAT_GOLD:
-			return "%.2fX" % (1.0 + CrawlerProgress.GOLD_GAIN_PER_RANK * float(rank))
+			return "%.2fX" % CrawlerRules.upgrade_scale_f(rank)
 		CrawlerProgress.STAT_XP:
-			return "%.2fX" % (1.0 + CrawlerProgress.XP_GAIN_PER_RANK * float(rank))
+			return "%.2fX" % CrawlerRules.upgrade_scale_f(rank)
 		CrawlerProgress.STAT_GEMS:
-			return "%.2fX" % (1.0 + CrawlerProgress.GEM_GAIN_PER_RANK * float(rank))
+			return "%.2fX" % CrawlerRules.upgrade_scale_f(rank)
 		_:
 			return str(rank)
 

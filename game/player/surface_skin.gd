@@ -18,6 +18,9 @@ const CAMERA_RIM_COLOR := Color(0.20, 1.0, 0.58)
 const CAMERA_RIM_ENERGY := 1.25
 const CAMERA_RIM_DARK := 0.68
 const CAMERA_RIM_LIGHT := 0.84
+## Sparse look-dictionary key for the neon camera rim. Distinct from "body" so
+## the colour wheel can retint the outline without washing the authored albedo.
+const TINT_OUTLINE := "outline"
 
 
 ## Paints every mesh under `root`, returning them so callers can keep hold of
@@ -128,3 +131,40 @@ static func tint_material(material: ShaderMaterial, colour: Color) -> void:
 	var base: Variant = material.get_shader_parameter(&"base_color")
 	var current := base as Color if base is Color else Color.WHITE
 	material.set_shader_parameter(&"base_color", current * colour)
+
+
+## The authored green rim, or the HTML / Color stored under [constant TINT_OUTLINE].
+static func outline_color(tints: Dictionary) -> Color:
+	if not tints.has(TINT_OUTLINE):
+		return CAMERA_RIM_COLOR
+	var raw: Variant = tints[TINT_OUTLINE]
+	if raw is Color:
+		return raw
+	return Color.html(str(raw))
+
+
+## Recolours the camera rim on a material that already has one. Energy stays
+## whatever [method material_for] authored, so ordinary items stay rimless.
+static func set_rim_color(material: ShaderMaterial, colour: Color) -> void:
+	if material == null:
+		return
+	if float(material.get_shader_parameter(&"camera_rim_energy")) <= 0.0:
+		return
+	material.set_shader_parameter(&"camera_rim_color", colour)
+
+
+static func set_mesh_rim_color(mesh_instance: MeshInstance3D, colour: Color) -> void:
+	if mesh_instance == null or mesh_instance.mesh == null:
+		return
+	for surface in mesh_instance.mesh.get_surface_count():
+		set_rim_color(
+			mesh_instance.get_surface_override_material(surface) as ShaderMaterial,
+			colour)
+
+
+static func apply_outline_tint(root: Node, tints: Dictionary) -> void:
+	if root == null:
+		return
+	var colour := outline_color(tints)
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		set_mesh_rim_color(node as MeshInstance3D, colour)

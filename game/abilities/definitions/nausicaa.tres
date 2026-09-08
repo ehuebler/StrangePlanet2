@@ -8,7 +8,7 @@
 script = ExtResource("1_definition")
 ability_id = "nausicaa"
 title = "Nausicaä"
-description = "Sweep a short blue eye laser across terrain. Each glowing patch waits one second, then the trail erupts from its first mark to its last and carves a shallow indent. Props and targets cannot be painted."
+description = "Sweep a short blue eye laser. Each glowing patch waits one second at the beam tip, or sticks to a mob in front of the beam, then the trail erupts from its first mark to its last and carves a shallow indent. Standing in an eruption hurts you, not other players, unless you have explosion immunity."
 implementation = ExtResource("2_implementation")
 icon = ExtResource("3_icon")
 tint = Color(0.184314, 0.470588, 1.000000, 1.000000)
@@ -34,7 +34,7 @@ stats = {
 "damage": 2500.0,
 "player_damage": 12.0,
 "duration": 0.75,
-"range": 14.0,
+"range": 5.0,
 "radius": 5.0,
 "cooldown": 7.0,
 "delay": 1.0,

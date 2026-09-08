@@ -42,11 +42,14 @@ var _soar_sign := 1.0
 var _phase: Phase = Phase.SOAR
 var _ram_heading := Vector3.ZERO
 var _glide_loft := -1.0
+var _cached_soar_centre := Vector3.ZERO
+var _cached_soar_home := Vector3.INF
+var _soar_frame := -1
 
 
 func _ready() -> void:
-	_base_health = 48.0
-	_base_damage = 22.0
+	_base_health = 4.0
+	_base_damage = 15.0
 	_base_speed = 12.0
 	_faces_motion = true
 	super._ready()
@@ -122,13 +125,17 @@ func _keep_clear_of_terrain(snap: bool) -> void:
 			velocity += up * down
 
 
+func _tick_idle(delta: float) -> void:
+	_phase = Phase.SOAR
+	_ram_heading = Vector3.ZERO
+	_glide_loft = -1.0
+	_soar_circle(delta)
+
+
 func _tick_ai(delta: float) -> void:
 	var player := _hunt_target(delta)
 	if player == null:
-		_phase = Phase.SOAR
-		_ram_heading = Vector3.ZERO
-		_glide_loft = -1.0
-		_soar_circle(delta)
+		_tick_idle(delta)
 		return
 	if _phase == Phase.RAM:
 		_update_ram(player, delta)
@@ -365,16 +372,25 @@ func soar_point() -> Vector3:
 
 
 func _soar_centre() -> Vector3:
-	var up := _up()
+	var frame := Engine.get_physics_frames()
 	var home := hang_origin if hang_origin.length_squared() > 0.25 \
 		else global_position
-	if _planet == null:
-		return home + up * _soar_loft
-	var local := _planet.to_local(home)
-	if local.length_squared() < 0.0001:
-		local = up
-	var surface := _planet.surface_position(local)
-	return surface + _planet.up_at(surface) * _soar_loft
+	if frame == _soar_frame \
+			or (home.distance_squared_to(_cached_soar_home) < 4.0 \
+			and _cached_soar_centre.length_squared() > 0.01):
+		return _cached_soar_centre
+	var up := _up()
+	var centre := home + up * _soar_loft
+	if _planet != null:
+		var local := _planet.to_local(home)
+		if local.length_squared() < 0.0001:
+			local = up
+		var surface := _planet.mesh_position(local)
+		centre = surface + _planet.up_at(surface) * _soar_loft
+	_soar_frame = frame
+	_cached_soar_home = home
+	_cached_soar_centre = centre
+	return centre
 
 
 func _soar_circle(delta: float) -> void:

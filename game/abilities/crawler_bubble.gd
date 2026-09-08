@@ -35,8 +35,7 @@ var authoritative := false
 var bounces_left := 0
 
 var _age := 0.0
-var _core: MeshInstance3D
-var _halo: MeshInstance3D
+var _core: EnergyVfx
 var _spent := false
 var _shooter_rid := RID()
 var _grazed: Dictionary = {}
@@ -92,46 +91,13 @@ static func spawn(world: Node, source: OnlinePlayer, recipe: Dictionary,
 func _ready() -> void:
 	name = "CrawlerBubble"
 	add_to_group(GROUP)
-	var radius := size
-	var mesh := SphereMesh.new()
-	mesh.radius = radius
-	mesh.height = radius * 2.0
-	mesh.radial_segments = 18
-	mesh.rings = 10
-	_core = MeshInstance3D.new()
-	_core.mesh = mesh
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = CORE_COLOR
-	material.emission_enabled = true
-	material.emission = GLOW_COLOR
-	material.emission_energy_multiplier = 6.8
-	_core.material_override = material
-	_core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_core = EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, GLOW_COLOR)
 	add_child(_core)
-	var halo_mesh := SphereMesh.new()
-	halo_mesh.radius = radius * 1.55
-	halo_mesh.height = radius * 3.1
-	halo_mesh.radial_segments = 16
-	halo_mesh.rings = 8
-	_halo = MeshInstance3D.new()
-	_halo.mesh = halo_mesh
-	var halo_material := StandardMaterial3D.new()
-	halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	halo_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	halo_material.albedo_color = HALO_COLOR
-	halo_material.emission_enabled = true
-	halo_material.emission = GLOW_COLOR
-	halo_material.emission_energy_multiplier = 4.2
-	_halo.material_override = halo_material
-	_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_halo)
+	_core.set_ball_radius(size)
 	var lamp := OmniLight3D.new()
 	lamp.light_color = GLOW_COLOR
 	lamp.light_energy = 3.8
-	lamp.omni_range = maxf(radius * 8.0, 2.4)
+	lamp.omni_range = maxf(size * 8.0, 2.4)
 	lamp.shadow_enabled = false
 	add_child(lamp)
 

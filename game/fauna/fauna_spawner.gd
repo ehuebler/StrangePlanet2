@@ -102,6 +102,7 @@ func _build() -> void:
 
 	_make_light_pool()
 	_built = true
+	set_physics_process(true)
 	if _is_host():
 		var colony_began := Time.get_ticks_usec()
 		_survey_placement_checks = 0
@@ -112,6 +113,11 @@ func _build() -> void:
 	elif multiplayer.has_multiplayer_peer():
 		_request_fauna_snapshot.rpc_id(1)
 	set_process(true)
+
+
+func _physics_process(_delta: float) -> void:
+	if _built:
+		CrawlerMobSense.ensure_frame(get_tree())
 
 
 func _process(delta: float) -> void:

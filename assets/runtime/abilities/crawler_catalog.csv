@@ -4,12 +4,10 @@ ability,kame,Kame,"Both arms forward. One long burst from the hands roots you wh
 ability,meteor_punch,Meteor Punch,"Fist out, and go. From the air you dive; from your feet you launch flat and land in a crater of your own making.",ability,3,res://assets/runtime/abilities/icons/meteor_punch.svg,misc
 ability,hero_punch,Hero Punch,"Hold to throw alternating left and right jabs. Each punch hits whatever is in front of the fist.",ability,3,res://assets/runtime/abilities/icons/hero_punch.svg,misc
 ability,starfire,Starfire,"Hold to toss blazing energy disks from alternating hands. Each disk bursts on contact.",ability,3,res://assets/runtime/abilities/icons/starfire.svg,projectile
-ability,grapple,Grapple,"Grab a target near the crosshair, carry them up, then drive them back into the ground.",ability,3,res://assets/runtime/abilities/icons/grapple.svg,misc
 ability,nuke,Nuke,"Launch a giant energy core. Three shots. Its detonation tears a crater and hurls everything nearby.",ability,4,res://assets/runtime/abilities/icons/nuke.svg,projectile
 ability,mini_nuke,Mini Nuke,"A smaller nuke. Five shots. The core flies faster and farther, then bursts. Upgrade damage, size, range, and knockback.",ability,3,res://assets/runtime/abilities/icons/mini_nuke.svg,projectile
-ability,lasso,Lasso,"Fire a physical string that tethers a target. Hold to swing, release to throw.",ability,3,res://assets/runtime/abilities/icons/lasso.svg,misc
 ability,wall,Wall,"Cast an indestructible translucent barrier. Upgrade it to slide forward, burn on contact, or close into a house around you.",ability,3,res://assets/runtime/abilities/icons/wall.svg,misc
-ability,nausicaa,Nausicaa,"Sweep a short eye laser across terrain. Painted marks erupt in sequence.",ability,3,res://assets/runtime/abilities/icons/nausicaa.svg,beam
+ability,nausicaa,Nausicaa,"Sweep a short eye laser. Marks appear at the beam tip, or stick to a mob in front, then erupt in sequence.",ability,3,res://assets/runtime/abilities/icons/nausicaa.svg,beam
 ability,lightning,Lightning,"One bolt from the eyes. It snaps onto a body, then jumps to a nearby one. Upgrade Arcs to chain farther, and Shock to lock victims in a freeze-and-twitch pulse.",ability,3,res://assets/runtime/abilities/icons/lightning.svg,beam
 ability,light_bolt,Light Bolt,"Hold to spray small pulsating purple-pink bolts from the eyes, like a submachine gun. Upgrade damage, speed, range, and the usual combat stats.",ability,3,res://assets/runtime/abilities/icons/light_bolt.svg,projectile
 ability,icicle,Icicle,"Hold to throw sharp icicles from alternating fists, with the same jabs as Starfire. Hits freeze, then a small white frost cloud applies cold without damage. Upgrade Cold to strengthen the frost and the burst.",ability,3,res://assets/runtime/abilities/icons/icicle.svg,projectile
@@ -25,7 +23,7 @@ ability,freeze_field,Freeze Field,"Stand still for a second, then raise a frost 
 ability,healing_field,Healing Field,"Stand still for a second, then raise a warm sphere from your chest. Standing inside heals you. The field fades over time.",ability,3,res://assets/runtime/abilities/icons/healing_field.svg,field
 ability,overdrive,Overdrive,"Scrunch in and bellow. For a short time every stat jumps, you grow, and mods seated here power your other abilities.",ability,1,res://assets/runtime/abilities/icons/overdrive.svg,misc
 modifier,wobble,Wobble,"Fits beam abilities. The beams travel as a wobbling wave instead of a straight line.",type_specific,0,res://assets/runtime/abilities/icons/wobble.svg,
-modifier,big,Big,"Makes the ability it sits on larger. Starts small and grows exponentially through level 10.",generic,0,res://assets/runtime/abilities/icons/big.svg,
+modifier,big,Big,"Makes the ability it sits on larger. Starts at 25% larger. Shop ranks add 5%, 10%, 20%... on top of that 25%.",generic,0,res://assets/runtime/abilities/icons/big.svg,
 modifier,bubble,Bubble,"Fits beam, shockwave, projectile, field, and punch abilities. Leaves glowing blue orbs that pulse, linger, and pop.",type_specific,0,res://assets/runtime/abilities/icons/bubble.svg,
 modifier,linger,Linger,"Fits beam, shockwave, projectile, field, and punch abilities. Leaves iridescent clouds that carry the host effect.",type_specific,0,res://assets/runtime/abilities/icons/linger.svg,
 modifier,clip,Clip,"Fits limited-use abilities. Doubles the shots. Upgrade to triple, then quadruple.",type_specific,0,res://assets/runtime/abilities/icons/clip.svg,

@@ -128,6 +128,7 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 	if CrawlerRules.active() and shooter.has_method(&"crawler_knockback_scale"):
 		knockback *= float(shooter.call(&"crawler_knockback_scale"))
 	var pulse := int(Time.get_ticks_msec() / 100)
+	var world_planet := shooter.planet()
 	for chain_variant: Variant in chains:
 		var hops: PackedVector3Array = chain_variant
 		if hops.is_empty():
@@ -142,23 +143,25 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 			_strike_segment(
 				shooter, id, last, hop, radius, per_tick, knockback * step, stats)
 			last = hop
+		if not landed and hops.size() <= 1 and splits <= 1:
+			continue
+		var last_at: Vector3 = hops[hops.size() - 1]
+		var prev_at: Vector3 = hops[hops.size() - 2] if hops.size() > 1 else from
+		var along := last_at - prev_at
+		var facing := Vector3.UP
+		if along.length_squared() > 0.000001:
+			facing = along.normalized()
+		elif world_planet != null:
+			facing = world_planet.up_at(last_at)
+		CrawlerImpactCast.emit(shooter, id, last_at, facing, stats)
 	if first.is_empty():
 		return
 	if not landed and first.size() <= 1 and splits <= 1:
 		return
-	var facing := Vector3.UP
-	var world_planet := shooter.planet()
+	var dust_facing := Vector3.UP
 	if world_planet != null:
-		facing = world_planet.up_at(first[0])
-	shooter.play_laser_impact_dust(first[0], facing, true)
-	var last_at: Vector3 = first[first.size() - 1]
-	var prev_at: Vector3 = first[first.size() - 2] if first.size() > 1 else from
-	var along := last_at - prev_at
-	if along.length_squared() > 0.000001:
-		facing = along.normalized()
-	elif world_planet != null:
-		facing = world_planet.up_at(last_at)
-	CrawlerImpactCast.emit(shooter, id, last_at, facing, stats)
+		dust_facing = world_planet.up_at(first[0])
+	shooter.play_laser_impact_dust(first[0], dust_facing, true)
 
 
 static func collect_hops(anywhere: Node, from: Vector3, seed_at: Vector3,

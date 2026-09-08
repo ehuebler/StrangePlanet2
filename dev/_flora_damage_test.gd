@@ -47,6 +47,7 @@ func _ready() -> void:
 	_check_species_resources()
 	_check_toughness()
 	_check_damage_geometry()
+	_check_view_volume()
 
 	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
 	NetworkManager.is_single_player = true
@@ -156,6 +157,31 @@ func _check_toughness() -> void:
 		"unbreakable flora takes nothing")
 	_expect(not unbreakable.takes_ability_damage(),
 		"and says so before it is asked")
+
+
+func _check_view_volume() -> void:
+	var eye := Vector3(0.0, 2.0, 0.0)
+	var look := Vector3(0.0, 0.0, -1.0)
+	var cone := GroundCover.VIEW_CONE_COS
+	_expect(GroundCover.in_view_volume(
+			Vector3(0.0, 2.0, -40.0), eye, look, cone, 80.0),
+		"flora ahead of the viewer stays in the look cone")
+	_expect(not GroundCover.in_view_volume(
+			Vector3(0.0, 2.0, 40.0), eye, look, cone, 80.0),
+		"flora behind the viewer is outside the look cone")
+	_expect(not GroundCover.in_view_volume(
+			Vector3(60.0, 2.0, 0.0), eye, look, cone, 80.0),
+		"flora off to the side is outside the look cone")
+	_expect(not GroundCover.in_view_volume(
+			Vector3(0.0, 2.0, -90.0), eye, look, cone, 80.0),
+		"flora past the cone far plane is not drawn")
+	_expect(GroundCover.KEEP_CIRCLE_MAX < 80.0
+			and GroundCover.VIEW_CONE_KEEP_COS < GroundCover.VIEW_CONE_COS,
+		"the keep circle stays small and the hold cone is wider than the draw cone")
+	_expect(GroundCover.in_view_volume(
+			Vector3(20.0, 0.0, 20.0), Vector3(0.0, 40.0, 0.0),
+			Vector3(0.0, -1.0, 0.0), cone, 80.0),
+		"looking down still covers the ground around the viewer")
 
 
 ## The shape maths, which is what decides whether a plant is in a hit at all.
@@ -354,31 +380,50 @@ func _standing_total() -> int:
 
 ## Where one live cover instance is, in the world, or [constant Vector3.INF].
 func _a_standing_plant() -> Vector3:
+	# First stand in tree order is often a lone geology prop. The landing pad
+	# is a desert, so a 34 m blast around that rock finds nothing the beam
+	# did not already take. A grass tile with a few dozen blades is the
+	# query the volume was written to prove.
+	var best := Vector3.INF
+	var best_alive := 0
+	var best_visible := false
 	for field in get_tree().get_nodes_in_group(DamageHit.FIELD_GROUP):
 		if not (field is GroundCover):
 			continue
 		for stand in _stands_under(field):
-			var showing := stand.multimesh.visible_instance_count
-			if showing < 0:
-				showing = stand.multimesh.instance_count
+			var showing := stand.multimesh.instance_count
+			if showing <= 0:
+				continue
 			var buffer := stand.multimesh.buffer
+			var stride := GroundCover.STRIDE
+			var alive := 0
+			var planted := Vector3.INF
 			for index in showing:
-				var at := index * 12
+				var at := index * stride
 				if (at + 11) >= buffer.size():
 					break
 				if Vector3(buffer[at], buffer[at + 4],
 						buffer[at + 8]).length() <= 0.001:
 					continue
-				return stand.global_transform * Vector3(
-					buffer[at + 3], buffer[at + 7], buffer[at + 11])
-	return Vector3.INF
+				alive += 1
+				if not planted.is_finite():
+					planted = stand.global_transform * Vector3(
+						buffer[at + 3], buffer[at + 7], buffer[at + 11])
+			if alive <= 0 or not planted.is_finite():
+				continue
+			if alive > best_alive \
+					or (alive == best_alive and stand.visible and not best_visible):
+				best = planted
+				best_alive = alive
+				best_visible = stand.visible
+	return best
 
 
 func _stands_under(node: Node) -> Array[MultiMeshInstance3D]:
 	var found: Array[MultiMeshInstance3D] = []
 	for child in node.get_children(true):
 		var stand := child as MultiMeshInstance3D
-		if stand != null and stand.visible and stand.multimesh != null:
+		if stand != null and stand.multimesh != null:
 			found.append(stand)
 		found.append_array(_stands_under(child))
 	return found
@@ -420,13 +465,14 @@ func _check_break_keys() -> void:
 ## A destroyed instance is scaled to nothing rather than removed, so the count
 ## of instances never changes and the basis length is what has to be read.
 func _standing(stand: MultiMeshInstance3D) -> int:
-	var showing := stand.multimesh.visible_instance_count
-	if showing < 0:
-		showing = stand.multimesh.instance_count
+	# Instance count, not the dressed visible count: a plant culled by the
+	# look cone is still standing on the ground and still takes damage.
+	var showing := stand.multimesh.instance_count
 	var alive := 0
 	var buffer := stand.multimesh.buffer
+	var stride := GroundCover.STRIDE
 	for index in showing:
-		var at := index * 12
+		var at := index * stride
 		if (at + 11) >= buffer.size():
 			break
 		if Vector3(buffer[at], buffer[at + 4], buffer[at + 8]).length() > 0.001:

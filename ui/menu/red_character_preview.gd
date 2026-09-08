@@ -11,8 +11,8 @@ extends TextureRect
 const VIEW_SIZE := Vector2(230.0, 320.0)
 const SUPERSAMPLE := 3
 const SPIN_PER_PIXEL := 0.01
-const BOB_HEIGHT := 0.22
-const BOB_PIXELS := 11.0
+const BOB_HEIGHT := 0.0825
+const BOB_PIXELS := 4.125
 const BOB_RATE := 0.72
 
 var _equipment: ItemContainer
@@ -27,6 +27,8 @@ var _worn: Dictionary = {}
 var _spin := -0.42
 var _dragging := false
 var _bob_time := 0.0
+var _last_tick_usec := 0
+var _animator: AnimationPlayer
 ## When true the portrait recenters itself and adds a visible 2D hover so a
 ## parent CenterContainer or animation track cannot hide the float.
 var hover_in_frame := false
@@ -58,6 +60,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	mouse_default_cursor_shape = Control.CURSOR_DRAG
 	_build()
+	_last_tick_usec = Time.get_ticks_usec()
 	set_process(true)
 	set_physics_process(false)
 	if _equipment != null and not _equipment.changed.is_connected(refresh):
@@ -86,16 +89,35 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
-	_bob_time += delta
+	var step := _menu_delta(delta)
+	_bob_time += step
 	var wave := sin(_bob_time * TAU * BOB_RATE)
 	if is_instance_valid(_pivot):
 		# Lift the whole figure, not the posed skeleton. Float writes the body
 		# transform every frame, so bobbing the character node itself never shows.
 		_pivot.position.y = wave * BOB_HEIGHT
+	if is_instance_valid(_animator) and _animator.is_playing():
+		_animator.advance(step)
 	if hover_in_frame:
 		var parent := get_parent() as Control
 		if parent != null:
-			position = (parent.size - size) * 0.5 + Vector2(0.0, wave * BOB_PIXELS)
+			var centre := (parent.size - size) * 0.5
+			var room := (parent.size.y - size.y) * 0.5
+			var lift := wave * BOB_PIXELS if room > BOB_PIXELS else 0.0
+			position = centre + Vector2(0.0, lift)
+
+
+## The Tab menu zeros Engine.time_scale, so the supplied delta stays at zero.
+## Wall time keeps the float moving while the world is frozen.
+func _menu_delta(delta: float) -> float:
+	var now := Time.get_ticks_usec()
+	var unscaled := maxf(float(now - _last_tick_usec) / 1_000_000.0, 0.0)
+	_last_tick_usec = now
+	return delta if delta > 0.0 else unscaled
+
+
+func bob_offset() -> float:
+	return _pivot.position.y if is_instance_valid(_pivot) else 0.0
 
 
 func refresh() -> void:
@@ -174,7 +196,9 @@ func _play_float() -> void:
 		break
 	if animator == null:
 		return
+	_animator = animator
 	animator.process_mode = Node.PROCESS_MODE_ALWAYS
+	animator.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	CharacterRig.prepare(animator, CharacterDB.extra_animation_paths(_body_id))
 	var clip := CharacterRig.resolve_clip(animator, "Float")
 	if not animator.has_animation(clip):
@@ -204,3 +228,4 @@ func _paint() -> void:
 		var tint := Color.html(str(_tints[target]))
 		for material: Variant in derived.values():
 			SurfaceSkin.tint_material(material as ShaderMaterial, tint)
+	SurfaceSkin.apply_outline_tint(_character, _tints)

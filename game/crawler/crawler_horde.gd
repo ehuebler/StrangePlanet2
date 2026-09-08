@@ -2,18 +2,26 @@ class_name CrawlerHorde
 extends Node
 
 ## Host-authored field pack plus the one-shot castle goblin garrison.
-## Wild homes sit in a ring around the player. When the player is moving
-## fast, an extra pack is seeded farther ahead of travel. Ready homes are
-## stamped on the surface ahead of time so a fast flight does not solve
-## ten height-field guesses per mob in the same tick it instantiates them.
-## Instantiation is dripped a couple of bodies per frame so speed does not
-## hitch. They spawn far enough out to stay calm, then agro when the run
-## reaches them. Player level and siege clears do not restat a pack already
-## on the ground. They drop agro at range and vanish after they idle. A kill
-## keeps that pad empty for a few seconds and the pack waits before filling.
-## Goblins are preset at Stormwatch and never refill.
+## Each tile fields one combo: the wild pack, the three demons, the office
+## robots, the alien visitors, or the castle goblins. Entering a patch
+## arms that cell and same-combo neighbours. The ring around the player
+## uses that tile's three kinds and swaps when they walk into a new combo.
+## Goblins preseed inside Stormwatch and wake together when a player
+## nears the keep. They never spawn on the player ring.
+## Patch mobs that follow into a city, castle, or office 100 m circle
+## despawn so the garrison and shops can spend the think budget. Coop
+## cities wait until every player is inside. The teleporter never culls.
 
 const GROUP := &"crawler_horde"
+const TRAINING := preload("res://game/crawler/crawler_training.gd")
+
+static func instance(tree: SceneTree = null) -> CrawlerHorde:
+	var host := tree if tree != null else Engine.get_main_loop() as SceneTree
+	if host == null:
+		return null
+	return host.get_first_node_in_group(GROUP) as CrawlerHorde
+
+
 const SPAWN_PER_FRAME := 16
 const SPAWN_TRIES := 3
 const SEED_PER_TICK := 8
@@ -28,7 +36,18 @@ const GRUK := preload("res://game/crawler/crawler_gruk.gd")
 const NIX := preload("res://game/crawler/crawler_nix.gd")
 const VEX := preload("res://game/crawler/crawler_vex.gd")
 const VEX_MORTAR := preload("res://game/crawler/crawler_vex_mortar.gd")
+const KESTREL := preload("res://game/crawler/crawler_kestrel.gd")
+const BASTION := preload("res://game/crawler/crawler_bastion.gd")
+const BASTION_SHELL := preload("res://game/crawler/crawler_bastion_shell.gd")
+const WEAVER := preload("res://game/crawler/crawler_weaver.gd")
+const SCOUT := preload("res://game/crawler/crawler_scout.gd")
+const GRAY := preload("res://game/crawler/crawler_gray.gd")
+const TANGLEMAW := preload("res://game/crawler/crawler_tanglemaw.gd")
+const GRAY_SHOT := preload("res://game/crawler/crawler_gray_shot.gd")
+const ROBOT_LASER := preload("res://game/crawler/crawler_robot_laser.gd")
 const MobSense := preload("res://game/crawler/crawler_mob_sense.gd")
+const CASTLE_GARRISON := preload("res://game/crawler/crawler_castle_garrison.gd")
+const INTERIOR_HOMES := preload("res://game/crawler/crawler_interior_homes.gd")
 
 var _city_clears := 0
 var _threat := 0
@@ -43,15 +62,21 @@ var _refill_until: Dictionary = {}
 var _castle_seeded := false
 var _ready_homes: Array[Dictionary] = []
 var _build_queue: Array[Dictionary] = []
+var _garrison_queue: Array[Dictionary] = []
 var _scan_at: PackedVector3Array = PackedVector3Array()
 var _scan_kind: PackedStringArray = PackedStringArray()
 var _patch_cache: Dictionary = {}
+var _armed: Dictionary = {}
+var _seen_patch: Dictionary = {}
+var _reap_cursor := 0
 
 
 func _ready() -> void:
 	name = "CrawlerHorde"
 	add_to_group(GROUP)
+	process_physics_priority = -20
 	set_process(true)
+	set_physics_process(true)
 	if not _is_host():
 		_request_siege_sync.rpc_id(1)
 
@@ -78,6 +103,28 @@ func queued_spawn_count() -> int:
 	return _build_queue.size()
 
 
+func is_patch_armed(patch_id: int) -> bool:
+	return bool(_armed.get(patch_id, false))
+
+
+func armed_patch_count() -> int:
+	return _armed.size()
+
+
+func fill_test_patch(patch_id: int, homes: Array, kind := "ranger",
+		level := 1) -> int:
+	if patch_id < 0 or is_patch_armed(patch_id):
+		return 0
+	var made := 0
+	for home_variant: Variant in homes:
+		if typeof(home_variant) != TYPE_VECTOR3:
+			continue
+		var home := home_variant as Vector3
+		made += _enqueue_wild(kind, home, level, patch_id, 1.0)
+	_armed[patch_id] = true
+	return made
+
+
 func spawn_test_mob(kind := "ranger", at := Vector3(0.0, 12.0, 0.0),
 		should_chase := false, level := 1) -> CrawlerMob:
 	var id := "cm%d" % _next_mob
@@ -85,9 +132,104 @@ func spawn_test_mob(kind := "ranger", at := Vector3(0.0, 12.0, 0.0),
 	return _make_mob(id, kind, _pose_at(at), level, should_chase, -1, -1)
 
 
+func spawn_training_field(centre: Transform3D, level := 1) -> int:
+	clear_training()
+	var kinds := TRAINING.kinds()
+	var count := kinds.size()
+	var batch: Array = []
+	var made := 0
+	for index in count:
+		var at := TRAINING.grid_point(centre, index, count)
+		if not at.is_finite():
+			continue
+		var pose := _pose_at(at)
+		var id := "ct%d" % _next_mob
+		_next_mob += 1
+		var mob := _make_mob(id, kinds[index], pose, level, false, -1, -1)
+		if mob == null:
+			continue
+		mob.become_training(pose)
+		made += 1
+		batch.append({
+			"id": id,
+			"kind": kinds[index],
+			"origin": pose.origin,
+			"level": level,
+			"city": -1,
+			"slot": -1,
+			"chase": false,
+			"health_scale": 1.0,
+			"training": true,
+		})
+		if batch.size() >= SPAWN_PER_FRAME and _has_listeners():
+			_spawn_mob_batch_rpc.rpc(batch)
+			batch.clear()
+	if not batch.is_empty() and _has_listeners():
+		_spawn_mob_batch_rpc.rpc(batch)
+	return made
+
+
+func set_training_level(level: int) -> int:
+	var next := TRAINING.clamp_level(level)
+	var changed := 0
+	for mob_variant: Variant in _mobs.values():
+		var mob := mob_variant as CrawlerMob
+		if mob == null or not is_instance_valid(mob) or not mob.is_training():
+			continue
+		mob.set_threat_level(next)
+		mob.refill_health()
+		changed += 1
+		publish_mob_state(mob)
+	return changed
+
+
+func clear_training() -> void:
+	var gone: Array[String] = []
+	for id_variant: Variant in _mobs.keys():
+		var mob := _mobs.get(id_variant) as CrawlerMob
+		if mob != null and mob.is_training():
+			gone.append(str(id_variant))
+	for id: String in gone:
+		_dismiss_mob(id)
+		if _has_listeners():
+			_despawn_mob_rpc.rpc(id)
+
+
+func training_count() -> int:
+	var count := 0
+	for mob_variant: Variant in _mobs.values():
+		var mob := mob_variant as CrawlerMob
+		if mob != null and is_instance_valid(mob) and mob.is_training():
+			count += 1
+	return count
+
+
+func training_mobs() -> Array[CrawlerMob]:
+	var out: Array[CrawlerMob] = []
+	for mob_variant: Variant in _mobs.values():
+		var mob := mob_variant as CrawlerMob
+		if mob != null and is_instance_valid(mob) and mob.is_training():
+			out.append(mob)
+	return out
+
+
+func spawn_drop_mob(kind: String, at: Vector3, level := 1) -> CrawlerMob:
+	var id := "cm%d" % _next_mob
+	_next_mob += 1
+	var xform := _pose_at(at)
+	var mob := _make_mob(id, kind, xform, level, true, -1, -1)
+	if mob != null and mob.has_method(&"begin_drop"):
+		mob.call(&"begin_drop")
+	if _has_listeners():
+		_spawn_drop_rpc.rpc(id, kind, xform, level)
+	return mob
+
+
 func garrison_live_count() -> int:
 	var count := 0
 	for mob_variant: Variant in _mobs.values():
+		if not is_instance_valid(mob_variant):
+			continue
 		var mob := mob_variant as CrawlerMob
 		if mob != null and mob.is_persistent():
 			count += 1
@@ -101,23 +243,78 @@ func spawn_castle_garrison_at(at: Vector3, count := -1) -> int:
 	return _place_garrison(at, count)
 
 
-func _ensure_castle_garrison() -> void:
-	if _castle_seeded or CrawlerMeta._test_payload != null:
-		return
-	var site := PatchMonument.find_id(CrawlerProgress.QUEST_CASTLE)
+func queue_castle_homes(homes: PackedVector3Array) -> int:
+	if homes.is_empty():
+		return 0
+	if _castle_seeded and not CrawlerRun.active() \
+			and (garrison_live_count() > 0 or _queued_garrison_count() > 0):
+		return 0
+	var made := _enqueue_garrison_homes(homes)
+	if made > 0:
+		_castle_seeded = true
+	return made
+
+
+func queue_castle_garrison(site: Node3D = null, count := -1) -> int:
 	if site == null:
+		var sites := _castle_sites()
+		site = sites[0] if not sites.is_empty() else null
+	if site == null:
+		return 0
+	var homes: PackedVector3Array = CASTLE_GARRISON.homes_for(site)
+	if homes.is_empty():
+		return 0
+	var want := homes.size() if CrawlerRun.active() else CrawlerRules.GOBLIN_GARRISON
+	if count >= 0:
+		want = maxi(count, 0)
+	return queue_castle_homes(INTERIOR_HOMES.fit(homes, want))
+
+
+func _ensure_castle_garrison() -> void:
+	if CrawlerMeta._test_payload != null:
 		return
-	_castle_seeded = true
-	_place_garrison(site.global_position)
+	for site in _castle_sites():
+		if not _player_near_castle(site):
+			continue
+		if queue_castle_garrison(site) > 0:
+			continue
+		if CASTLE_GARRISON.find_for(site) != null:
+			continue
+		queue_castle_homes(_ring_homes(site.global_position, CrawlerRules.GOBLIN_GARRISON))
+
+
+func _castle_sites() -> Array[PatchMonument]:
+	var found: Array[PatchMonument] = []
+	if not is_inside_tree():
+		return found
+	for node_variant: Variant in get_tree().get_nodes_in_group(PatchMonument.KEEP_GROUP):
+		var site := node_variant as PatchMonument
+		if site != null and CrawlerRules.is_castle_id(site.monument_id):
+			found.append(site)
+	if found.is_empty():
+		var authored := PatchMonument.find_id(CrawlerProgress.QUEST_CASTLE)
+		if authored != null:
+			found.append(authored)
+	return found
+
+
+func _player_near_castle(site: Node3D) -> bool:
+	if site == null:
+		return false
+	var reach := CrawlerRules.GOBLIN_WAKE_RANGE
+	for player_variant: Variant in _players():
+		var player := player_variant as Node3D
+		if player != null and player.global_position.distance_to(site.global_position) <= reach:
+			return true
+	return false
 
 
 func _place_garrison(at: Vector3, count := -1) -> int:
 	if not at.is_finite():
 		return 0
-	var want := CrawlerRules.GOBLIN_GARRISON if count < 0 else maxi(count, 0)
-	if want <= 0:
+	var homes := _homes_for_place(at, count)
+	if homes.is_empty():
 		return 0
-	var planet := _planet()
 	var overlay := _overlay()
 	var patch_id := -1
 	if overlay != null:
@@ -125,8 +322,8 @@ func _place_garrison(at: Vector3, count := -1) -> int:
 	var level := _level_for(patch_id, overlay)
 	var batch: Array = []
 	var made := 0
-	for index in want:
-		var home := _garrison_home(at, index, planet)
+	for index in homes.size():
+		var home := homes[index]
 		if not home.is_finite():
 			continue
 		var kind := CrawlerRules.goblin_garrison_kind(index)
@@ -156,6 +353,70 @@ func _place_garrison(at: Vector3, count := -1) -> int:
 	return made
 
 
+func _queue_garrison(at: Vector3, count := -1) -> int:
+	return queue_castle_homes(_homes_for_place(at, count))
+
+
+func _homes_for_place(at: Vector3, count := -1) -> PackedVector3Array:
+	var want := CrawlerRules.GOBLIN_GARRISON if count < 0 else maxi(count, 0)
+	if want <= 0 or not at.is_finite():
+		return PackedVector3Array()
+	var site := PatchMonument.find_id(CrawlerProgress.QUEST_CASTLE)
+	if site != null and at.distance_to(site.global_position) <= 24.0:
+		var harvested: PackedVector3Array = CASTLE_GARRISON.homes_for(site)
+		if not harvested.is_empty():
+			return INTERIOR_HOMES.fit(harvested, want)
+	return _ring_homes(at, want)
+
+
+func _ring_homes(at: Vector3, want: int) -> PackedVector3Array:
+	var homes := PackedVector3Array()
+	var planet := _planet()
+	for index in maxi(want, 0):
+		var home := _garrison_home(at, index, planet)
+		if home.is_finite():
+			homes.append(home)
+	return homes
+
+
+func _enqueue_garrison_homes(homes: PackedVector3Array) -> int:
+	var overlay := _overlay()
+	var patch_id := -1
+	if overlay != null:
+		patch_id = overlay.patch_id_named(CrawlerRules.CASTLE_PATCH)
+	var level := _level_for(patch_id, overlay)
+	var made := 0
+	for index in homes.size():
+		var home := homes[index]
+		if not home.is_finite():
+			continue
+		var kind := CrawlerRules.goblin_garrison_kind(index)
+		var id := "cg%d" % _next_mob
+		_next_mob += 1
+		_garrison_queue.append({
+			"id": id,
+			"kind": kind,
+			"origin": home,
+			"level": level,
+			"city": patch_id,
+			"slot": index,
+			"chase": false,
+			"health_scale": 1.0,
+			"persistent": true,
+			"hang": home,
+		})
+		made += 1
+	return made
+
+
+func _queued_garrison_count() -> int:
+	var count := _garrison_queue.size()
+	for row: Dictionary in _build_queue:
+		if bool(row.get("persistent", false)):
+			count += 1
+	return count
+
+
 func _garrison_home(at: Vector3, index: int, planet: Planet) -> Vector3:
 	var up := at.normalized() if at.length_squared() > 0.01 else Vector3.UP
 	if planet != null and planet.has_method(&"up_at"):
@@ -175,7 +436,7 @@ func _garrison_home(at: Vector3, index: int, planet: Planet) -> Vector3:
 	var local := planet.to_local(guess)
 	if local.length_squared() < 0.0001:
 		local = up
-	var surface := planet.surface_position(local)
+	var surface := planet.mesh_position(local)
 	return surface + planet.up_at(surface) * 1.05
 
 
@@ -200,6 +461,7 @@ func horde_snapshot() -> Dictionary:
 			"maximum": mob.maximum_health(),
 			"hang": mob.hang_origin,
 			"persistent": mob.is_persistent(),
+			"training": mob.is_training(),
 		})
 	return {
 		"clears": _city_clears,
@@ -250,6 +512,8 @@ func apply_horde_snapshot(wire: Dictionary) -> void:
 		if mob == null:
 			continue
 		mob.persistent = bool(row.get("persistent", mob.city_id >= 0))
+		if bool(row.get("training", false)):
+			mob.become_training(mob.global_transform)
 		mob.ever_chased = bool(row.get("ever", mob.ever_chased))
 		var hang_raw: Variant = row.get("hang", mob.hang_origin)
 		if hang_raw is Vector3 and (hang_raw as Vector3).is_finite():
@@ -269,7 +533,7 @@ func apply_horde_snapshot(wire: Dictionary) -> void:
 func _bump_next_mob(id: String) -> void:
 	if id.length() < 3:
 		return
-	if not (id.begins_with("cm") or id.begins_with("cg")):
+	if not (id.begins_with("cm") or id.begins_with("cg") or id.begins_with("ct")):
 		return
 	_next_mob = maxi(_next_mob, int(id.substr(2)) + 1)
 
@@ -279,8 +543,11 @@ func clear_wild() -> void:
 		return
 	_ready_homes.clear()
 	_build_queue.clear()
+	_garrison_queue.clear()
 	_scan_at.clear()
 	_scan_kind.clear()
+	_armed.clear()
+	_seen_patch.clear()
 	var gone: Array[String] = []
 	for id_variant: Variant in _mobs.keys():
 		gone.append(str(id_variant))
@@ -294,12 +561,19 @@ func _process(delta: float) -> void:
 	if not CrawlerRules.active() or not _is_host():
 		return
 	if CrawlerRules.sandbox_no_mobs() or CrawlerRules.duel_active():
-		if not _mobs.is_empty() or not _build_queue.is_empty():
+		if not _mobs.is_empty() or not _build_queue.is_empty() \
+				or not _garrison_queue.is_empty():
 			clear_wild()
+		return
+	if CrawlerRules.training_active():
 		return
 	if _start_origin.length_squared() < 1.0 or _start_dir.length_squared() < 0.0001:
 		_remember_start()
 	_ensure_castle_garrison()
+	_ensure_robot_site()
+	_clear_castle_wilds()
+	_clear_site_patch_mobs()
+	_clear_off_combo_wilds()
 	_drain_builds()
 	_stream_left -= delta
 	if _stream_left > 0.0:
@@ -310,16 +584,32 @@ func _process(delta: float) -> void:
 	_index_wild()
 	_trim_ready_homes()
 	_fill_around_players()
+	_fill_player_rings()
+	_fill_bastion_grid()
+
+
+func _physics_process(delta: float) -> void:
+	if not CrawlerRules.active() or not _is_host():
+		return
+	if CrawlerRules.sandbox_no_mobs() or CrawlerRules.duel_active() \
+			or CrawlerRules.training_active():
+		return
+	MobSense.begin_frame(get_tree())
+	MobSense.direct_horde(delta)
 
 
 func _remember_start() -> void:
 	var overlay := _overlay()
 	if overlay == null or not overlay.ensure_ready():
 		return
-	var start = overlay.patch_named(CrawlerRules.START_PATCH)
-	if start != null:
+	var start_id := overlay.crawler_start_patch_id()
+	if start_id >= 0 and start_id < overlay.partition.patches.size():
+		var start: LandPartition.Patch = overlay.partition.patches[start_id]
 		var home := overlay.partition.territory_of(start.id)
 		_start_dir = home.direction if home != null else start.direction
+		var planet := _planet()
+		if planet != null:
+			_arm_from_patch(planet, overlay, start_id, null)
 	var spawn := _spawn_pad()
 	if spawn != null:
 		_start_origin = spawn.player_spawn_transform().origin
@@ -330,69 +620,767 @@ func _remember_start() -> void:
 
 
 func _fill_around_players() -> void:
+	var overlay := _overlay()
+	if overlay == null or not overlay.ensure_ready():
+		return
 	var planet := _planet()
 	if planet == null:
 		return
+	for player_variant: Variant in _players():
+		var player := player_variant as Node3D
+		if player == null:
+			continue
+		if _player_is_safe(player, overlay) or _refill_blocked(player):
+			continue
+		var patch_id := overlay.patch_id_at(player.global_position)
+		var owner := player.get_instance_id()
+		if int(_seen_patch.get(owner, -2)) == patch_id:
+			continue
+		if patch_id < 0:
+			_seen_patch[owner] = patch_id
+			continue
+		_arm_from_patch(planet, overlay, patch_id, player)
+		if _group_armed(overlay, patch_id):
+			_seen_patch[owner] = patch_id
+
+
+func _fill_player_rings() -> void:
 	var overlay := _overlay()
-	var budget := SPAWN_PER_FRAME
+	if overlay == null or not overlay.ensure_ready():
+		return
+	var planet := _planet()
+	if planet == null:
+		return
+	for player_variant: Variant in _players():
+		var player := player_variant as Node3D
+		if player == null:
+			continue
+		if _player_is_safe(player, overlay) or _refill_blocked(player):
+			continue
+		var up := planet.up_at(player.global_position) if planet.has_method(&"up_at") \
+			else Vector3.UP
+		var velocity := _player_velocity(player)
+		_seed_ready_homes(planet, player, up, velocity)
+		var have := _count_near(player.global_position, CrawlerRules.PACK_KEEP)
+		var budget := mini(
+			CrawlerRules.RING_FILL_PER_TICK,
+			maxi(CrawlerRules.LIVE_AROUND - have, 0))
+		if budget <= 0:
+			continue
+		var record := _patch_record(player, overlay)
+		var patch_id := int(record.get("id", -1))
+		var patch_name := str(record.get("name", ""))
+		var here := _distance_from_start(player.global_position)
+		var recipe := CrawlerRules.patch_recipe(patch_name, here)
+		var level := _level_for(patch_id, overlay)
+		var health_scale := float(recipe.get("health_scale", 1.0))
+		if CrawlerRules.city_patch(patch_name) \
+				or CrawlerRules.castle_grounds(patch_name) \
+				or CrawlerRules.in_castle_keep(player.global_position):
+			continue
+		if CrawlerRules.uses_lead_pack(velocity.length()):
+			budget = _fill_lead(
+				planet, player, recipe, patch_name, patch_id, level,
+				health_scale, budget)
+		while budget > 0:
+			var made := _spawn_home(
+				planet, player, recipe, patch_name, patch_id, level,
+				health_scale, true)
+			if made <= 0:
+				break
+			budget -= made
+
+
+func _fill_bastion_grid() -> void:
+	var overlay := _overlay()
+	if overlay == null or not overlay.ensure_ready():
+		return
+	var planet := _planet()
+	if planet == null:
+		return
+	for player_variant: Variant in _players():
+		var player := player_variant as Node3D
+		if player == null:
+			continue
+		if _player_is_safe(player, overlay) or _refill_blocked(player):
+			continue
+		var record := _patch_record(player, overlay)
+		var patch_name := str(record.get("name", ""))
+		var patch_id := int(record.get("id", -1))
+		if patch_id < 0 or not CrawlerRules.robot_grounds(patch_name):
+			continue
+		if CrawlerRules.city_patch(patch_name) \
+				or CrawlerRules.castle_grounds(patch_name) \
+				or CrawlerRules.in_castle_keep(player.global_position):
+			continue
+		var have := _count_kind_near(
+			player.global_position, CrawlerRules.BASTION_FAR + 4.0, "bastion")
+		var level := _level_for(patch_id, overlay)
+		var need := mini(
+			CrawlerRules.BASTION_FILL,
+			CrawlerRules.kind_cap("bastion", level) - have)
+		if need <= 0:
+			continue
+		var here := _distance_from_start(player.global_position)
+		var health_scale := float(
+			CrawlerRules.patch_recipe(patch_name, here).get("health_scale", 1.0))
+		for _step in need:
+			if _build_queue.size() >= CrawlerRules.MOB_SPAWN_QUEUE:
+				return
+			var home := _stamp_bastion(planet, player)
+			if not home.is_finite():
+				break
+			if _enqueue_wild("bastion", home, level, patch_id, health_scale) <= 0:
+				break
+			_spawn_serial += 1
+
+
+func _stamp_bastion(planet: Planet, player: Node3D) -> Vector3:
+	if planet == null or player == null:
+		return Vector3(NAN, NAN, NAN)
+	var at := player.global_position
+	var up := planet.up_at(at) if planet.has_method(&"up_at") else Vector3.UP
+	if up.length_squared() < 0.0001:
+		up = at.normalized() if at.length_squared() > 0.0001 else Vector3.UP
+	var east := up.cross(Vector3.UP)
+	if east.length_squared() < 0.0001:
+		east = up.cross(Vector3.FORWARD)
+	if east.length_squared() < 0.0001:
+		return Vector3(NAN, NAN, NAN)
+	east = east.normalized()
+	var north := east.cross(up).normalized()
+	var cells: Array[Vector2i] = []
+	for ix in range(-4, 5):
+		for iz in range(-4, 5):
+			if ix == 0 and iz == 0:
+				continue
+			cells.append(Vector2i(ix, iz))
+	cells.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return a.length_squared() < b.length_squared())
+	var start := posmod(_spawn_serial, maxi(cells.size(), 1))
+	for step in cells.size():
+		var cell: Vector2i = cells[(start + step) % cells.size()]
+		var guess := at + east * (float(cell.x) * CrawlerRules.BASTION_GRID) \
+			+ north * (float(cell.y) * CrawlerRules.BASTION_GRID)
+		var local := planet.to_local(guess)
+		if local.length_squared() < 0.0001:
+			continue
+		var surface := planet.mesh_position(local)
+		if not surface.is_finite():
+			continue
+		var home := surface + planet.up_at(surface) * _lift_for("bastion", _spawn_serial)
+		if _bastion_point_ok(home, player, planet):
+			return home
+	return Vector3(NAN, NAN, NAN)
+
+
+func _bastion_point_ok(at: Vector3, player: Node3D, planet: Planet) -> bool:
+	if player == null or not at.is_finite() or not _home_clear(at, "bastion"):
+		return false
+	var overlay := _overlay()
+	if overlay != null and overlay.keeps_mobs_out(at):
+		return false
+	var up := Vector3.UP
+	if planet != null and planet.has_method(&"up_at"):
+		up = planet.up_at(player.global_position)
+	if not CrawlerRules.bastion_in_grid(at, player.global_position, up):
+		return false
+	var sep := CrawlerRules.BASTION_GRID * 0.7
+	return _count_kind_near(at, sep, "bastion") <= 0
+
+
+func _spawn_ring_home(planet: Planet, overlay: LandPatchOverlay,
+		player: Node3D) -> int:
+	if planet == null or player == null:
+		return 0
+	var record := _patch_record(player, overlay)
+	var patch_name := str(record.get("name", ""))
+	var patch_id := int(record.get("id", -1))
+	if CrawlerRules.city_patch(patch_name) \
+			or CrawlerRules.castle_grounds(patch_name) \
+			or CrawlerRules.in_castle_keep(player.global_position):
+		return 0
+	var here := _distance_from_start(player.global_position)
+	var recipe := CrawlerRules.patch_recipe(patch_name, here)
+	return _spawn_home(
+		planet, player, recipe, patch_name, patch_id,
+		_level_for(patch_id, overlay),
+		float(recipe.get("health_scale", 1.0)),
+		true)
+
+
+func _recycle_mob(mob: CrawlerMob) -> bool:
+	if mob == null or not is_instance_valid(mob) or mob.is_persistent():
+		return false
+	var overlay := _overlay()
+	var planet := _planet()
+	if planet == null:
+		return false
+	var nearest: Node3D
+	var nearest_gap := INF
 	for player_variant: Variant in _players():
 		var player := player_variant as Node3D
 		if player == null:
 			continue
 		if _player_is_safe(player, overlay):
 			continue
-		var velocity := _player_velocity(player)
-		var up := planet.up_at(player.global_position) if planet.has_method(&"up_at") \
-			else Vector3.UP
-		_seed_ready_homes(planet, player, up, velocity)
-		if budget <= 0 or _refill_blocked(player):
+		var gap := player.global_position.distance_to(mob.global_position)
+		if gap < nearest_gap:
+			nearest_gap = gap
+			nearest = player
+	if nearest == null:
+		return false
+	if mob.has_method(&"fusing") and bool(mob.call(&"fusing")):
+		return true
+	var kind := _kind_of(mob)
+	var home := _stamp_bastion(planet, nearest) if kind == "bastion" \
+		else _stamp_around(planet, nearest, kind, true)
+	if not home.is_finite():
+		return false
+	if overlay != null and overlay.keeps_mobs_out(home):
+		return false
+	if CrawlerRules.in_castle_keep(home) \
+			or CrawlerRules.in_castle_keep(nearest.global_position):
+		return false
+	var allowed := _field_kinds_for(nearest)
+	if allowed.is_empty() or not allowed.has(kind):
+		return false
+	mob.recycle_to(home)
+	return true
+
+
+func _arm_from_patch(planet: Planet, overlay: LandPatchOverlay, patch_id: int,
+		player: Node3D) -> void:
+	if planet == null or overlay == null or overlay.partition == null or patch_id < 0:
+		return
+	_arm_one_patch(planet, overlay, patch_id, player)
+	var combo := CrawlerRules.patch_combo(_patch_name_from_id(patch_id))
+	for other in overlay.partition.neighbors_of(patch_id):
+		if CrawlerRules.patch_combo(_patch_name_from_id(other)) != combo:
 			continue
-		var patch := _patch_record(player, overlay)
-		var patch_id := int(patch.get("id", -1))
-		var patch_name := str(patch.get("name", ""))
-		var level := _level_for(patch_id, overlay)
-		var here := _distance_from_start(player.global_position)
-		var recipe := CrawlerRules.patch_recipe(patch_name, here)
-		var kinds := CrawlerRules.field_kinds(
-			patch_name, here, player.global_position)
-		var health_scale := float(recipe.get("health_scale", 1.0))
-		var speed := velocity.length()
-		if not CrawlerRules.uses_lead_pack(speed):
-			var live := _count_near(player.global_position, CrawlerRules.PACK_KEEP)
-			var need := maxi(CrawlerRules.pack_limit(kinds, level) - live, 0)
-			for _step in need:
-				if budget <= 0:
-					break
-				var made := _spawn_home(
-						planet, player, recipe, patch_name, patch_id, level,
-						health_scale, true)
-				if made <= 0:
-					break
-				budget -= made
-		budget = _fill_lead(
-			planet, player, recipe, patch_name, patch_id, level,
-			health_scale, budget)
+		_arm_one_patch(planet, overlay, other, player)
+
+
+func _group_armed(overlay: LandPatchOverlay, patch_id: int) -> bool:
+	if not is_patch_armed(patch_id):
+		return false
+	if overlay == null or overlay.partition == null:
+		return true
+	var combo := CrawlerRules.patch_combo(_patch_name_from_id(patch_id))
+	for other in overlay.partition.neighbors_of(patch_id):
+		if other < 0:
+			continue
+		if CrawlerRules.patch_combo(_patch_name_from_id(other)) != combo:
+			continue
+		if not is_patch_armed(other):
+			return false
+	return true
+
+
+func _arm_one_patch(planet: Planet, overlay: LandPatchOverlay, patch_id: int,
+		player: Node3D) -> void:
+	if patch_id < 0 or is_patch_armed(patch_id):
+		return
+	if overlay == null or overlay.partition == null \
+			or patch_id >= overlay.partition.patches.size():
+		return
+	var patch_name := overlay.partition.recipe_name_of(patch_id)
+	if patch_name.is_empty():
+		patch_name = str(overlay.partition.patches[patch_id].name)
+	if CrawlerRules.city_patch(patch_name):
+		_armed[patch_id] = true
+		return
+	if CrawlerRules.castle_grounds(patch_name):
+		_armed[patch_id] = true
+		_ensure_castle_garrison()
+		return
+	if _fill_patch(planet, overlay, patch_id, patch_name, player):
+		_armed[patch_id] = true
+
+
+func _fill_patch(planet: Planet, overlay: LandPatchOverlay, patch_id: int,
+		patch_name: String, player: Node3D) -> bool:
+	if planet == null:
+		return false
+	var facing: LandPartition.Patch = overlay.partition.patches[patch_id]
+	var center := planet.surface_position(facing.direction)
+	if overlay.keeps_mobs_out(center) or CrawlerRules.in_castle_keep(center):
+		return true
+	var here := _distance_from_start(center)
+	var recipe := CrawlerRules.patch_recipe(patch_name, here)
+	var kinds := _roster_for_patch(patch_name, here, center, player)
+	if kinds.is_empty():
+		return true
+	var level := _level_for(patch_id, overlay)
+	var health_scale := float(recipe.get("health_scale", 1.0))
+	var want := CrawlerRules.pack_limit(kinds, level)
+	if want <= 0:
+		return true
+	var dirs := overlay.partition.cell_directions_of(patch_id)
+	if dirs.is_empty():
+		dirs.append(facing.direction)
+	var placed := 0
+	var attempts := 0
+	var max_attempts := want * 3
+	while placed < want and attempts < max_attempts:
+		attempts += 1
+		if _build_queue.size() >= CrawlerRules.MOB_SPAWN_QUEUE:
+			return false
+		var dir: Vector3 = dirs[attempts % dirs.size()]
+		var spin := float(_spawn_serial + attempts) * 0.41
+		var jitter := dir.cross(Vector3.UP)
+		if jitter.length_squared() < 0.0001:
+			jitter = dir.cross(Vector3.RIGHT)
+		if jitter.length_squared() > 0.0001:
+			dir = (dir + jitter.normalized() * 0.035 * sin(spin)).normalized()
+		var surface := planet.mesh_position(dir)
+		if not surface.is_finite() or MobSense.keepout_blocks(self, surface) \
+				or _kill_blocks(surface) or CrawlerRules.in_castle_keep(surface):
+			continue
+		if player != null \
+				and surface.distance_squared_to(player.global_position) < 16.0:
+			continue
+		var kind := _pick_kind_for_patch(
+			surface, patch_name, here, level, patch_id, kinds)
+		if kind.is_empty():
+			break
+		if _monument_blocks(surface) and not CrawlerRules.is_demon_kind(kind) \
+				and not CrawlerRules.is_robot_kind(kind):
+			continue
+		if CrawlerRules.in_office_tower(surface):
+			continue
+		var home := surface + planet.up_at(surface) * _lift_for(kind, _spawn_serial)
+		var made := _enqueue_wild(kind, home, level, patch_id, health_scale)
+		if made <= 0:
+			return false
+		placed += made
+		if kind == "gloam":
+			placed += _spawn_gloam_flock(planet, home, level, patch_id, health_scale)
+		_spawn_serial += 1
+	return true
+
+
+func _roster_for_patch(patch_name: String, from_start: float, center: Vector3,
+		_player: Node3D) -> PackedStringArray:
+	var kinds := CrawlerRules.field_kinds(patch_name, from_start, center)
+	var open: PackedStringArray = PackedStringArray()
+	for kind: String in kinds:
+		if kind != "bastion":
+			open.append(kind)
+	return open
+
+
+func _ensure_demon_keeps() -> void:
+	_ensure_robot_site()
+
+
+func _ensure_robot_site() -> void:
+	if CrawlerMeta._test_payload != null:
+		return
+	if _build_queue.size() >= CrawlerRules.MOB_SPAWN_QUEUE:
+		return
+	var overlay := _overlay()
+	var planet := _planet()
+	if overlay == null or planet == null:
+		return
+	for player_variant: Variant in _players():
+		if not is_instance_valid(player_variant):
+			continue
+		var player := player_variant as Node3D
+		if player == null:
+			continue
+		if CrawlerRun.active():
+			if CrawlerRules.patch_combo(_patch_name_of(player, overlay)) \
+					!= CrawlerRules.PATCH_COMBO_ROBOT:
+				continue
+		elif not CrawlerRules.robot_grounds(_patch_name_of(player, overlay)):
+			continue
+		for office in _office_sites():
+			_top_up_demon_site(
+				planet, overlay, player,
+				office.monument_id, _patch_name_from_id(overlay.patch_id_at(office.global_position) if overlay != null else -1))
+
+
+func _top_up_demon_site(planet: Planet, overlay: LandPatchOverlay, player: Node3D,
+		quest_id: String, patch_name: String) -> void:
+	var site := PatchMonument.find_id(quest_id)
+	if site == null or player == null:
+		return
+	if player.global_position.distance_to(site.global_position) \
+			> CrawlerRules.DEMON_SITE_RANGE:
+		return
+	var patch_id := -1
+	if overlay != null:
+		patch_id = overlay.patch_id_named(patch_name)
+		if patch_id < 0:
+			patch_id = overlay.patch_id_at(site.global_position)
+	var here := _distance_from_start(site.global_position)
+	var level := _level_for(patch_id, overlay)
+	var recipe := CrawlerRules.patch_recipe(patch_name, here)
+	var health_scale := float(recipe.get("health_scale", 1.0))
+	var kinds := CrawlerRules.field_kinds(patch_name, here, site.global_position)
+	for kind: String in kinds:
+		if not CrawlerRules.is_robot_kind(kind) or kind == "bastion":
+			continue
+		if _kind_blocked(kind):
+			continue
+		var have := _count_kind_in_patch(patch_id, kind)
+		var need := CrawlerRules.kind_cap(kind, level) - have
+		while need > 0:
+			if _build_queue.size() >= CrawlerRules.MOB_SPAWN_QUEUE:
+				return
+			var home := _stamp_near_site(planet, site.global_position, kind, player)
+			if not home.is_finite():
+				break
+			if _enqueue_wild(kind, home, level, patch_id, health_scale) <= 0:
+				break
+			need -= 1
+			_spawn_serial += 1
+
+
+func _stamp_near_site(planet: Planet, site_at: Vector3, kind: String,
+		player: Node3D) -> Vector3:
+	if planet == null or not site_at.is_finite():
+		return Vector3(NAN, NAN, NAN)
+	var up := planet.up_at(site_at) if planet.has_method(&"up_at") else Vector3.UP
+	if up.length_squared() < 0.0001:
+		up = site_at.normalized() if site_at.length_squared() > 0.0001 else Vector3.UP
+	for attempt in 8:
+		_spawn_serial += 1
+		var yaw := float(_spawn_serial) * CrawlerRules.START_RING_STEP
+		var reach := lerpf(28.0, 170.0, float(attempt) / 7.0)
+		var surface := _project_surface(planet, site_at, up, Vector3.ZERO, yaw, reach)
+		if not surface.is_finite() or not _home_clear(surface, kind):
+			continue
+		if player != null \
+				and surface.distance_squared_to(player.global_position) < 16.0:
+			continue
+		return surface + planet.up_at(surface) * _lift_for(kind, _spawn_serial)
+	return Vector3(NAN, NAN, NAN)
+
+
+func _pick_kind_for_patch(at: Vector3, patch_name: String, from_start: float,
+		level: int, patch_id: int,
+		roster: PackedStringArray = PackedStringArray()) -> String:
+	var kinds := roster if not roster.is_empty() \
+		else CrawlerRules.field_kinds(patch_name, from_start, at)
+	var open: PackedStringArray = PackedStringArray()
+	for kind: String in kinds:
+		if kind == "bastion":
+			continue
+		if CrawlerRules.is_demon_kind(kind) \
+				and not CrawlerRules.can_field_demons(patch_name, at):
+			continue
+		if _kind_blocked(kind):
+			continue
+		if _count_kind_in_patch(patch_id, kind) < CrawlerRules.kind_cap(kind, level):
+			open.append(kind)
+	if open.is_empty():
+		return ""
+	var total := 0
+	for kind: String in open:
+		total += maxi(CrawlerRules.spawn_weight(kind), 1)
+	var pick := posmod(_spawn_serial * 17 + 3, total)
+	for kind: String in open:
+		pick -= maxi(CrawlerRules.spawn_weight(kind), 1)
+		if pick < 0:
+			return kind
+	return open[0]
+
+
+func _count_kind_in_patch(patch_id: int, kind: String) -> int:
+	if patch_id < 0:
+		return 0
+	var count := 0
+	for mob_variant: Variant in _mobs.values():
+		var mob := mob_variant as CrawlerMob
+		if mob == null or not is_instance_valid(mob) or mob.is_persistent():
+			continue
+		if mob.city_id == patch_id and _kind_of(mob) == kind:
+			count += 1
+	for row: Dictionary in _build_queue:
+		if int(row.get("city", -1)) == patch_id \
+				and str(row.get("kind", "ranger")) == kind:
+			count += 1
+	return count
+
+
+func _count_kind_all(kind: String) -> int:
+	var count := 0
+	for mob_variant: Variant in _mobs.values():
+		if not is_instance_valid(mob_variant):
+			continue
+		var mob := mob_variant as CrawlerMob
+		if mob == null or mob.is_persistent():
+			continue
+		if _kind_of(mob) == kind:
+			count += 1
+	for row: Dictionary in _build_queue:
+		if str(row.get("kind", "ranger")) == kind:
+			count += 1
+	return count
+
+
+func _patch_has_bodies(patch_id: int) -> bool:
+	if patch_id < 0:
+		return false
+	for mob_variant: Variant in _mobs.values():
+		var mob := mob_variant as CrawlerMob
+		if mob != null and is_instance_valid(mob) and mob.city_id == patch_id:
+			return true
+	for row: Dictionary in _build_queue:
+		if int(row.get("city", -1)) == patch_id:
+			return true
+	return false
+
+
+func _maybe_unarm_patch(patch_id: int) -> void:
+	if patch_id < 0 or not is_patch_armed(patch_id):
+		return
+	if _patch_has_bodies(patch_id):
+		return
+	_armed.erase(patch_id)
+	var drop: Array = []
+	for owner_variant: Variant in _seen_patch.keys():
+		if int(_seen_patch[owner_variant]) == patch_id:
+			drop.append(owner_variant)
+	for owner_variant: Variant in drop:
+		_seen_patch.erase(owner_variant)
+
+
+func _clear_castle_wilds() -> void:
+	var center := CrawlerRules.castle_keep_center()
+	var have_keep := center.is_finite()
+	var guests: Array[Vector3] = []
+	for player_variant: Variant in _players():
+		var player := player_variant as Node3D
+		if player != null and CrawlerRules.in_castle_keep(player.global_position):
+			guests.append(player.global_position)
+	if not have_keep and guests.is_empty():
+		return
+	var gone: Array[String] = []
+	for id_variant: Variant in _mobs.keys():
+		var id := str(id_variant)
+		var mob := _mobs.get(id) as CrawlerMob
+		if mob == null or not is_instance_valid(mob) or mob.is_persistent():
+			continue
+		if (have_keep and CrawlerRules.in_castle_keep(mob.global_position)) \
+				or (not guests.is_empty() and mob.chase):
+			gone.append(id)
+	for id: String in gone:
+		_dismiss_mob(id)
+		if _has_listeners():
+			_despawn_mob_rpc.rpc(id)
+	var kept: Array[Dictionary] = []
+	for row: Dictionary in _build_queue:
+		if bool(row.get("persistent", false)):
+			kept.append(row)
+			continue
+		var origin: Vector3 = row.get("origin", Vector3.ZERO)
+		if typeof(origin) != TYPE_VECTOR3 or not origin.is_finite():
+			continue
+		if have_keep and CrawlerRules.in_castle_keep(origin):
+			continue
+		var near_guest := false
+		for at: Vector3 in guests:
+			if origin.distance_to(at) <= CrawlerRules.PACK_KEEP:
+				near_guest = true
+				break
+		if near_guest:
+			continue
+		kept.append(row)
+	_build_queue = kept
+
+
+func _clear_site_patch_mobs() -> void:
+	if not is_inside_tree():
+		return
+	var centers := PackedVector3Array()
+	var rings: Array[CrawlerCityRing] = []
+	var players := _players()
+	for zone_variant: Variant in get_tree().get_nodes_in_group(CrawlerCityRing.GROUP):
+		var ring := zone_variant as CrawlerCityRing
+		if ring == null:
+			continue
+		if CrawlerRules.all_players_inside_city(players, ring):
+			centers.append(ring.global_position)
+		else:
+			rings.append(ring)
+	for site_variant: Variant in get_tree().get_nodes_in_group(PatchMonument.KEEP_GROUP):
+		var site := site_variant as PatchMonument
+		if site != null and CrawlerRules.is_office_id(site.monument_id):
+			centers.append(site.global_position)
+	_dismiss_patch_mobs_near(centers, CrawlerRules.SITE_CLEAR_RADIUS)
+	if rings.is_empty():
+		return
+	var gone: Array[String] = []
+	for id_variant: Variant in _mobs.keys():
+		var id := str(id_variant)
+		var mob := _mobs.get(id) as CrawlerMob
+		if mob == null or not is_instance_valid(mob) or mob.is_persistent():
+			continue
+		for ring: CrawlerCityRing in rings:
+			if ring.contains_point(mob.global_position):
+				gone.append(id)
+				break
+	for id: String in gone:
+		_dismiss_mob(id)
+		if _has_listeners():
+			_despawn_mob_rpc.rpc(id)
+
+
+func dismiss_near(at: Vector3, radius: float) -> void:
+	if not at.is_finite() or radius <= 0.0:
+		return
+	_dismiss_patch_mobs_near(PackedVector3Array([at]), radius)
+
+
+func _dismiss_patch_mobs_near(centers: PackedVector3Array, radius: float) -> void:
+	if centers.is_empty() or radius <= 0.0:
+		return
+	var reach2 := radius * radius
+	var gone: Array[String] = []
+	for id_variant: Variant in _mobs.keys():
+		var id := str(id_variant)
+		var mob := _mobs.get(id) as CrawlerMob
+		if mob == null or not is_instance_valid(mob) or mob.is_persistent():
+			continue
+		for center: Vector3 in centers:
+			if mob.global_position.distance_squared_to(center) <= reach2:
+				gone.append(id)
+				break
+	for id: String in gone:
+		_dismiss_mob(id)
+		if _has_listeners():
+			_despawn_mob_rpc.rpc(id)
+	var kept: Array[Dictionary] = []
+	for row: Dictionary in _build_queue:
+		if bool(row.get("persistent", false)):
+			kept.append(row)
+			continue
+		var origin: Vector3 = row.get("origin", Vector3.ZERO)
+		if typeof(origin) != TYPE_VECTOR3 or not origin.is_finite():
+			continue
+		var blocked := false
+		for center: Vector3 in centers:
+			if origin.distance_squared_to(center) <= reach2:
+				blocked = true
+				break
+		if not blocked:
+			kept.append(row)
+	_build_queue = kept
+	var homes: Array[Dictionary] = []
+	for row: Dictionary in _ready_homes:
+		var home: Vector3 = row.get("at", Vector3.ZERO)
+		if typeof(home) != TYPE_VECTOR3 or not home.is_finite():
+			continue
+		var blocked := false
+		for center: Vector3 in centers:
+			if home.distance_squared_to(center) <= reach2:
+				blocked = true
+				break
+		if not blocked:
+			homes.append(row)
+	_ready_homes = homes
+
+
+func _clear_off_combo_wilds() -> void:
+	var rings: Array[Dictionary] = []
+	var overlay := _overlay()
+	for player_variant: Variant in _players():
+		var player := player_variant as Node3D
+		if player == null or _player_is_safe(player, overlay):
+			continue
+		rings.append({
+			"at": player.global_position,
+			"kinds": _field_kinds_for(player),
+		})
+	if rings.is_empty():
+		return
+	var gone: Array[String] = []
+	for id_variant: Variant in _mobs.keys():
+		var id := str(id_variant)
+		var mob := _mobs.get(id) as CrawlerMob
+		if mob == null or not is_instance_valid(mob) or mob.is_persistent():
+			continue
+		if _off_combo_near(mob.global_position, _kind_of(mob), rings):
+			gone.append(id)
+	for id: String in gone:
+		_dismiss_mob(id)
+		if _has_listeners():
+			_despawn_mob_rpc.rpc(id)
+	var kept: Array[Dictionary] = []
+	for row: Dictionary in _build_queue:
+		if bool(row.get("persistent", false)):
+			kept.append(row)
+			continue
+		var origin: Vector3 = row.get("origin", Vector3.ZERO)
+		if typeof(origin) != TYPE_VECTOR3 or not origin.is_finite():
+			continue
+		if _off_combo_near(origin, str(row.get("kind", "")), rings):
+			continue
+		kept.append(row)
+	_build_queue = kept
+
+
+func _off_combo_near(at: Vector3, kind: String, rings: Array[Dictionary]) -> bool:
+	if not at.is_finite() or kind.is_empty():
+		return false
+	for row: Dictionary in rings:
+		var here: Vector3 = row.get("at", Vector3.INF)
+		if not here.is_finite() or at.distance_to(here) > CrawlerRules.PACK_KEEP:
+			continue
+		var kinds: PackedStringArray = row.get("kinds", PackedStringArray())
+		if kinds.is_empty() or not kinds.has(kind):
+			return true
+	return false
+
+
+func _field_kinds_for(player: Node3D) -> PackedStringArray:
+	if player == null:
+		return PackedStringArray()
+	return CrawlerRules.field_kinds(
+		_patch_name_of(player, _overlay()),
+		_distance_from_start(player.global_position),
+		player.global_position)
 
 
 func _reap_far_and_idle() -> void:
 	var gone: Array[String] = []
-	for id_variant: Variant in _mobs.keys():
-		var id := str(id_variant)
+	var ids: Array = _mobs.keys()
+	var n := ids.size()
+	var window := mini(24, n)
+	var start := 0 if n <= 0 else posmod(_reap_cursor, n)
+	if n > 0:
+		_reap_cursor = start + window
+	for i in n:
+		var id := str(ids[i])
 		var mob := _mobs.get(id) as CrawlerMob
 		if mob == null or not is_instance_valid(mob):
 			gone.append(id)
 			continue
 		if mob.is_persistent():
 			continue
-		if MobSense.keepout_blocks(self, mob.global_position):
-			gone.append(id)
+		if mob.has_method(&"fusing") and bool(mob.call(&"fusing")):
 			continue
-		if MobSense.monument_blocks(self, mob.global_position) \
-				and not mob.chase and not mob.ever_chased:
-			gone.append(id)
-			continue
+		var in_window := window <= 0 or posmod(i - start + n, n) < window
+		if in_window:
+			if MobSense.keepout_blocks(self, mob.global_position):
+				gone.append(id)
+				continue
+			if _monument_blocks(mob.global_position) \
+					and not mob.chase and not mob.ever_chased \
+					and not CrawlerRules.is_demon_kind(_kind_of(mob)) \
+					and not CrawlerRules.is_robot_kind(_kind_of(mob)):
+				gone.append(id)
+				continue
+			if CrawlerRules.in_office_site_clear(mob.global_position):
+				gone.append(id)
+				continue
 		var distance := _nearest_player_distance(mob.global_position)
 		if distance >= CrawlerRules.WILD_STREAM_OUT:
+			if _recycle_mob(mob):
+				continue
 			gone.append(id)
 			continue
 		if CrawlerRules.should_despawn_idle(
@@ -460,12 +1448,15 @@ func _spawn_home(
 		return 0
 	if kind == "gloam":
 		made += _spawn_gloam_flock(planet, home, level, patch_id, health_scale)
+	elif kind == "tanglemaw":
+		made += _spawn_tanglemaw_flock(planet, home, level, patch_id, health_scale)
 	return made
 
 
 func _spawn_gloam_flock(planet: Planet, home: Vector3, level: int, patch_id: int,
 		health_scale: float) -> int:
-	var used := _count_kind_near(home, CrawlerRules.PACK_KEEP, "gloam")
+	var used := _count_kind_in_patch(patch_id, "gloam") if patch_id >= 0 \
+		else _count_kind_near(home, CrawlerRules.PACK_KEEP, "gloam")
 	var cap := CrawlerRules.kind_cap("gloam", level)
 	var mates := mini(CrawlerRules.GLOAM_FLOCK - 1, maxi(cap - used, 0))
 	if mates <= 0:
@@ -490,10 +1481,45 @@ func _spawn_gloam_flock(planet: Planet, home: Vector3, level: int, patch_id: int
 			var local := planet.to_local(guess)
 			if local.length_squared() < 0.0001:
 				local = up
-			var surface := planet.surface_position(local)
+			var surface := planet.mesh_position(local)
 			perch = surface + planet.up_at(surface) * 1.4
 		made += _enqueue_wild(
 			"gloam", perch, level, patch_id, health_scale, home)
+	return made
+
+
+func _spawn_tanglemaw_flock(planet: Planet, home: Vector3, level: int,
+		patch_id: int, health_scale: float) -> int:
+	var used := _count_kind_in_patch(patch_id, "tanglemaw") if patch_id >= 0 \
+		else _count_kind_near(home, CrawlerRules.PACK_KEEP, "tanglemaw")
+	var cap := CrawlerRules.kind_cap("tanglemaw", level)
+	var mates := mini(CrawlerRules.TANGLEMAW_FLOCK - 1, maxi(cap - used, 0))
+	if mates <= 0:
+		return 0
+	var up := Vector3.UP
+	if planet != null and planet.has_method(&"up_at"):
+		up = planet.up_at(home)
+	if up.length_squared() < 0.0001:
+		up = Vector3.UP
+	var east := up.cross(Vector3.RIGHT)
+	if east.length_squared() < 0.01:
+		east = up.cross(Vector3.FORWARD)
+	east = east.normalized()
+	var north := up.cross(east).normalized()
+	var made := 0
+	for index in mates:
+		var yaw := TAU * float(index) / float(mates) + float(_spawn_serial) * 0.17
+		var reach := 3.4 + float(index) * 0.85
+		var guess := home + (east * cos(yaw) + north * sin(yaw)) * reach
+		var perch := guess
+		if planet != null:
+			var local := planet.to_local(guess)
+			if local.length_squared() < 0.0001:
+				local = up
+			var surface := planet.mesh_position(local)
+			perch = surface + planet.up_at(surface) * 1.4
+		made += _enqueue_wild(
+			"tanglemaw", perch, level, patch_id, health_scale, home)
 	return made
 
 
@@ -593,7 +1619,7 @@ func _stamp_around(planet: Planet, player: Node3D, kind: String, ring: bool) -> 
 		var t := float(posmod(_spawn_serial * 13 + attempt * 7, 97)) / 96.0
 		var reach := lerpf(band.x, band.y, t)
 		var surface := _project_surface(planet, at, up, heading, yaw, reach)
-		if not surface.is_finite() or not _home_clear(surface):
+		if not surface.is_finite() or not _home_clear(surface, kind):
 			continue
 		var home := surface + planet.up_at(surface) * _lift_for(kind, _spawn_serial)
 		if _spawn_point_ok(home, player, planet, kind, ring):
@@ -612,13 +1638,31 @@ func _project_surface(planet: Planet, from: Vector3, up: Vector3, heading: Vecto
 	var local := planet.to_local(guess)
 	if local.length_squared() < 0.0001:
 		local = up
-	return planet.surface_position(local)
+	return planet.mesh_position(local)
 
 
-func _home_clear(at: Vector3) -> bool:
+func _monument_blocks(at: Vector3) -> bool:
+	if MobSense.monument_blocks(self, at):
+		return true
+	return is_inside_tree() and PatchMonument.blocks_any(get_tree(), at)
+
+
+func _home_clear(at: Vector3, kind := "") -> bool:
 	if not at.is_finite():
 		return false
-	if MobSense.keepout_blocks(self, at) or MobSense.monument_blocks(self, at):
+	if MobSense.keepout_blocks(self, at):
+		return false
+	if CrawlerRules.in_castle_keep(at) and not CrawlerRules.is_goblin_kind(kind):
+		return false
+	if CrawlerRules.in_office_tower(at):
+		return false
+	if CrawlerRules.in_office_site_clear(at) \
+			and not CrawlerRules.is_goblin_kind(kind):
+		return false
+	if _monument_blocks(at) \
+			and not CrawlerRules.is_demon_kind(kind) \
+			and not CrawlerRules.is_robot_kind(kind) \
+			and not CrawlerRules.is_goblin_kind(kind):
 		return false
 	return not _kill_blocks(at)
 
@@ -649,7 +1693,7 @@ func _trim_ready_homes() -> void:
 		if player == null:
 			continue
 		var home: Vector3 = row.get("at", Vector3.ZERO)
-		if not home.is_finite():
+		if not home.is_finite() or CrawlerRules.in_castle_keep(home):
 			continue
 		var at := player.global_position
 		var away2 := home.distance_squared_to(at)
@@ -673,10 +1717,22 @@ func _trim_ready_homes() -> void:
 
 
 func _spawn_point_ok(at: Vector3, player: Node3D, planet: Planet,
-		_kind := "", ring := false) -> bool:
+		kind := "", ring := false) -> bool:
 	if not at.is_finite():
 		return false
-	if MobSense.keepout_blocks(self, at) or MobSense.monument_blocks(self, at):
+	if MobSense.keepout_blocks(self, at):
+		return false
+	if CrawlerRules.in_castle_keep(at) and not CrawlerRules.is_goblin_kind(kind):
+		return false
+	if CrawlerRules.in_office_tower(at):
+		return false
+	if CrawlerRules.in_office_site_clear(at) \
+			and not CrawlerRules.is_goblin_kind(kind):
+		return false
+	if _monument_blocks(at) \
+			and not CrawlerRules.is_demon_kind(kind) \
+			and not CrawlerRules.is_robot_kind(kind) \
+			and not CrawlerRules.is_goblin_kind(kind):
 		return false
 	if _kill_blocks(at):
 		return false
@@ -698,8 +1754,11 @@ func _lift_for(kind: String, serial := 0) -> float:
 		return 3.4
 	if kind == "rhino":
 		return 1.9
-	if kind == "gloam":
+	if kind == "gloam" or kind == "bastion" or kind == "weaver" \
+			or kind == "gray" or kind == "tanglemaw":
 		return 1.4
+	if kind == "kestrel" or kind == "scout":
+		return lerpf(7.0, 13.0, t)
 	if kind == "vesper":
 		return lerpf(8.0, 14.0, t)
 	if kind == "threnody":
@@ -721,6 +1780,10 @@ func _pick_kind(at: Vector3, patch_name: String, from_start: float,
 	var kinds := CrawlerRules.field_kinds(patch_name, from_start, at)
 	var open: PackedStringArray = PackedStringArray()
 	for kind: String in kinds:
+		if kind == "bastion":
+			continue
+		if _kind_blocked(kind):
+			continue
 		var used := _count_kind_near(at, CrawlerRules.PACK_KEEP, kind)
 		var cap := CrawlerRules.kind_cap(kind, level)
 		if not ring and player != null:
@@ -811,6 +1874,9 @@ func _player_is_safe(player: Node3D, overlay: LandPatchOverlay) -> bool:
 		return true
 	if overlay != null and overlay.keeps_mobs_out(player.global_position):
 		return true
+	if CrawlerRules.in_castle_keep(player.global_position) \
+			or CrawlerRules.castle_grounds(_patch_name_of(player, overlay)):
+		return true
 	return CrawlerRules.safe_patch(_patch_name_of(player, overlay))
 
 
@@ -846,8 +1912,37 @@ func _patch_name_of(player: Node3D, overlay: LandPatchOverlay) -> String:
 	return str(_patch_record(player, overlay).get("name", ""))
 
 
+func _patch_name_from_id(patch_id: int) -> String:
+	var overlay := _overlay()
+	if overlay == null or overlay.partition == null or patch_id < 0 \
+			or patch_id >= overlay.partition.patches.size():
+		return ""
+	var patch_name := overlay.partition.recipe_name_of(patch_id)
+	if patch_name.is_empty():
+		patch_name = str(overlay.partition.patches[patch_id].name)
+	return patch_name
+
+
+func _office_sites() -> Array[PatchMonument]:
+	var found: Array[PatchMonument] = []
+	if not is_inside_tree():
+		return found
+	for node_variant: Variant in get_tree().get_nodes_in_group(PatchMonument.KEEP_GROUP):
+		var site := node_variant as PatchMonument
+		if site != null and CrawlerRules.is_office_id(site.monument_id):
+			found.append(site)
+	if found.is_empty():
+		var authored := PatchMonument.find_id(CrawlerProgress.QUEST_TOWER)
+		if authored != null:
+			found.append(authored)
+	return found
+
+
 func _level_for(patch_id: int, overlay: LandPatchOverlay) -> int:
 	var facing := _start_dir
+	var patch_name := _patch_name_from_id(patch_id)
+	if CrawlerRun.active() and not patch_name.is_empty():
+		return CrawlerRun.level_for_patch(patch_name)
 	if overlay != null and patch_id >= 0 \
 			and patch_id < overlay.partition.patches.size():
 		var home := overlay.partition.territory_of(patch_id)
@@ -878,13 +1973,20 @@ func _nearest_player_distance(at: Vector3) -> float:
 func _players() -> Array:
 	if not is_inside_tree():
 		return []
-	MobSense.begin_frame(get_tree())
+	MobSense.ensure_frame(get_tree())
 	return MobSense.players()
 
 
 func _enqueue_wild(kind: String, home: Vector3, level: int, patch_id: int,
 		health_scale: float, hang := Vector3(NAN, NAN, NAN)) -> int:
 	if not home.is_finite() or _build_queue.size() >= CrawlerRules.MOB_SPAWN_QUEUE:
+		return 0
+	if CrawlerRules.is_goblin_kind(kind) or CrawlerRules.in_castle_keep(home):
+		return 0
+	if not CrawlerRules.combo_allows_kind(
+			CrawlerRules.patch_combo(_patch_name_from_id(patch_id)), kind):
+		return 0
+	if _kind_blocked(kind):
 		return 0
 	var id := "cm%d" % _next_mob
 	_next_mob += 1
@@ -900,19 +2002,37 @@ func _enqueue_wild(kind: String, home: Vector3, level: int, patch_id: int,
 	}
 	if hang.is_finite():
 		row["hang"] = hang
+	row["chase"] = false if kind == "bastion" \
+		else CrawlerRules.spawn_is_agro(_next_mob)
 	_build_queue.append(row)
 	_scan_at.append(home)
 	_scan_kind.append(kind)
 	return 1
 
 
+func _spawn_build_budget() -> int:
+	var extra := 0
+	for row: Dictionary in _build_queue:
+		if bool(row.get("persistent", false)):
+			extra += 1
+			if extra >= 6:
+				break
+	return CrawlerRules.MOB_SPAWN_BUILD + extra
+
+
 func _drain_builds() -> void:
-	if _build_queue.is_empty():
+	if _garrison_queue.is_empty() and _build_queue.is_empty():
 		return
 	var batch: Array = []
-	var left := CrawlerRules.MOB_SPAWN_BUILD
-	while left > 0 and not _build_queue.is_empty():
-		var row: Dictionary = _build_queue.pop_front()
+	_drain_queue(_garrison_queue, CrawlerRules.GOBLIN_SPAWN_BURST, batch)
+	_drain_queue(_build_queue, _spawn_build_budget(), batch)
+	if not batch.is_empty() and _has_listeners():
+		_spawn_mob_batch_rpc.rpc(batch)
+
+
+func _drain_queue(queue: Array[Dictionary], left: int, batch: Array) -> void:
+	while left > 0 and not queue.is_empty():
+		var row: Dictionary = queue.pop_front()
 		var origin: Vector3 = row.get("origin", Vector3.ZERO)
 		if typeof(origin) != TYPE_VECTOR3 or not origin.is_finite():
 			continue
@@ -928,10 +2048,12 @@ func _drain_builds() -> void:
 		var hang: Variant = row.get("hang", Vector3(NAN, NAN, NAN))
 		if mob != null and hang is Vector3 and (hang as Vector3).is_finite():
 			mob.hang_origin = hang
+		if mob != null and bool(row.get("persistent", false)):
+			mob.persistent = true
 		batch.append(row)
 		left -= 1
-	if not batch.is_empty() and _has_listeners():
-		_spawn_mob_batch_rpc.rpc(batch)
+		if str(row.get("kind", "")) == "threnody":
+			left = 0
 
 
 func _make_mob(id: String, kind: String, xform: Transform3D, level: int,
@@ -956,6 +2078,18 @@ func _make_mob(id: String, kind: String, xform: Transform3D, level: int,
 		mob = NIX.new()
 	elif kind == "vex":
 		mob = VEX.new()
+	elif kind == "kestrel":
+		mob = KESTREL.new()
+	elif kind == "bastion":
+		mob = BASTION.new()
+	elif kind == "weaver":
+		mob = WEAVER.new()
+	elif kind == "scout":
+		mob = SCOUT.new()
+	elif kind == "gray":
+		mob = GRAY.new()
+	elif kind == "tanglemaw":
+		mob = TANGLEMAW.new()
 	else:
 		mob = CrawlerRanger.new()
 	mob.configure(
@@ -969,16 +2103,56 @@ func _make_mob(id: String, kind: String, xform: Transform3D, level: int,
 func _on_mob_died(mob: CrawlerMob) -> void:
 	if mob == null or mob.dismissed:
 		return
+	var patch_id := mob.city_id
+	var training := mob.is_training()
+	var kind := mob.wild_kind()
+	var level := mob.threat_level
+	var home := mob.hang_origin
 	_mobs.erase(mob.mob_id)
+	_maybe_unarm_patch(patch_id)
 	if _is_host():
+		if training:
+			if _has_listeners():
+				_mob_death_burst_rpc.rpc(
+					mob.combat_position(), mob._up(),
+					maxf(mob.combat_radius() * 2.6, 2.4), kind)
+				_despawn_mob_rpc.rpc(mob.mob_id)
+			_respawn_training_mob(kind, home, level)
+			return
+		if kind == "scout":
+			spawn_drop_mob("gray", mob.global_position, mob.threat_level)
 		if not mob.is_persistent():
 			_note_kill(mob.global_position)
 		_award_kill(mob)
 		if _has_listeners():
 			_mob_death_burst_rpc.rpc(
 				mob.combat_position(), mob._up(),
-				maxf(mob.combat_radius() * 2.6, 2.4), mob.wild_kind())
+				maxf(mob.combat_radius() * 2.6, 2.4), kind)
 			_despawn_mob_rpc.rpc(mob.mob_id)
+
+
+func _respawn_training_mob(kind: String, home: Vector3, level: int) -> void:
+	if not CrawlerRules.training_active() or not home.is_finite():
+		return
+	var pose := _pose_at(home)
+	var id := "ct%d" % _next_mob
+	_next_mob += 1
+	var mob := _make_mob(id, kind, pose, level, false, -1, -1)
+	if mob == null:
+		return
+	mob.become_training(pose)
+	if _has_listeners():
+		_spawn_mob_batch_rpc.rpc([{
+			"id": id,
+			"kind": kind,
+			"origin": pose.origin,
+			"level": level,
+			"city": -1,
+			"slot": -1,
+			"chase": false,
+			"health_scale": 1.0,
+			"training": true,
+		}])
 
 
 func _note_kill(at: Vector3) -> void:
@@ -1046,7 +2220,7 @@ func _award_kill(mob: CrawlerMob) -> void:
 	var peer := mob.last_source_peer
 	if peer <= 0:
 		return
-	MobSense.begin_frame(get_tree())
+	MobSense.ensure_frame(get_tree())
 	for player_node: Node3D in MobSense.players():
 		var player := player_node as OnlinePlayer
 		if player == null or player.peer_id != peer:
@@ -1060,11 +2234,47 @@ func _award_kill(mob: CrawlerMob) -> void:
 		return
 
 
+func dismiss_mob(id: String) -> void:
+	if id.is_empty() or not _mobs.has(id):
+		return
+	_dismiss_mob(id)
+	if _has_listeners():
+		_despawn_mob_rpc.rpc(id)
+
+
+func dismiss_idle_kind(kind: String, except: Node = null) -> void:
+	if kind.is_empty():
+		return
+	var gone: Array[String] = []
+	for id_variant: Variant in _mobs.keys():
+		var id := str(id_variant)
+		var mob := _mobs.get(id) as CrawlerMob
+		if mob == null or mob == except or not is_instance_valid(mob):
+			continue
+		if mob.wild_kind() != kind or mob.chase or mob.dismissed:
+			continue
+		gone.append(id)
+	var kept: Array[Dictionary] = []
+	for row: Dictionary in _build_queue:
+		if str(row.get("kind", "")) == kind:
+			continue
+		kept.append(row)
+	_build_queue = kept
+	for id: String in gone:
+		dismiss_mob(id)
+
+
+func _kind_blocked(kind: String) -> bool:
+	return kind == "threnody" and MobSense.any_chasing_kind("threnody")
+
+
 func _dismiss_mob(id: String) -> void:
 	var mob := _mobs.get(id) as CrawlerMob
+	var patch_id := mob.city_id if mob != null else -1
 	_mobs.erase(id)
 	if mob != null:
 		mob.dismiss()
+	_maybe_unarm_patch(patch_id)
 
 
 func publish_mob_state(mob: CrawlerMob) -> void:
@@ -1080,10 +2290,48 @@ func publish_ranger_shot(from: Vector3, launch: Vector3, damage: float,
 		_ranger_shot_rpc.rpc(from, launch, damage, shot_speed, ball_radius, hit_radius)
 
 
+func publish_gray_shot(from: Vector3, launch: Vector3, damage: float,
+		shot_speed: float, ball_radius := 0.58, hit_radius := 1.3) -> void:
+	if _has_listeners():
+		_gray_shot_rpc.rpc(from, launch, damage, shot_speed, ball_radius, hit_radius)
+
+
+func publish_scout_beam(from: Vector3, to: Vector3) -> void:
+	if _has_listeners():
+		_scout_beam_rpc.rpc(from, to)
+
+
 func publish_vex_mortar(from: Vector3, launch: Vector3, damage: float,
 		shot_speed: float, ball_radius := 0.42, hit_radius := 1.15) -> void:
 	if _has_listeners():
 		_vex_mortar_rpc.rpc(from, launch, damage, shot_speed, ball_radius, hit_radius)
+
+
+func publish_bastion_shell(from: Vector3, launch: Vector3, damage: float,
+		shot_speed: float, ball_radius := 0.36, hit_radius := 2.2,
+		impact_at := Vector3.INF) -> void:
+	if _has_listeners():
+		_bastion_shell_rpc.rpc(
+			from, launch, damage, shot_speed, ball_radius, hit_radius, impact_at)
+
+
+func publish_bastion_burst(at: Vector3, radius: float) -> void:
+	_play_bastion_burst(at, radius)
+	if _has_listeners():
+		_bastion_burst_rpc.rpc(at, radius)
+
+
+func _play_bastion_burst(at: Vector3, radius: float) -> void:
+	EnergyExplosion.burst(
+		get_parent(), at, maxf(radius, 1.2), Color(1.0, 0.18, 0.08), 0.5)
+
+
+func publish_robot_laser(from: Vector3, launch: Vector3, damage: float,
+		shot_speed: float, ball_radius: float, hit_radius: float,
+		glow: Color) -> void:
+	if _has_listeners():
+		_robot_laser_rpc.rpc(
+			from, launch, damage, shot_speed, ball_radius, hit_radius, glow)
 
 
 func publish_rhino_meteor(at: Vector3, radius: float) -> void:
@@ -1208,6 +2456,16 @@ func _spawn_mob_rpc(id: String, kind: String, xform: Transform3D, level: int,
 
 
 @rpc("authority", "reliable")
+func _spawn_drop_rpc(id: String, kind: String, xform: Transform3D,
+		level: int) -> void:
+	if _is_host() or _mobs.has(id):
+		return
+	var mob := _make_mob(id, kind, xform, level, true, -1, -1)
+	if mob != null and mob.has_method(&"begin_drop"):
+		mob.call(&"begin_drop")
+
+
+@rpc("authority", "reliable")
 func _spawn_mob_batch_rpc(batch: Array) -> void:
 	if _is_host():
 		return
@@ -1221,7 +2479,7 @@ func _spawn_mob_batch_rpc(batch: Array) -> void:
 		var origin: Vector3 = row.get("origin", Vector3.ZERO)
 		if typeof(origin) != TYPE_VECTOR3:
 			continue
-		_make_mob(
+		var mob := _make_mob(
 			id,
 			str(row.get("kind", "ranger")),
 			_pose_at(origin),
@@ -1231,6 +2489,8 @@ func _spawn_mob_batch_rpc(batch: Array) -> void:
 			int(row.get("slot", -1)),
 			float(row.get("health_scale", 1.0))
 		)
+		if mob != null and bool(row.get("training", false)):
+			mob.become_training(mob.global_transform)
 
 
 @rpc("authority", "reliable")
@@ -1254,6 +2514,39 @@ func _mob_state_rpc(id: String, xform: Transform3D, along: Vector3, hp: float,
 
 
 @rpc("authority", "reliable")
+func _gray_shot_rpc(from: Vector3, launch: Vector3, damage: float,
+		shot_speed: float, ball_radius := 0.58, hit_radius := 1.3) -> void:
+	if _is_host():
+		return
+	var ball := GRAY_SHOT.new()
+	ball.damage = damage
+	ball.shot_speed = shot_speed
+	ball.ball_radius = ball_radius
+	ball.hit_radius = hit_radius
+	var world := get_parent()
+	if world == null or not ball.launch_anywhere(world, from, launch, null):
+		ball.free()
+
+
+@rpc("authority", "reliable")
+func _scout_beam_rpc(from: Vector3, to: Vector3) -> void:
+	if _is_host():
+		return
+	var world := get_parent()
+	if world == null:
+		return
+	var beam := EnergyVfx.make(EnergyVfx.Kind.BEAM_CORE, EnergyVfx.TINT_PINK)
+	beam.name = "ScoutPulse"
+	world.add_child(beam)
+	beam.place_beam(from, to, 0.42)
+	var tree := get_tree()
+	if tree != null:
+		tree.create_timer(0.12).timeout.connect(beam.queue_free)
+	else:
+		beam.queue_free()
+
+
+@rpc("authority", "reliable")
 func _ranger_shot_rpc(from: Vector3, launch: Vector3, damage: float,
 		shot_speed: float, ball_radius := 0.16, hit_radius := 0.62) -> void:
 	if _is_host():
@@ -1266,6 +2559,24 @@ func _ranger_shot_rpc(from: Vector3, launch: Vector3, damage: float,
 	var world := get_parent()
 	if world == null or not ball.launch_anywhere(world, from, launch, null):
 		ball.free()
+
+
+@rpc("authority", "reliable")
+func _robot_laser_rpc(from: Vector3, launch: Vector3, damage: float,
+		shot_speed: float, ball_radius: float, hit_radius: float,
+		glow: Color) -> void:
+	if _is_host():
+		return
+	var bolt := ROBOT_LASER.new()
+	bolt.damage = damage
+	bolt.shot_speed = shot_speed
+	bolt.ball_radius = ball_radius
+	bolt.hit_radius = hit_radius
+	bolt.glow_color = glow
+	bolt.core_color = glow.lightened(0.35)
+	var world := get_parent()
+	if world == null or not bolt.launch_anywhere(world, from, launch, null):
+		bolt.free()
 
 
 @rpc("authority", "reliable")
@@ -1288,3 +2599,28 @@ func _rhino_meteor_rpc(at: Vector3, radius: float) -> void:
 	if _is_host():
 		return
 	_play_rhino_meteor(at, radius)
+
+
+@rpc("authority", "reliable")
+func _bastion_shell_rpc(from: Vector3, launch: Vector3, damage: float,
+		shot_speed: float, ball_radius := 0.36, hit_radius := 2.2,
+		impact_at := Vector3.INF) -> void:
+	if _is_host():
+		return
+	var ball := BASTION_SHELL.new()
+	ball.damage = damage
+	ball.gravity = CrawlerRules.BASTION_GRAVITY
+	ball.shot_speed = shot_speed
+	ball.ball_radius = ball_radius
+	ball.hit_radius = hit_radius
+	ball.impact_at = impact_at
+	var world := get_parent()
+	if world == null or not ball.launch_anywhere(world, from, launch, null):
+		ball.free()
+
+
+@rpc("authority", "reliable")
+func _bastion_burst_rpc(at: Vector3, radius: float) -> void:
+	if _is_host():
+		return
+	_play_bastion_burst(at, radius)

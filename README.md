@@ -139,7 +139,7 @@ The test world's floor is 32 m across, which a boosted flight leaves in well und
 
 ### Settler robotic textures
 
-`assets/runtime/characters/player_character_3.glb` is the 1.60 m settler body. Its default look is `assets/runtime/characters/luke.png`; `character_3_clean_robotic.png` (red, cream and gold with cyan cores) and `character_3_integrated_robotic.png` (violet skin under graphite, silver and red armour with cyan lights) remain selectable alternatives. They are texture schemes on one body, not separate bodies: the skeleton, collider, animation set and `c3_*` apparel are shared.
+`assets/runtime/characters/player_character_3.glb` is the 1.60 m settler body. Its default look is `assets/runtime/characters/character_3_noct_crimson.png` (white swept hair, charcoal tank, crimson boots, sun and moon shoulder marks). `luke.png`, `character_3_clean_robotic.png` (red, cream and gold with cyan cores) and `character_3_integrated_robotic.png` (violet skin under graphite, silver and red armour with cyan lights) remain selectable alternatives. They are texture schemes on one body, not separate bodies: the skeleton, collider, animation set and `c3_*` apparel are shared.
 
 Mixamo clips from `m2m_player.glb` are retargeted onto this same humanoid and stored in `player_character_3_m2m.glb`. The authored locomotion and ability names on the body stay as they are; new work should play the Mixamo clip names (`Idle_A`, `Melee_Hook`, `Dance_Simple`, …). `Walk` and `Slide` already exist on the body, so those two Mixamo motions ship as `m2m_Walk` and `m2m_Slide`. Rebuild the library with `assets/source/blender/merge_m2m_animations.py`.
 
@@ -150,7 +150,7 @@ The supplied front/back concept sheets are elevations of different proportions, 
 & $godot --headless --path . --import
 ```
 
-The home-screen Hero Design tab lists all three schemes from `CharacterDB.SKINS`. The saved look and player metadata carry a `skin` id beside `body`; peers therefore draw the same scheme without duplicating the `.glb`. The colour wheel remains a multiplicative wash over the selected texture. **No tint** removes that sparse tint entry rather than saving white, so the authored texture is restored exactly and later texture edits are not hidden behind an override.
+The home-screen Hero Design tab lists the settler schemes from `CharacterDB.SKINS`. The saved look and player metadata carry a `skin` id beside `body`; peers therefore draw the same scheme without duplicating the `.glb`. The colour wheel remains a multiplicative wash over the selected texture. **No tint** removes that sparse tint entry rather than saving white, so the authored texture is restored exactly and later texture edits are not hidden behind an override.
 
 Both skins can be rendered from the same generated `.blend` without rebuilding:
 

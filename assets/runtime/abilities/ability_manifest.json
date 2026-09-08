@@ -119,7 +119,7 @@
     {
       "id": "starfire",
       "title": "Starfire",
-      "description": "Hold to toss blazing, frisbee-like energy disks from alternating hands. Each disk inherits your momentum, bursts on contact, and cuts a crater half the linear size of Meteor Punch's standard impact.",
+      "description": "Hold to toss blazing, frisbee-like energy disks from alternating hands. Each disk inherits your momentum, bursts on contact, and cuts a crater half the linear size of Meteor Punch's standard impact. Standing in the burst hurts you unless you have explosion immunity.",
       "implementation": "res://game/abilities/starfire.gd",
       "icon": "res://assets/runtime/abilities/icons/starfire.svg",
       "tint": "#D84CFFFF",
@@ -140,10 +140,11 @@
       "stats": {
         "damage": 350.0,
         "impact": 650.0,
+        "player_damage": 24.0,
         "speed": 95.0,
         "range": 70.0,
         "radius": 4.5,
-        "cooldown": 2.0,
+        "cooldown": 2.5,
         "projectile_radius": 0.36,
         "animation_duration": 0.32,
         "crater_radius": 3.0,
@@ -151,43 +152,9 @@
       }
     },
     {
-      "id": "grapple",
-      "title": "Grapple",
-      "description": "Grab an enemy or boss within two metres of the crosshair, carry them twenty metres into the air, then drive them back into the ground and finish in a hero landing.",
-      "implementation": "res://game/abilities/grapple.gd",
-      "icon": "res://assets/runtime/abilities/icons/grapple.svg",
-      "tint": "#50E6C1FF",
-      "activation_type": "COMMITTED",
-      "projectile_type": "NONE",
-      "impact_type": "GRAPPLE_SLAM",
-      "grapple_type": "CARRY_SLAM",
-      "construct_type": "NONE",
-      "reaction_type": "NONE",
-      "animations": {
-        "primary": "GrappleGrab",
-        "held": "GrappleCarry",
-        "impact": "HeroLand"
-      },
-      "blocked_underwater": true,
-      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
-      "stats": {
-        "damage": 1200.0,
-        "impact": 6800.0,
-        "range": 2.0,
-        "radius": 5.0,
-        "cooldown": 4.0,
-        "launch_height": 20.0,
-        "launch_speed": 32.0,
-        "slam_speed": 46.0,
-        "apex_time": 0.16,
-        "crater_radius": 4.0,
-        "crater_depth": 1.8
-      }
-    },
-    {
       "id": "nuke",
       "title": "Nuke",
-      "description": "Launch a giant energy core from the front of both hands. Its host-authoritative detonation tears out a massive crater, ragdolls and hurls everything nearby, and can launch its caster without dealing self-damage.",
+      "description": "Launch a giant energy core from the front of both hands. Its host-authoritative detonation tears out a massive crater, ragdolls and hurls everything nearby, and can launch its caster. The blast hurts you, not other players, unless you have explosion immunity.",
       "implementation": "res://game/abilities/nuke.gd",
       "icon": "res://assets/runtime/abilities/icons/nuke.svg",
       "tint": "#FF7A2FFF",
@@ -227,7 +194,7 @@
     {
       "id": "mini_nuke",
       "title": "Mini Nuke",
-      "description": "A smaller energy core from the front of both hands. It flies faster and farther than Nuke before it bursts, then tears a modest crater and hurls whatever it reaches. Can launch its caster without dealing self-damage.",
+      "description": "A smaller energy core from the front of both hands. It flies faster and farther than Nuke before it bursts, then tears a modest crater and hurls whatever it reaches. Can launch its caster. The blast hurts you, not other players, unless you have explosion immunity.",
       "implementation": "res://game/abilities/nuke.gd",
       "icon": "res://assets/runtime/abilities/icons/mini_nuke.svg",
       "tint": "#FFB03AFF",
@@ -265,42 +232,6 @@
       }
     },
     {
-      "id": "lasso",
-      "title": "Lasso",
-      "description": "Fire a physical string that retracts if it misses. A hit tethers a player, creature, dummy, or boss; hold to swing the target with movement and aim, then release to throw it.",
-      "implementation": "res://game/abilities/lasso.gd",
-      "icon": "res://assets/runtime/abilities/icons/lasso.svg",
-      "tint": "#58D9FFFF",
-      "activation_type": "SUSTAINED",
-      "projectile_type": "TETHER",
-      "impact_type": "NONE",
-      "grapple_type": "PHYSICS_TETHER",
-      "construct_type": "NONE",
-      "reaction_type": "RAGDOLL",
-      "affects_players": true,
-      "animations": {
-        "primary": "LassoThrow",
-        "hover": "LassoFloatThrow",
-        "held": "LassoHold",
-        "held_hover": "LassoFloatHold"
-      },
-      "blocked_underwater": true,
-      "allowed_stances": ["STAND", "CROUCH", "SLIDE", "FLY"],
-      "stats": {
-        "damage": 1800.0,
-        "player_damage": 30.0,
-        "speed": 120.0,
-        "range": 30.0,
-        "cooldown": 4.0,
-        "duration": 2.0,
-        "rope_length": 10.0,
-        "swing_acceleration": 70.0,
-        "max_speed": 55.0,
-        "impact_speed": 10.0,
-        "animation_duration": 0.3
-      }
-    },
-    {
       "id": "wall",
       "title": "Wall",
       "description": "Project an indestructible translucent blue barrier in front of you. It blocks bodies, beams, projectiles, and occluded blasts, then slowly fades out of the world.",
@@ -334,7 +265,7 @@
     {
       "id": "nausicaa",
       "title": "Nausicaä",
-      "description": "Sweep a short blue eye laser across terrain. Each glowing patch waits one second, then the trail erupts from its first mark to its last and carves a shallow indent. Props and targets cannot be painted.",
+      "description": "Sweep a short blue eye laser. Each glowing patch waits one second at the beam tip, or sticks to a mob in front of the beam, then the trail erupts from its first mark to its last and carves a shallow indent. Standing in an eruption hurts you, not other players, unless you have explosion immunity.",
       "implementation": "res://game/abilities/nausicaa.gd",
       "icon": "res://assets/runtime/abilities/icons/nausicaa.svg",
       "tint": "#2F78FFFF",
@@ -353,7 +284,7 @@
         "damage": 2500.0,
         "player_damage": 12.0,
         "duration": 0.75,
-        "range": 14.0,
+        "range": 5.0,
         "radius": 5.0,
         "cooldown": 7.0,
         "delay": 1.0,
@@ -399,7 +330,7 @@
     {
       "id": "light_bolt",
       "title": "Light Bolt",
-      "description": "Hold to spray small pulsating purple-pink bolts from the eyes, like a submachine gun. Each bolt pops on contact. Will not fire under water.",
+      "description": "Hold to spray small pulsating purple-pink bolts from the eyes, like a submachine gun. Each bolt pops on contact. Standing in a pop hurts you unless you have explosion immunity. Will not fire under water.",
       "implementation": "res://game/abilities/light_bolt.gd",
       "icon": "res://assets/runtime/abilities/icons/light_bolt.svg",
       "tint": "#E24BFFFF",
@@ -415,6 +346,7 @@
       "stats": {
         "damage": 16.0,
         "impact": 22.0,
+        "player_damage": 4.0,
         "speed": 70.0,
         "range": 48.0,
         "radius": 0.85,

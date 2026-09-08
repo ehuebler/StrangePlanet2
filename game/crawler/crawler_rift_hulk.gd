@@ -13,8 +13,8 @@ var _slam_left := 0.0
 
 
 func _ready() -> void:
-	_base_health = 220.0
-	_base_damage = 28.0
+	_base_health = 20.0
+	_base_damage = 20.0
 	_base_speed = 11.0
 	super._ready()
 	motion_mode = MOTION_MODE_FLOATING
@@ -52,12 +52,20 @@ func combat_radius() -> float:
 	return WIDTH * 0.62
 
 
+func ground_clearance() -> float:
+	return HEIGHT * 0.5
+
+
+func _tick_idle(delta: float) -> void:
+	_patrol_ground(delta)
+
+
 func _tick_ai(delta: float) -> void:
-	_stick_to_surface()
+	snap_to_ground()
 	_slam_left = maxf(_slam_left - delta, 0.0)
 	var player := _hunt_target(delta)
 	if player == null:
-		_patrol_ground(delta)
+		_tick_idle(delta)
 		return
 	var at := _combat_position_of(player)
 	var along := _tangent_toward(at)
@@ -100,8 +108,12 @@ func _wander_point() -> Vector3:
 		var local := _planet.to_local(at)
 		if local.length_squared() < 0.0001:
 			local = _up()
-		var surface := _planet.surface_position(local)
-		at = surface + _planet.up_at(surface) * (HEIGHT * 0.5)
+		var surface := ground_surface(at)
+		if surface.is_finite():
+			at = surface + _planet.up_at(surface) * ground_clearance()
+		else:
+			var mesh := _planet.mesh_position(local)
+			at = mesh + _planet.up_at(mesh) * ground_clearance()
 	return at
 
 
@@ -113,15 +125,7 @@ func _tangent_toward(at: Vector3) -> Vector3:
 
 
 func _stick_to_surface() -> void:
-	if _planet == null:
-		return
-	var local := _planet.to_local(global_position)
-	if local.length_squared() < 0.0001:
-		local = Vector3.UP
-	var surface := _planet.surface_position(local)
-	var up := _planet.up_at(surface)
-	global_position = surface + up * (HEIGHT * 0.5)
-	velocity -= up * velocity.dot(up)
+	snap_to_ground()
 
 
 func _slam(player: Node) -> void:

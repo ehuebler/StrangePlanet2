@@ -41,9 +41,8 @@ func _check_ability_scoring() -> void:
 	var laser := ItemDB.ability_definition("laser_eyes")
 	var meteor := ItemDB.ability_definition("meteor_punch")
 	var wall := ItemDB.ability_definition("wall")
-	var grapple := ItemDB.ability_definition("grapple")
 	var nuke := ItemDB.ability_definition("nuke")
-	_expect(laser != null and meteor != null and wall != null and grapple != null \
+	_expect(laser != null and meteor != null and wall != null \
 			and nuke != null, "catalogue still exposes the authored abilities")
 	_expect(EnemyPlayerAI.score_ability(laser, 20.0, false) \
 			> EnemyPlayerAI.score_ability(wall, 20.0, false),
@@ -56,8 +55,6 @@ func _check_ability_scoring() -> void:
 		"attack closes a long gap with a self-launch")
 	_expect(EnemyPlayerAI.score_ability(meteor, 12.0, true) > 0.8,
 		"flee uses a self-launch to get away")
-	_expect(EnemyPlayerAI.score_ability(grapple, 1.5, false, Node.new()) < 0.2,
-		"grapple is ignored when the prey cannot be carried")
 	_expect(EnemyPlayerAI.score_ability(nuke, 80.0, false) > 0.8,
 		"a long-range blast is used when the prey is inside its reach")
 	var extra := AbilityDefinition.new()

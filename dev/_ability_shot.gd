@@ -166,21 +166,13 @@ func _meteor_shots() -> void:
 	await _dive_shots(here)
 
 
-## Exercises the four catalogue additions through the same in-world path used
-## by play. Each effect gets a gameplay camera view plus a side or aftermath
+## Exercises the remaining catalogue additions through the same in-world path
+## used by play. Each effect gets a gameplay camera view plus a side or aftermath
 ## view that makes its shape, collision volume, or terrain result readable.
 func _new_ability_shots(world: GameWorld) -> void:
 	var dummy := world.find_child(
 		"TrainingDummy", true, false) as TrainingDummy
 	var arena := _cover_nearby()
-	_player.abilities.set_item(0, "nuke")
-	_player.abilities.set_item(1, "lasso")
-	await _wait(4)
-	if dummy != null:
-		_place_dummy(dummy, arena)
-		await _lasso_shots(dummy, arena)
-	else:
-		push_error("ability_shot: the training dummy is missing")
 
 	# Everything that wants intact ground goes before the nuke. It leaves a
 	# seventy-metre hole in the middle of the arena, and the shots after it would
@@ -202,35 +194,6 @@ func _new_ability_shots(world: GameWorld) -> void:
 		await get_tree().process_frame
 		await _nuke_shots(arena)
 		await _nuke_self_launch_shots(arena)
-
-
-func _lasso_shots(dummy: TrainingDummy, arena: Vector3) -> void:
-	_stand_facing(arena, 8.0)
-	_player.set_camera_mode(OnlinePlayer.CameraMode.THIRD_FAR)
-	await _wait(20)
-	await _aim_at(dummy.combat_position())
-	await _ready_in(1)
-	print("ability_shot: lasso dispatched=%s" % _player.activate_ability(1))
-	await _wait(10)
-	print("ability_shot: lasso active=%s target=%s" % [
-		_player.ability_lasso_active(), dummy.is_lassoed()])
-	await _shot("ability_lasso_gameplay")
-	await _side_shot("ability_lasso_close", 2.0, 7.0)
-	await _wait(30)
-	await _shot("ability_lasso_swing")
-	_player.release_ability(1)
-	await _wait(14)
-	await _shot("ability_lasso_released")
-	await _ready_in(1)
-	_player._pitch = 0.48
-	print("ability_shot: lasso miss dispatched=%s" % (
-		_player.activate_ability(1)))
-	await _wait_seconds(0.14)
-	await _shot("ability_lasso_miss")
-	await _wait_seconds(0.5)
-	_player._pitch = 0.0
-	# Let the dummy settle before using it as the Nuke's deterministic collider.
-	await _wait(90)
 
 
 ## The whole sequence, from a stand-off. Every stage gets its own frame because

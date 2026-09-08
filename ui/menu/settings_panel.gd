@@ -141,6 +141,7 @@ func _build() -> void:
 		column.add_child(_settings_rule())
 
 	_section_row = HBoxContainer.new()
+	_section_row.name = "SettingsTabs"
 	_section_row.add_theme_constant_override("separation", 8)
 	box.add_child(_section_row)
 
@@ -160,6 +161,7 @@ func _fill_section_row() -> void:
 		child.queue_free()
 	for index in SECTIONS.size():
 		var button := _settings_button(SECTIONS[index], index == _section)
+		button.name = "SettingsTab_%s" % SECTIONS[index].replace(" / ", "_").replace(" ", "")
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.add_theme_font_size_override("font_size", 14)
 		var chosen := index
@@ -238,6 +240,17 @@ func _refresh_save_buttons() -> void:
 		_load_button.tooltip_text = "" if can_load else (
 			"No saved game yet." if not GameSave.has_save() else "Only the host can load a run."
 		)
+		if not can_load and not GameSave.has_save():
+			var gray := Color(0.76, 0.76, 0.78)
+			_load_button.add_theme_color_override(&"font_disabled_color", gray)
+			_load_button.add_theme_stylebox_override(
+				&"disabled",
+				_style(Color(0.22, 0.22, 0.24, 0.82), Color(gray, 0.55), 1, 8.0)
+			)
+		else:
+			_load_button.add_theme_color_override(
+				&"font_disabled_color", Color(RED_MUTED, 0.36)
+			)
 
 
 func _on_save_game() -> void:
@@ -380,6 +393,11 @@ func _display_section() -> VBoxContainer:
 		"God rays",
 		bool(_settings.get_setting(&"graphics", &"god_rays", true)),
 		func(value: bool) -> void: _write(&"graphics", &"god_rays", value)
+	))
+	tab.add_child(_toggle_row(
+		"UI glitch",
+		bool(_settings.get_setting(&"graphics", &"ui_glitch", true)),
+		func(value: bool) -> void: _write(&"graphics", &"ui_glitch", value)
 	))
 	return tab
 
@@ -643,30 +661,55 @@ func _style_red_button(button: Button, selected: bool, destructive := false) -> 
 		Color(0.08, 0.0, 0.0, 0.98)
 	)
 	button.add_theme_constant_override(&"outline_size", 1)
+	# Fill only. CRT type slightly zooms the raster, so a StyleBox ring would
+	# sit inside the tab. The rim is the glow, which lives on the host edge.
 	button.add_theme_stylebox_override(
 		&"normal",
-		_style(fill, Color(accent, 0.92), 2 if selected else 1, 8.0)
+		_style(fill, Color.TRANSPARENT, 0, 8.0)
 	)
 	button.add_theme_stylebox_override(
 		&"hover",
-		_style(BLACK_82, GREEN, 2, 8.0, Color(GREEN, 0.14), 3)
+		_style(BLACK_82, Color.TRANSPARENT, 0, 8.0)
 	)
 	button.add_theme_stylebox_override(
 		&"pressed",
-		_style(Color(0.0, 0.18, 0.05, 0.88), GREEN, 2, 8.0)
+		_style(Color(0.0, 0.18, 0.05, 0.88), Color.TRANSPARENT, 0, 8.0)
 	)
 	button.add_theme_stylebox_override(
 		&"hover_pressed",
-		_style(Color(0.0, 0.20, 0.06, 0.92), GREEN_TEXT, 2, 8.0)
+		_style(Color(0.0, 0.20, 0.06, 0.92), Color.TRANSPARENT, 0, 8.0)
 	)
 	button.add_theme_stylebox_override(
 		&"focus",
-		_style(Color.TRANSPARENT, GREEN, 1, 7.0)
+		_style(Color.TRANSPARENT, Color.TRANSPARENT, 0, 8.0)
 	)
 	button.add_theme_stylebox_override(
 		&"disabled",
-		_style(BLACK_42, Color(RED_MUTED, 0.30), 1, 8.0)
+		_style(BLACK_42, Color.TRANSPARENT, 0, 8.0)
 	)
+	_paint_button_rim(button, accent, selected)
+
+
+func _button_glow(button: Button) -> RedGlowPanel:
+	var rim := button.get_node_or_null("RedGlowPanel") as RedGlowPanel
+	if rim != null:
+		return rim
+	var host := CrtType.host_of(button)
+	if host != null:
+		return host.get_node_or_null("RedGlowPanel") as RedGlowPanel
+	return null
+
+
+func _paint_button_rim(button: Button, accent: Color, selected: bool) -> void:
+	var glow := _button_glow(button)
+	if glow == null:
+		glow = RedGlowPanel.add_to(button)
+		glow.fill_color = Color(0.0, 0.0, 0.0, 0.0)
+		glow.glow_spread = 6.0
+		glow.glow_layers = 3
+	glow.border_color = Color(accent, 0.96)
+	glow.border_width = 2.2 if selected else 1.5
+	glow.glow_intensity = 1.28 if selected else 1.05
 
 
 func _style_option(option: OptionButton) -> void:

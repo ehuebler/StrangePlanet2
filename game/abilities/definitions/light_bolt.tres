@@ -8,7 +8,7 @@
 script = ExtResource("1_definition")
 ability_id = "light_bolt"
 title = "Light Bolt"
-description = "Hold to spray small pulsating purple-pink bolts from the eyes, like a submachine gun. Each bolt pops on contact. Will not fire under water."
+description = "Hold to spray small pulsating purple-pink bolts from the eyes, like a submachine gun. Each bolt pops on contact. Standing in a pop hurts you unless you have explosion immunity. Will not fire under water."
 implementation = ExtResource("2_implementation")
 icon = ExtResource("3_icon")
 tint = Color(0.886275, 0.294118, 1.000000, 1.000000)
@@ -33,6 +33,7 @@ allowed_stances = PackedInt32Array(0, 1, 2, 3)
 stats = {
 "damage": 16.0,
 "impact": 22.0,
+"player_damage": 4.0,
 "speed": 70.0,
 "range": 48.0,
 "radius": 0.85,

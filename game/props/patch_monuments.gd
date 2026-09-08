@@ -9,6 +9,8 @@ extends Node3D
 const TOWER_MODEL := "res://assets/runtime/environment/meridian_office_tower.glb"
 const CASTLE_MODEL := "res://assets/runtime/environment/stormwatch_castle.glb"
 const NIGHT_LIGHTS := preload("res://game/city/building_night_lights.gd")
+const TIDEKIN_OFFICE := preload("res://game/crawler/crawler_tidekin_office.gd")
+const CASTLE_GARRISON := preload("res://game/crawler/crawler_castle_garrison.gd")
 const KEEP_OUT := 180.0
 const TOWER_HALF_SPAN := 52.0
 
@@ -24,12 +26,14 @@ func _ensure_sites(tries: int) -> void:
 		if tries < 12:
 			call_deferred(&"_ensure_sites", tries + 1)
 		return
+	if CrawlerRun.active():
+		return
 	_place_site(
 		CrawlerProgress.QUEST_TOWER,
 		"Meridian Tower",
 		CrawlerRules.TOWER_PATCH,
 		TOWER_MODEL,
-		Color("ef151f"),
+		CrawlerRules.OFFICE_WAYPOINT_TINT,
 		overlay
 	)
 	_place_site(
@@ -37,7 +41,7 @@ func _ensure_sites(tries: int) -> void:
 		"Stormwatch Castle",
 		CrawlerRules.CASTLE_PATCH,
 		CASTLE_MODEL,
-		Color("c9a227"),
+		CrawlerRules.CASTLE_WAYPOINT_TINT,
 		overlay
 	)
 	_apply_session_quests()
@@ -97,7 +101,12 @@ func _attach_model(site: PatchMonument, model_path: String) -> void:
 	wire_interior_collision(body)
 	BuildingFoundation.seat(body, site.planet_host())
 	NIGHT_LIGHTS.bind(body, site.planet_host())
-	BuildingFloraClear.register_node(site, body, site.direction)
+	BuildingFloraClear.register_node(
+		site, body, site.direction, CrawlerRules.SITE_CLEAR_RADIUS, 0.0)
+	if site.monument_id == CrawlerProgress.QUEST_TOWER:
+		TIDEKIN_OFFICE.attach(site, body)
+	elif site.monument_id == CrawlerProgress.QUEST_CASTLE:
+		CASTLE_GARRISON.attach(site, body)
 
 
 static func wire_interior_collision(root: Node) -> void:

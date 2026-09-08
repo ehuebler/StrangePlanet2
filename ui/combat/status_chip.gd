@@ -40,22 +40,22 @@ func _ready() -> void:
 func _build() -> void:
 	RedHudTheme.panel(self)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override(&"separation", 8)
+	row.add_theme_constant_override(&"separation", 5)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var pad := MarginContainer.new()
 	for side: StringName in [&"margin_left", &"margin_right", &"margin_top", &"margin_bottom"]:
-		pad.add_theme_constant_override(side, 8)
+		pad.add_theme_constant_override(side, 4)
 	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pad.add_child(row)
 	add_child(pad)
 
 	_icon = DodoIcon.new()
-	_icon.custom_minimum_size = Vector2(22.0, 22.0)
+	_icon.custom_minimum_size = Vector2(16.0, 16.0)
 	_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(_icon)
 
 	var text_col := VBoxContainer.new()
-	text_col.add_theme_constant_override(&"separation", 3)
+	text_col.add_theme_constant_override(&"separation", 2)
 	text_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	text_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(text_col)
@@ -77,7 +77,7 @@ func _build() -> void:
 	header.add_child(_time)
 
 	_track = PanelContainer.new()
-	_track.custom_minimum_size = Vector2(120.0, 5.0)
+	_track.custom_minimum_size = Vector2(0.0, 6.0)
 	_track.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	RedHudTheme.panel(
 		_track, 0.0, RedHudTheme.BLACK, RedHudTheme.RED_BRIGHT, 1
@@ -86,6 +86,10 @@ func _build() -> void:
 
 	_track_inner = Control.new()
 	_track_inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_track_inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_track_inner.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_track_inner.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_track_inner.resized.connect(_refresh)
 	_track.add_child(_track_inner)
 	_bar = ColorRect.new()
 	_bar.color = RedHudTheme.GREEN
@@ -121,9 +125,7 @@ func _refresh() -> void:
 	_time.text = "%.1f s" % remaining
 	var share := clampf(remaining / maximum, 0.0, 1.0)
 	if _track_inner != null and _bar != null:
-		_bar.position = Vector2.ONE
-		_bar.size = Vector2(
-			maxf((_track_inner.size.x - 2.0) * share, 0.0),
-			maxf(_track_inner.size.y - 2.0, 0.0)
-		)
+		var inner := _track_inner.size
+		_bar.position = Vector2.ZERO
+		_bar.size = Vector2(inner.x * share, inner.y)
 

@@ -16,8 +16,8 @@ var _fire_left := 0.0
 
 
 func _ready() -> void:
-	_base_health = 52.0
-	_base_damage = 16.0
+	_base_health = 5.0
+	_base_damage = 10.0
 	_base_speed = 7.0
 	super._ready()
 
@@ -76,13 +76,13 @@ func _build_fallback(colour: Color) -> void:
 
 func _tick_ai(delta: float) -> void:
 	_fire_left = maxf(_fire_left - delta, 0.0)
-	_stick_to_ground()
+	snap_to_ground()
 	if _attacking():
 		velocity = velocity.move_toward(Vector3.ZERO, 22.0 * delta)
 		return
 	var player := _hunt_target(delta)
 	if player == null:
-		velocity = velocity.move_toward(Vector3.ZERO, 14.0 * delta)
+		_tick_idle(delta)
 		return
 	_hold_back(player, delta)
 	_try_lob(player)

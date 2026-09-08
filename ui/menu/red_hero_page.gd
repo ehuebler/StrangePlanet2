@@ -4,10 +4,12 @@ extends VBoxContainer
 ## In-game hero overview for the red menu.
 ##
 ## The compressed portrait sits on the left with its hat and cape tiles in the
-## upper corners. The right column is the ability loadout: a four-slot hotbar, a
-## scrolling library of known powers, and a description of the selected one.
-## Shift-click or drag a library tile onto the hotbar to assign it. There are
-## no equip or drop buttons.
+## upper corners, the juke tile at the lower left, and the live stat readout
+## under the figure. The right column is the ability loadout: a four-slot
+## hotbar, a scrolling library of known powers, and a description of the
+## selected one. Click the worn hat, cape, or juke to read its description and
+## effects in that same panel. Shift-click or drag a library tile onto the
+## hotbar to assign it. There are no equip or drop buttons.
 
 const RED := Color("ef151f")
 const RED_BRIGHT := Color("ff3445")
@@ -40,8 +42,9 @@ var _built := false
 var _sources_connected := false
 var _narrow := false
 var _responsive_initialized := false
-var _stats_open := false
 var _selected_ability_id := ""
+var _selected_apparel_slot := ""
+var _selected_apparel_id := ""
 
 var _main_grid: BoxContainer
 var _stats_frame: PanelContainer
@@ -54,11 +57,11 @@ var _character_block: VBoxContainer
 var _ability_column: VBoxContainer
 var _hero_name: Label
 var _preview: RedCharacterPreview
-var _stats_toggle: Button
 var _hat_slot: RedItemSlot
 var _hat_glyph: RedMenuGlyph
 var _cape_slot: RedItemSlot
 var _cape_glyph: RedMenuGlyph
+var _juke_slot: RedItemSlot
 var _hotbar_frame: PanelContainer
 var _hotbar_row: HBoxContainer
 var _library_scroll: ScrollContainer
@@ -110,6 +113,7 @@ func refresh() -> void:
 	_fill_status_effects()
 	_refresh_hat()
 	_refresh_cape()
+	_refresh_juke()
 	_refresh_hotbar()
 	_refresh_library()
 	_fill_description()
@@ -227,7 +231,7 @@ func _build_character_block() -> VBoxContainer:
 	column.name = "HeroModel"
 	column.custom_minimum_size.x = 168.0
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	column.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.size_flags_stretch_ratio = 1.0
 	column.add_theme_constant_override(&"separation", 6)
 
@@ -242,7 +246,7 @@ func _build_character_block() -> VBoxContainer:
 	stage.name = "CharacterStage"
 	stage.custom_minimum_size = Vector2(168.0, 210.0)
 	stage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	stage.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stage.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	stage.clip_contents = true
 
 	var preview_center := Control.new()
@@ -318,18 +322,36 @@ func _build_character_block() -> VBoxContainer:
 	_cape_glyph.offset_bottom = -12.0
 	_cape_slot.add_child(_cape_glyph)
 
+	_juke_slot = RedItemSlot.new()
+	_juke_slot.name = "JukeSlot"
+	_juke_slot.set_edge(WIDE_HAT_EDGE)
+	_juke_slot.badge = "JUKE"
+	_juke_slot.placeholder = ""
+	_juke_slot.draggable = false
+	_juke_slot.accepts_drops = false
+	_juke_slot.forced_item_id = CrawlerProgress.STAT_JUKE
+	_juke_slot.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_juke_slot.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_juke_slot.offset_left = 10.0
+	_juke_slot.offset_top = -(WIDE_HAT_EDGE + 10.0)
+	_juke_slot.offset_right = WIDE_HAT_EDGE + 10.0
+	_juke_slot.offset_bottom = -10.0
+	_juke_slot.picked.connect(_on_juke_picked)
+	stage.add_child(_juke_slot)
+
+	var shell := VBoxContainer.new()
+	shell.name = "CharacterShell"
+	shell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shell.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shell.add_theme_constant_override(&"separation", 6)
+	shell.add_child(stage)
+
 	_stats_frame = _build_stats_frame()
-	_stats_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_stats_frame.offset_left = 10.0
-	_stats_frame.offset_top = 10.0
-	_stats_frame.offset_right = -10.0
-	_stats_frame.offset_bottom = -10.0
-	stage.add_child(_stats_frame)
+	_stats_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_stats_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shell.add_child(_stats_frame)
 
-	_stats_toggle = _build_stats_toggle()
-	stage.add_child(_stats_toggle)
-
-	var preview_frame := _glow_frame(stage, "CharacterFrame", 3.0)
+	var preview_frame := _glow_frame(shell, "CharacterFrame", 3.0)
 	preview_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	preview_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(preview_frame)
@@ -446,8 +468,10 @@ func _build_description_block() -> PanelContainer:
 func _build_stats_frame() -> PanelContainer:
 	var column := VBoxContainer.new()
 	column.name = "StatsContent"
-	column.add_theme_constant_override(&"separation", 6)
-	_stats_heading = _section_heading("PLAYER STATS  //  LIVE READOUT")
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	column.add_theme_constant_override(&"separation", 3)
+	_stats_heading = _section_heading("PLAYER STATS  //  LIVE READOUT", 11)
 	_stats_heading.name = "StatsHeading"
 	column.add_child(_stats_heading)
 	column.add_child(_rule())
@@ -464,12 +488,12 @@ func _build_stats_frame() -> PanelContainer:
 	var stack := VBoxContainer.new()
 	stack.name = "StatsStack"
 	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	stack.add_theme_constant_override(&"separation", 6)
+	stack.add_theme_constant_override(&"separation", 3)
 	_stats_scroll.add_child(stack)
 
 	_stats_rows = VBoxContainer.new()
 	_stats_rows.name = "StatRows"
-	_stats_rows.add_theme_constant_override(&"separation", 5)
+	_stats_rows.add_theme_constant_override(&"separation", 2)
 	_stats_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stack.add_child(_stats_rows)
 
@@ -489,74 +513,12 @@ func _build_stats_frame() -> PanelContainer:
 	_status_rows.add_theme_constant_override(&"separation", 5)
 	_status_section.add_child(_status_rows)
 
-	var frame := _glow_frame(column, "StatsFrame", 10.0)
-	frame.visible = false
+	var frame := _glow_frame(column, "StatsFrame", 5.0)
+	frame.visible = true
+	frame.custom_minimum_size.y = 88.0
 	frame.mouse_filter = Control.MOUSE_FILTER_STOP
 	frame.clip_contents = true
 	return frame
-
-
-func _build_stats_toggle() -> Button:
-	var button := Button.new()
-	button.name = "StatsToggle"
-	button.tooltip_text = "Show player stats"
-	button.custom_minimum_size = Vector2(48.0, 48.0)
-	button.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	button.offset_left = -58.0
-	button.offset_top = -58.0
-	button.offset_right = -10.0
-	button.offset_bottom = -10.0
-	button.focus_mode = Control.FOCUS_ALL
-	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	button.pressed.connect(_toggle_stats)
-	_style_stats_toggle(button)
-
-	var glyph := RedMenuGlyph.new()
-	glyph.name = "StatsGlyph"
-	glyph.glyph = RedMenuGlyph.Glyph.STATS
-	glyph.green_color = Color(0.02, 0.03, 0.02, 1.0)
-	glyph.black_color = Color(0.02, 0.03, 0.02, 1.0)
-	glyph.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	glyph.offset_left = 9.0
-	glyph.offset_top = 9.0
-	glyph.offset_right = -9.0
-	glyph.offset_bottom = -9.0
-	button.add_child(glyph)
-	return button
-
-
-func _toggle_stats() -> void:
-	_stats_open = not _stats_open
-	_stats_frame.visible = _stats_open
-	_stats_toggle.tooltip_text = (
-		"Hide player stats" if _stats_open else "Show player stats"
-	)
-	_style_stats_toggle(_stats_toggle)
-	if _stats_open:
-		_fill_stats()
-		_fill_status_effects()
-		_stats_frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		_stats_frame.offset_left = 10.0
-		_stats_frame.offset_top = 10.0
-		_stats_frame.offset_right = -10.0
-		_stats_frame.offset_bottom = -10.0
-
-
-func _style_stats_toggle(button: Button) -> void:
-	var fill := RED_BRIGHT if _stats_open else GREEN
-	var border := YELLOW if _stats_open else Color(GREEN, 0.95)
-	button.add_theme_stylebox_override(
-		&"normal", _round_style(fill, border, 2, 4.0, Color(RED, 0.20), 5)
-	)
-	button.add_theme_stylebox_override(
-		&"hover", _round_style(GREEN, YELLOW, 2, 4.0, Color(RED, 0.24), 5)
-	)
-	button.add_theme_stylebox_override(
-		&"pressed", _round_style(GREEN.lightened(0.12), YELLOW, 2, 4.0)
-	)
-	button.add_theme_stylebox_override(
-		&"focus", _round_style(Color.TRANSPARENT, YELLOW, 2, 4.0)
-	)
 
 
 func _bind_slots() -> void:
@@ -580,6 +542,7 @@ func _refresh_hat() -> void:
 	_hat_slot.bind(_equipment, 0)
 	var id := _hat_slot.item_id()
 	_hat_slot.equipped = not id.is_empty()
+	_hat_slot.selected = _selected_apparel_slot == "hat"
 	_hat_slot.tooltip_text = (
 		"%s\nSHIFT+CLICK TO STOW" % ItemDB.title(id)
 		if not id.is_empty()
@@ -597,6 +560,7 @@ func _refresh_cape() -> void:
 		_cape_slot.bind(_equipment, 1)
 	var id := _cape_slot.item_id()
 	_cape_slot.equipped = not id.is_empty()
+	_cape_slot.selected = _selected_apparel_slot == "cape"
 	_cape_slot.tooltip_text = (
 		"%s\nSHIFT+CLICK TO STOW" % ItemDB.title(id)
 		if not id.is_empty()
@@ -664,11 +628,14 @@ func _rebuild_library() -> void:
 func _fill_description() -> void:
 	if _description_title == null:
 		return
+	if not _selected_apparel_slot.is_empty():
+		_fill_apparel_description()
+		return
 	var id := _selected_ability_id
 	if id.is_empty() or not ItemDB.is_ability(id):
 		_description_title.text = "NO ABILITY SELECTED"
 		_description_body.text = (
-			"CLICK A POWER TO READ IT  //  DRAG OR SHIFT+CLICK INTO THE HOTBAR"
+			"CLICK A POWER, HAT, CAPE, OR JUKE TO READ IT  //  DRAG OR SHIFT+CLICK INTO THE HOTBAR"
 		)
 		return
 	_description_title.text = ItemDB.title(id).to_upper()
@@ -687,6 +654,94 @@ func _fill_description() -> void:
 	_description_body.text = "\n\n".join(lines)
 
 
+func _fill_apparel_description() -> void:
+	if _description_title == null:
+		return
+	if _selected_apparel_slot == "juke":
+		var juke := _juke_copy()
+		_description_title.text = str(juke.get("title", "JUKE"))
+		_description_body.text = str(juke.get("body", "NO DESCRIPTION FILED."))
+		return
+	if _selected_apparel_id.is_empty():
+		if _selected_apparel_slot == "cape":
+			_description_title.text = "NO CAPE EQUIPPED"
+			_description_body.text = "WEAR A CAPE TO READ ITS DESCRIPTION AND EFFECTS HERE."
+		else:
+			_description_title.text = "NO HAT EQUIPPED"
+			_description_body.text = "WEAR A HAT TO READ ITS DESCRIPTION AND EFFECTS HERE."
+		return
+	var copy := _apparel_copy(_selected_apparel_id, _selected_apparel_slot)
+	_description_title.text = str(copy.get("title", "APPAREL"))
+	_description_body.text = str(copy.get("body", "NO DESCRIPTION FILED."))
+
+
+func _apparel_copy(id: String, slot_name: String) -> Dictionary:
+	var progress := _player.crawler_progress if _player != null else null
+	var title := ItemDB.title(id)
+	var model := id
+	var description := ItemDB.description(id).strip_edges()
+	var effects := ""
+	if slot_name == "hat" and progress != null:
+		title = progress.hat_title(id)
+		model = progress.hat_model(id)
+		if model.is_empty():
+			model = id
+		var flavor := ItemDB.description(model).strip_edges()
+		if not flavor.is_empty():
+			description = flavor
+		effects = CrawlerProgress.compose_hat_description(
+			progress.hat_effects(id)).strip_edges()
+	elif slot_name == "cape":
+		if progress != null:
+			var blurb := CrawlerProgress.cape_blurb(id, true).strip_edges()
+			if not blurb.is_empty():
+				description = blurb
+		if progress != null and progress.cape_has_ability(id):
+			effects = (
+				"Q sparkles and bounces every hit back for a few seconds. "
+				+ "Then it rests a long while."
+			)
+	if title.is_empty():
+		title = id
+	if description.is_empty():
+		description = "NO DESCRIPTION FILED."
+	var lines: PackedStringArray = [description]
+	if not effects.is_empty():
+		lines.append("EFFECTS\n%s" % effects)
+	return {
+		"title": title.to_upper(),
+		"body": "\n\n".join(lines),
+	}
+
+
+func _select_apparel(slot_name: String, id: String) -> void:
+	_selected_ability_id = ""
+	_selected_apparel_slot = slot_name
+	_selected_apparel_id = id
+	_on_apparel_selected()
+	_refresh_hat()
+	_refresh_cape()
+	_refresh_juke()
+	_refresh_hotbar()
+	_mark_library_selection()
+	_fill_description()
+	_fit_description_scroll()
+
+
+func _on_apparel_selected() -> void:
+	pass
+
+
+func _clear_apparel_selection() -> void:
+	if _selected_apparel_slot.is_empty() and _selected_apparel_id.is_empty():
+		return
+	_selected_apparel_slot = ""
+	_selected_apparel_id = ""
+	_refresh_hat()
+	_refresh_cape()
+	_refresh_juke()
+
+
 func _assign_ability(id: String, dest := -1) -> void:
 	if _abilities == null or not ItemDB.accepts_ability(id):
 		return
@@ -701,6 +756,7 @@ func _assign_ability(id: String, dest := -1) -> void:
 
 
 func _on_library_picked(slot: RedItemSlot) -> void:
+	_clear_apparel_selection()
 	_selected_ability_id = slot.item_id()
 	_refresh_hotbar()
 	_mark_library_selection()
@@ -711,12 +767,14 @@ func _on_library_quick_move(slot: RedItemSlot) -> void:
 	var id := slot.item_id()
 	if id.is_empty():
 		return
+	_clear_apparel_selection()
 	_selected_ability_id = id
 	_assign_ability(id)
 	refresh()
 
 
 func _on_hotbar_picked(slot: RedItemSlot) -> void:
+	_clear_apparel_selection()
 	_selected_ability_id = slot.item_id()
 	_refresh_hotbar()
 	_mark_library_selection()
@@ -737,12 +795,13 @@ func _on_hotbar_dropped(_target: RedItemSlot, source: RedItemSlot) -> void:
 	var id := source.item_id()
 	if id.is_empty():
 		return
+	_clear_apparel_selection()
 	_selected_ability_id = id
 	_fill_description()
 
 
-func _on_hat_picked(_slot: RedItemSlot) -> void:
-	_refresh_hat()
+func _on_hat_picked(slot: RedItemSlot) -> void:
+	_select_apparel("hat", slot.item_id() if slot != null else "")
 
 
 func _on_hat_quick_move(slot: RedItemSlot) -> void:
@@ -756,12 +815,43 @@ func _on_hat_quick_move(slot: RedItemSlot) -> void:
 	refresh()
 
 
-func _on_cape_picked(_slot: RedItemSlot) -> void:
-	_refresh_cape()
+func _on_cape_picked(slot: RedItemSlot) -> void:
+	_select_apparel("cape", slot.item_id() if slot != null else "")
 
 
 func _on_cape_quick_move(slot: RedItemSlot) -> void:
 	_on_hat_quick_move(slot)
+
+
+func _on_juke_picked(_slot: RedItemSlot) -> void:
+	_select_apparel("juke", CrawlerProgress.STAT_JUKE)
+
+
+func _refresh_juke() -> void:
+	if _juke_slot == null:
+		return
+	_juke_slot.forced_item_id = CrawlerProgress.STAT_JUKE
+	_juke_slot.equipped = true
+	_juke_slot.selected = _selected_apparel_slot == "juke"
+	_juke_slot.tooltip_text = "Juke\nCLICK TO READ"
+	_juke_slot.queue_redraw()
+
+
+func _juke_copy() -> Dictionary:
+	var cooldown := CrawlerProgress.JUKE_COOLDOWN_BASE
+	var distance := CrawlerProgress.JUKE_DISTANCE_BASE
+	if _player != null:
+		cooldown = _player.juke_cooldown()
+		distance = _player.juke_distance()
+	var description := ItemDB.description(CrawlerProgress.STAT_JUKE).strip_edges()
+	if description.is_empty():
+		description = "A short invulnerable dash. Press F to slip aside."
+	var effects := "Cooldown  //  %.2fs\nDistance  //  %.1f m\nHits miss you during the dash." \
+		% [cooldown, distance]
+	return {
+		"title": "JUKE",
+		"body": "%s\n\nEFFECTS\n%s" % [description, effects],
+	}
 
 
 func _mark_library_selection() -> void:
@@ -790,31 +880,36 @@ func _fill_stats() -> void:
 			str(row.get("id", "")),
 			str(row.get("title", "")),
 			str(row.get("description", "")),
-			str(row.get("text", ""))
+			str(row.get("text", "")),
+			str(row.get("kind", ""))
 		)
 
 
 func _add_stat_row(id_text: String, title_text: String, description: String,
-		value_text: String) -> void:
+		value_text: String, kind := "") -> void:
+	var special := kind == "trait"
 	var row_panel := PanelContainer.new()
 	row_panel.name = "Stat_%s" % id_text
 	row_panel.tooltip_text = description
 	row_panel.add_theme_stylebox_override(
 		&"panel",
-		_style(BLACK_42, Color(RED, 0.42), 1, 6.0)
+		_style(BLACK_42, Color(YELLOW if special else RED, 0.55 if special else 0.42),
+			1, 3.0)
 	)
 	_stats_rows.add_child(row_panel)
 
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override(&"separation", 8)
+	row.add_theme_constant_override(&"separation", 4)
 	row_panel.add_child(row)
 
-	var title := _label(title_text, 11, RED_TEXT)
+	var title := _label(title_text, 8, YELLOW if special else RED_TEXT)
+	title.add_theme_constant_override(&"outline_size", 1)
 	title.name = "Stat_%s_Name" % id_text
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(title)
 
-	var value := _label(value_text, 14, GREEN)
+	var value := _label(value_text, 9, GREEN)
+	value.add_theme_constant_override(&"outline_size", 1)
 	value.name = "Stat_%s_Value" % id_text
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	row.add_child(value)
@@ -881,6 +976,8 @@ func _request_icons() -> void:
 	for id: String in ItemDB.ability_ids():
 		if not ids.has(id):
 			ids.append(id)
+	if not ids.has(CrawlerProgress.STAT_JUKE):
+		ids.append(CrawlerProgress.STAT_JUKE)
 	_icons.request(ids)
 
 
@@ -889,6 +986,8 @@ func _on_icon_ready(_id: String, _texture: Texture2D) -> void:
 		_hat_slot.queue_redraw()
 	if _cape_slot != null:
 		_cape_slot.queue_redraw()
+	if _juke_slot != null:
+		_juke_slot.queue_redraw()
 	for slot: RedItemSlot in _hotbar_slots:
 		slot.queue_redraw()
 	for slot: RedItemSlot in _library_slots:
@@ -932,6 +1031,12 @@ func _update_responsive_layout() -> void:
 		_cape_slot.offset_top = 10.0
 		_cape_slot.offset_right = hat_edge + 10.0
 		_cape_slot.offset_bottom = hat_edge + 10.0
+	if _juke_slot != null:
+		_juke_slot.set_edge(hat_edge)
+		_juke_slot.offset_left = 10.0
+		_juke_slot.offset_top = -(hat_edge + 10.0)
+		_juke_slot.offset_right = hat_edge + 10.0
+		_juke_slot.offset_bottom = -10.0
 	for slot: RedItemSlot in _hotbar_slots:
 		slot.set_edge(NARROW_HOTBAR_EDGE if narrow else WIDE_HOTBAR_EDGE)
 	_fit_library_columns()
@@ -1044,19 +1149,6 @@ func _glow_frame(
 	glow.glow_layers = 4
 	frame.add_child(content)
 	return frame
-
-
-func _round_style(
-	fill: Color,
-	border: Color,
-	border_width: int,
-	padding: float,
-	shadow: Color = Color.TRANSPARENT,
-	shadow_size: int = 0
-) -> StyleBoxFlat:
-	var box := _style(fill, border, border_width, padding, shadow, shadow_size)
-	box.set_corner_radius_all(28)
-	return box
 
 
 func _style(

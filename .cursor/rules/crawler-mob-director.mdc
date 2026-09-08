@@ -10,8 +10,12 @@ Huge swarms stay cheap the way Megabonk-style horde games do: precompute homes, 
 
 - Put unique hunt, aim, fire, and charge code in `_tick_ai` only. Do not override `_physics_process` unless you call `super` and keep the director LOD path.
 - Start a windup or shot with `_begin_attack`. It spends the shared attack token. If it returns false, skip the spawn/hit and retry later.
-- Do not call `planet.surface_position` every tick. Use `surface_altitude()` / `_up()` caches, and only snap terrain on HOT bodies.
+- Do not call `planet.surface_position` every tick. Use `surface_altitude()` / `_up()` caches, and only snap terrain when the body received a think token.
 - Do not `get_nodes_in_group` from a mob. Read players, fields, charms, and keep-out through `CrawlerMobSense`.
-- Horde fill must `_enqueue_wild` / ready homes. Instant `_make_mob` is for tests, garrison, and the per-frame drain only (`MOB_SPAWN_BUILD`).
-- Far bodies coast with `_tick_far` / `_tick_cold`. New kinds inherit that; do not add per-mob sleep forks.
+- Horde fill must `_enqueue_wild` on patch enter (current cell plus same-combo neighbours) and keep a calm ring around the player via `_fill_player_rings`. The ring uses the player's current three-kind combo; robots, demons, wilds, aliens, and goblins never mix. Recycle or cull a body whose kind is off-combo. Instant `_make_mob` is for tests, garrison, and the per-frame drain only (`MOB_SPAWN_BUILD`).
+- Castle goblins and office shrimp preseed homes from the seated GLB at generation. Wake the whole set when the player is close. Do not place those homes on a planet-surface ring when the asset has floors.
+- Far and warm bodies steer from `CrawlerMobSense.direct_horde` (seek, climb, separation). Do not give each mob its own pathfinder or physics collider pair checks.
+- Think and attack tokens scale down as the chase count rises. A denied think still steers with `_tick_far` or the director; it must not run unique aim/fire or terrain keep-clear.
+- Far bodies roam with `_tick_idle` via `_tick_far` / `_tick_cold` / `director_far_steer`. Do not brake idle warm or cold bodies to a stop. New kinds inherit that; do not add per-mob sleep forks.
+- Bodies past `WILD_STREAM_OUT` recycle onto the player ring. Do not keep simulating a fog pack the player has left.
 - A new enemy that needs a custom attack still has to fit the think budget. Prefer shared shots and one director decision over N independent planners.

@@ -7,6 +7,7 @@ extends VBoxContainer
 
 const RED := Color("ef151f")
 const RED_BRIGHT := Color("ff3445")
+const GREEN := Color("45df68")
 const BLACK_40 := Color(0.0, 0.0, 0.0, 0.40)
 const TILE_MIN := 78.0
 
@@ -16,6 +17,10 @@ var _locker: CrawlerKit
 var _player_tiles: Array[CrawlerAbilityTile] = []
 var _player_row: HBoxContainer
 var _locker_tile: CrawlerAbilityTile
+var _price_label: Label
+var _deposit_button: Button
+var _withdraw_button: Button
+var _selected_index := -1
 
 
 func configure(player: OnlinePlayer) -> void:
@@ -51,6 +56,7 @@ func refresh() -> void:
 	if _locker_tile != null:
 		_locker_tile.setup(0, _locker, CrawlerKit.SOURCE_EQUIP)
 		_locker_tile.refresh()
+	_refresh_actions()
 	_request_icons()
 
 
@@ -115,6 +121,20 @@ func _build() -> void:
 	bank_body.add_theme_constant_override(&"separation", 6)
 	bank.add_child(bank_body)
 	bank_body.add_child(_caption("LOCKER"))
+	_price_label = _caption("100g TO DEPOSIT OR WITHDRAW")
+	_price_label.name = "LockerPriceLabel"
+	bank_body.add_child(_price_label)
+	var actions := HBoxContainer.new()
+	actions.name = "LockerActions"
+	actions.add_theme_constant_override(&"separation", 8)
+	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bank_body.add_child(actions)
+	_deposit_button = _action_button("LockerDepositButton", "DEPOSIT 100g")
+	_deposit_button.pressed.connect(deposit_selected)
+	actions.add_child(_deposit_button)
+	_withdraw_button = _action_button("LockerWithdrawButton", "WITHDRAW 100g")
+	_withdraw_button.pressed.connect(withdraw_stored)
+	actions.add_child(_withdraw_button)
 	var hold := HBoxContainer.new()
 	hold.alignment = BoxContainer.ALIGNMENT_CENTER
 	hold.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -149,6 +169,7 @@ func _make_player_tile(index: int) -> CrawlerAbilityTile:
 	tile.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	tile.setup(index, _kit, CrawlerKit.SOURCE_EQUIP)
 	tile.card_received.connect(_on_ability_received)
+	tile.picked.connect(_on_player_picked)
 	_player_tiles.append(tile)
 	return tile
 
@@ -175,13 +196,66 @@ func _ability_slot_count() -> int:
 	return CrawlerRules.ABILITY_SLOTS
 
 
+func _on_player_picked(tile: CrawlerAbilityTile) -> void:
+	if tile == null:
+		return
+	_selected_index = tile.index
+	for other: CrawlerAbilityTile in _player_tiles:
+		other.selected = other == tile
+	_refresh_actions()
+
+
+func deposit_selected() -> bool:
+	var from := _selected_index
+	if from < 0 or _kit == null or _kit.equipped_card(from) == null:
+		from = _first_filled_player_index()
+	if from < 0 or _locker == null or _locker.equipped_card(0) != null:
+		return false
+	if not _pay_locker():
+		return false
+	var moved := CrawlerKit.hand_off(
+		_kit, CrawlerKit.SOURCE_EQUIP, from,
+		_locker, CrawlerKit.SOURCE_EQUIP, 0
+	)
+	if not moved:
+		_refund_locker()
+		return false
+	_selected_index = -1
+	refresh()
+	_refresh_store_gold()
+	return true
+
+
+func withdraw_stored() -> bool:
+	if _kit == null or _locker == null or _locker.equipped_card(0) == null:
+		return false
+	var dest := _first_empty_player_index()
+	if dest < 0:
+		return false
+	if not _pay_locker():
+		return false
+	var moved := CrawlerKit.hand_off(
+		_locker, CrawlerKit.SOURCE_EQUIP, 0,
+		_kit, CrawlerKit.SOURCE_EQUIP, dest
+	)
+	if not moved:
+		_refund_locker()
+		return false
+	refresh()
+	_refresh_store_gold()
+	return true
+
+
 func _on_ability_received(tile: CrawlerAbilityTile, data: Dictionary) -> void:
 	if tile == null or not bool(data.get("crawler_move", false)):
 		return
 	var from_kit := data.get("kit") as CrawlerKit
 	if from_kit == null:
 		from_kit = _kit
-	CrawlerKit.hand_off(
+	if _crosses_locker(from_kit, tile.kit) and not _pay_locker():
+		refresh()
+		return
+	var moved := CrawlerKit.hand_off(
 		from_kit,
 		str(data.get("source", "")),
 		int(data.get("index", -1)),
@@ -189,7 +263,100 @@ func _on_ability_received(tile: CrawlerAbilityTile, data: Dictionary) -> void:
 		tile.source,
 		tile.index
 	)
+	if not moved and _crosses_locker(from_kit, tile.kit):
+		_refund_locker()
 	refresh()
+	_refresh_store_gold()
+
+
+func _crosses_locker(from_kit: CrawlerKit, to_kit: CrawlerKit) -> bool:
+	return from_kit != to_kit and (from_kit == _locker or to_kit == _locker)
+
+
+func _pay_locker() -> bool:
+	var progress := _player.crawler_progress if _player != null else null
+	if progress == null:
+		return false
+	return progress.spend_gold(CrawlerProgress.LOCKER_PRICE)
+
+
+func _refund_locker() -> void:
+	var progress := _player.crawler_progress if _player != null else null
+	if progress == null:
+		return
+	progress.refund_gold(CrawlerProgress.LOCKER_PRICE)
+
+
+func _first_filled_player_index() -> int:
+	if _kit == null:
+		return -1
+	var bar := _kit.ability_bar()
+	var count := bar.size() if bar != null else _ability_slot_count()
+	for index in count:
+		if _kit.equipped_card(index) != null:
+			return index
+	return -1
+
+
+func _first_empty_player_index() -> int:
+	if _kit == null:
+		return -1
+	var bar := _kit.ability_bar()
+	var count := bar.size() if bar != null else _ability_slot_count()
+	for index in count:
+		if _kit.equipped_card(index) == null:
+			return index
+	return -1
+
+
+func _refresh_actions() -> void:
+	var progress := _player.crawler_progress if _player != null else null
+	var price := CrawlerProgress.LOCKER_PRICE
+	var can_pay := progress != null and progress.has_gold(price)
+	if _price_label != null:
+		_price_label.text = "%dg TO DEPOSIT OR WITHDRAW" % price
+	var locker_card := _locker.equipped_card(0) if _locker != null else null
+	var from := _selected_index
+	if from < 0 or _kit == null or _kit.equipped_card(from) == null:
+		from = _first_filled_player_index()
+	if _deposit_button != null:
+		_deposit_button.text = "DEPOSIT %dg" % price
+		_deposit_button.disabled = not can_pay or from < 0 or locker_card != null
+		_style_action(_deposit_button, not _deposit_button.disabled)
+	if _withdraw_button != null:
+		_withdraw_button.text = "WITHDRAW %dg" % price
+		_withdraw_button.disabled = not can_pay or locker_card == null \
+			or _first_empty_player_index() < 0
+		_style_action(_withdraw_button, not _withdraw_button.disabled)
+
+
+func _action_button(node_name: String, text: String) -> Button:
+	var button := Button.new()
+	button.name = node_name
+	button.text = text
+	button.custom_minimum_size = Vector2(0.0, 34.0)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_style_action(button, true)
+	return button
+
+
+func _style_action(button: Button, enabled: bool) -> void:
+	var fill := GREEN if enabled else Color(0.22, 0.22, 0.22, 0.92)
+	var box := StyleBoxFlat.new()
+	box.bg_color = fill
+	box.set_corner_radius_all(0)
+	box.content_margin_left = 10
+	box.content_margin_right = 10
+	button.add_theme_stylebox_override(&"normal", box)
+	button.add_theme_stylebox_override(&"hover", box)
+	button.add_theme_stylebox_override(&"pressed", box)
+	button.add_theme_stylebox_override(&"disabled", box)
+	button.add_theme_color_override(&"font_color", Color.BLACK if enabled \
+		else Color(1, 1, 1, 0.45))
+	button.add_theme_color_override(&"font_hover_color", Color.BLACK)
+	button.add_theme_color_override(&"font_pressed_color", Color.BLACK)
+	button.add_theme_color_override(&"font_disabled_color", Color(1, 1, 1, 0.45))
 
 
 func _caption(text: String) -> Label:
@@ -216,6 +383,12 @@ func _request_icons() -> void:
 			if card != null and not ids.has(card.id):
 				ids.append(card.id)
 	menu.request_item_icons(ids)
+
+
+func _refresh_store_gold() -> void:
+	var menu := _store_menu()
+	if menu != null:
+		menu.refresh_wallet()
 
 
 func _store_menu() -> CrawlerFieldMenu:

@@ -18,6 +18,10 @@ const INV_EDGE := 36.0
 const TILE_MIN := 78.0
 const UPGRADE_COLUMNS := 3
 const UPGRADE_TILE_MIN := Vector2(108.0, 72.0)
+const BASIC_UPGRADE_STATS: Array[String] = [
+	"damage", "cooldown", "duration", "range", "size", "knockback",
+	"speed", "heal", "boost", "cast",
+]
 
 var _player: OnlinePlayer
 var _kit: CrawlerKit
@@ -207,6 +211,7 @@ func _build_inventory_slots() -> void:
 		slot.name = "CrawlerBag_%d" % index
 		slot.set_edge(INV_EDGE)
 		slot.placeholder = ""
+		slot.use_soft_fx()
 		slot.draggable = false
 		slot.bind(bag, index)
 		slot.picked.connect(_on_inventory_picked)
@@ -269,7 +274,7 @@ func _fill_detail() -> void:
 		return
 	var gold := 0
 	if _player != null and _player.crawler_progress != null:
-		gold = _player.crawler_progress.gold
+		gold = _player.crawler_progress.purse_gold()
 	var kind := "MOD" if card.is_modifier() else "ABILITY"
 	_title.text = "%s  //  %s" % [kind, CrawlerCatalog.title_of(card.id).to_upper()]
 	CrawlerTypeMarks.fill(_type_marks, CrawlerCatalog.display_types(card.id), 20.0)
@@ -311,30 +316,12 @@ func _add_upgrade_tile(card: CrawlerCard, stat_id: String, gold: int) -> void:
 	var rank := _kit.upgrade_rank_for(card, stat_id) if _kit != null \
 		else card.upgrade_rank(stat_id)
 	var cap := CrawlerRules.upgrade_max_rank(card.id, stat_id)
-	var at_max := cap > 0 and rank >= cap
 	var city := _player.crawler_city_key() if _player != null else ""
 	var progress := _player.crawler_progress if _player != null else null
+	var unlimited := progress != null and progress.shops_are_unlimited()
+	var at_max := CrawlerRules.upgrade_at_cap(card.id, stat_id, rank, unlimited)
 	var in_stock := progress == null \
 			or progress.upgrade_in_stock(card.id, stat_id, city)
-	var blurb := CrawlerRules.upgrade_stat_blurb(card.id, stat_id)
-	if stat_id == "slots":
-		blurb += " %d → %d." % [card.slot_count, card.slot_count + 1]
-	elif card.id == "big" and stat_id == "size":
-		blurb += " %s → %s." % [
-			CrawlerRules.format_mul(CrawlerRules.big_size_scale(rank)),
-			CrawlerRules.format_mul(CrawlerRules.big_size_scale(mini(rank + 1, cap))),
-		]
-	elif card.id == "clip" and stat_id == "ammo":
-		blurb += " %s → %s." % [
-			CrawlerRules.format_mul(float(CrawlerRules.clip_ammo_mul(rank))),
-			CrawlerRules.format_mul(float(CrawlerRules.clip_ammo_mul(mini(rank + 1, cap)))),
-		]
-	elif card.id == "wall" and stat_id == "house":
-		blurb += " Off → On." if rank <= 0 else " On."
-	elif card.id == "teleport" and stat_id == "swap":
-		blurb += " Off → On." if rank <= 0 else " On."
-	else:
-		blurb += " Rank %d → %d." % [rank, rank + 1]
 	var tile := Control.new()
 	tile.name = "UpgradeTile_%s" % stat_id
 	tile.size_flags_horizontal = Control.SIZE_FILL
@@ -344,35 +331,56 @@ func _add_upgrade_tile(card: CrawlerCard, stat_id: String, gold: int) -> void:
 	var plate := Panel.new()
 	plate.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	plate.add_theme_stylebox_override(
-		&"panel",
-		_box(BLACK_40, Color(RED_BRIGHT, 0.82), 2, 5)
-	)
+	plate.clip_contents = true
+	plate.add_theme_stylebox_override(&"panel", _fill_box(BLACK_40, 3))
 	tile.add_child(plate)
+	_ensure_rim(tile, RED_BRIGHT, 1.5, 3.0)
 	var copy := VBoxContainer.new()
+	copy.name = "UpgradeCopy"
 	copy.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	copy.offset_left = 5.0
-	copy.offset_top = 5.0
-	copy.offset_right = -5.0
-	copy.offset_bottom = -5.0
-	copy.add_theme_constant_override(&"separation", 2)
+	copy.offset_left = 4.0
+	copy.offset_top = 4.0
+	copy.offset_right = -4.0
+	copy.offset_bottom = -4.0
+	copy.add_theme_constant_override(&"separation", 1)
+	copy.alignment = BoxContainer.ALIGNMENT_BEGIN
 	copy.clip_contents = true
 	tile.add_child(copy)
-	copy.add_child(_label(
+	var title := _label(
 		CrawlerRules.upgrade_stat_title(stat_id, card.id).to_upper(),
-		12,
-		RED_TEXT
-	))
-	copy.add_child(_label("%dg" % price, 11, GREEN_TEXT))
-	var detail := _label(blurb, 10, RED_MUTED, true, 2)
-	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	copy.add_child(detail)
+		10,
+		RED_TEXT,
+		true,
+		2
+	)
+	title.name = "UpgradeTitle_%s" % stat_id
+	title.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	copy.add_child(title)
+	var price_line := "%dg" % price
+	if _is_basic_upgrade(card, stat_id):
+		price_line = "%dg  %d→%d" % [price, rank, rank + 1] if not at_max \
+			else "%dg  MAX" % price
+	var cost := _label(price_line, 9, GREEN_TEXT)
+	cost.name = "UpgradeCost_%s" % stat_id
+	copy.add_child(cost)
+	if not _is_basic_upgrade(card, stat_id):
+		var blurb := _upgrade_blurb(card, stat_id, rank, cap, unlimited)
+		if not blurb.is_empty():
+			var detail := _label(blurb, 8, RED_MUTED, true, 2)
+			detail.name = "UpgradeBlurb_%s" % stat_id
+			detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			copy.add_child(detail)
+	var spacer := Control.new()
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	copy.add_child(spacer)
 	var button := Button.new()
 	button.name = "UpgradeAct_%s" % stat_id
 	button.clip_text = true
+	button.clip_contents = true
 	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	button.custom_minimum_size = Vector2(0.0, 24.0)
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size = Vector2(0.0, 18.0)
+	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	button.size_flags_vertical = Control.SIZE_SHRINK_END
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	if at_max:
@@ -390,6 +398,47 @@ func _add_upgrade_tile(card: CrawlerCard, stat_id: String, gold: int) -> void:
 		_style_action(button, gold >= price)
 	copy.add_child(button)
 	_rows.add_child(tile)
+
+
+func _is_basic_upgrade(card: CrawlerCard, stat_id: String) -> bool:
+	if card == null or not BASIC_UPGRADE_STATS.has(stat_id):
+		return false
+	if card.id == "big" and stat_id == "size":
+		return false
+	if card.id == "reach" and stat_id == "range":
+		return false
+	if card.id == "homing" and stat_id == "range":
+		return false
+	return true
+
+
+func _upgrade_blurb(
+		card: CrawlerCard, stat_id: String, rank: int, cap: int,
+		unlimited := false
+	) -> String:
+	var blurb := CrawlerRules.upgrade_stat_blurb(card.id, stat_id)
+	var next_rank := rank + 1
+	if cap > 0 and not unlimited:
+		next_rank = mini(rank + 1, cap)
+	if stat_id == "slots":
+		blurb += " %d → %d." % [card.slot_count, card.slot_count + 1]
+	elif card.id == "big" and stat_id == "size":
+		blurb += " %s → %s." % [
+			CrawlerRules.format_mul(CrawlerRules.big_size_scale(rank)),
+			CrawlerRules.format_mul(CrawlerRules.big_size_scale(next_rank)),
+		]
+	elif card.id == "clip" and stat_id == "ammo":
+		blurb += " %s → %s." % [
+			CrawlerRules.format_mul(float(CrawlerRules.clip_ammo_mul(rank))),
+			CrawlerRules.format_mul(float(CrawlerRules.clip_ammo_mul(next_rank))),
+		]
+	elif card.id == "wall" and stat_id == "house":
+		blurb += " Off → On." if rank <= 0 else " On."
+	elif card.id == "teleport" and stat_id == "swap":
+		blurb += " Off → On." if rank <= 0 else " On."
+	else:
+		blurb += " Rank %d → %d." % [rank, rank + 1]
+	return blurb.strip_edges()
 
 
 func _buy_upgrade(uid: String, stat_id: String) -> void:
@@ -489,6 +538,25 @@ func _fit_upgrade_grid() -> void:
 			float(row) * (cell.y + gap)
 		)
 		tile.size = cell
+		_clamp_upgrade_tile(tile, cell)
+
+
+func _clamp_upgrade_tile(tile: Control, cell: Vector2) -> void:
+	tile.clip_contents = true
+	var inner := Vector2(maxf(cell.x - 8.0, 8.0), maxf(cell.y - 8.0, 8.0))
+	var copy := tile.get_node_or_null("UpgradeCopy") as Control
+	if copy != null:
+		copy.clip_contents = true
+		copy.size = inner
+	for child: Node in tile.find_children("UpgradeAct_*", "Button", true, false):
+		var button := child as Button
+		if button == null:
+			continue
+		button.clip_contents = true
+		button.custom_minimum_size.x = mini(
+			int(round(button.get_combined_minimum_size().x)),
+			int(round(inner.x))
+		)
 
 
 func _request_icons() -> void:
@@ -568,10 +636,10 @@ func _label(
 	label.add_theme_color_override(&"font_color", colour)
 	label.clip_text = true
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.max_lines_visible = lines if lines > 0 else (2 if wrap else 1)
 	if wrap:
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	else:
 		label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	return label
@@ -580,23 +648,56 @@ func _label(
 func _style_action(button: Button, enabled: bool) -> void:
 	var accent := GREEN if enabled else Color(RED, 0.55)
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if enabled else Color(0.08, 0.02, 0.02, 0.9)
-	button.add_theme_font_size_override(&"font_size", 12)
+	button.clip_contents = true
+	var type_size := 8 if button.text.length() > 8 else 9
+	button.add_theme_font_size_override(&"font_size", type_size)
 	button.add_theme_color_override(&"font_color", accent)
 	button.add_theme_color_override(&"font_hover_color", GREEN)
 	button.add_theme_color_override(&"font_pressed_color", GREEN)
 	button.add_theme_color_override(&"font_focus_color", accent)
 	button.add_theme_color_override(&"font_disabled_color", Color(1, 1, 1, 0.45))
-	button.add_theme_stylebox_override(&"normal", _box(fill, Color(accent, 0.95), 2, 4))
-	button.add_theme_stylebox_override(&"hover", _box(BLACK_68, GREEN, 2, 4))
-	button.add_theme_stylebox_override(&"pressed", _box(Color(0.0, 0.19, 0.055, 0.90), GREEN, 2, 4))
-	button.add_theme_stylebox_override(&"disabled", _box(fill, Color(1, 1, 1, 0.28), 1, 4))
-	button.add_theme_stylebox_override(&"focus", _box(fill, GREEN, 2, 4))
+	button.add_theme_stylebox_override(&"normal", _action_box(fill))
+	button.add_theme_stylebox_override(&"hover", _action_box(BLACK_68))
+	button.add_theme_stylebox_override(&"pressed", _action_box(Color(0.0, 0.19, 0.055, 0.90)))
+	button.add_theme_stylebox_override(&"disabled", _action_box(fill))
+	button.add_theme_stylebox_override(&"focus", _action_box(fill))
+	_ensure_rim(button, accent, 1.25, 2.0)
 
 
-func _box(fill: Color, border: Color, width: int, margin := 8) -> StyleBoxFlat:
+func _fill_box(fill: Color, margin := 8) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = fill
-	box.border_color = border
-	box.set_border_width_all(width)
+	box.border_color = Color.TRANSPARENT
+	box.set_border_width_all(0)
 	box.set_content_margin_all(margin)
 	return box
+
+
+func _action_box(fill: Color) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = fill
+	box.border_color = Color.TRANSPARENT
+	box.set_border_width_all(0)
+	box.content_margin_left = 6
+	box.content_margin_right = 6
+	box.content_margin_top = 2
+	box.content_margin_bottom = 2
+	return box
+
+
+func _ensure_rim(
+		target: Control,
+		accent: Color,
+		width := 2.0,
+		spread := 8.0
+	) -> RedGlowPanel:
+	var rim := target.get_node_or_null("RedGlowPanel") as RedGlowPanel
+	if rim == null:
+		rim = RedGlowPanel.add_to(target)
+	rim.fill_color = Color.TRANSPARENT
+	rim.border_color = Color(accent, 0.95)
+	rim.border_width = width
+	rim.glow_intensity = 1.05
+	rim.glow_spread = spread
+	rim.glow_layers = 3
+	return rim

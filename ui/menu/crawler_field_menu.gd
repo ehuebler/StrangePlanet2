@@ -27,6 +27,7 @@ const TAB_NAMES := [
 ]
 const STOCK_COLUMNS := 3
 const TILE_MIN := Vector2(196.0, 236.0)
+const TAB_ROW_SIZE := 6
 
 var _player: OnlinePlayer
 var _closing := false
@@ -34,7 +35,7 @@ var _tab: Tab = Tab.HATS
 var _title: Label
 var _gold: Label
 var _hint: Label
-var _tab_row: HBoxContainer
+var _tab_host: VBoxContainer
 var _tab_buttons: Array[Button] = []
 var _tab_stamps: Array[Label] = []
 var _tab_icons: Array[TextureRect] = []
@@ -186,9 +187,18 @@ func _build() -> void:
 	_gold.add_theme_color_override(&"font_color", RED)
 	column.add_child(_gold)
 
-	_tab_row = HBoxContainer.new()
-	_tab_row.add_theme_constant_override(&"separation", 8)
-	column.add_child(_tab_row)
+	_tab_host = VBoxContainer.new()
+	_tab_host.name = "StoreTabs"
+	_tab_host.add_theme_constant_override(&"separation", 6)
+	column.add_child(_tab_host)
+	var tab_rows: Array[HBoxContainer] = []
+	for row_index in 2:
+		var row := HBoxContainer.new()
+		row.name = "StoreTabRow%d" % (row_index + 1)
+		row.add_theme_constant_override(&"separation", 8)
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_tab_host.add_child(row)
+		tab_rows.append(row)
 	for index in TAB_NAMES.size():
 		var slot := VBoxContainer.new()
 		slot.name = "StoreTab_%s" % _shop_id(index)
@@ -196,30 +206,49 @@ func _build() -> void:
 		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var icon := TextureRect.new()
 		icon.name = "StoreTabIcon_%s" % _shop_id(index)
+		var icon_slot := Control.new()
+		icon_slot.name = "StoreTabIconSlot_%s" % _shop_id(index)
+		icon_slot.custom_minimum_size = Vector2(18, 18)
+		icon_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		icon_slot.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		slot.add_child(icon_slot)
 		icon.custom_minimum_size = Vector2(18, 18)
 		icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.visible = false
-		slot.add_child(icon)
+		icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		icon_slot.add_child(icon)
 		var button := Button.new()
 		button.name = "StoreTabButton_%s" % _shop_id(index)
 		button.text = TAB_NAMES[index]
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.custom_minimum_size.y = 36.0
+		button.custom_minimum_size.y = 34.0
+		button.clip_text = true
+		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		button.add_theme_font_size_override(&"font_size", 12)
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var chosen: Tab = index as Tab
 		button.pressed.connect(func() -> void: set_tab(chosen))
+		_style_tab(button, false, true)
 		slot.add_child(button)
 		var stamp := Label.new()
 		stamp.name = "StoreTabClosed_%s" % _shop_id(index)
 		stamp.text = "CLOSED"
 		stamp.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var stamp_slot := Control.new()
+		stamp_slot.name = "StoreTabClosedSlot_%s" % _shop_id(index)
+		stamp_slot.custom_minimum_size = Vector2(0, 10)
+		stamp_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		stamp_slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slot.add_child(stamp_slot)
 		stamp.add_theme_font_size_override(&"font_size", 9)
 		stamp.add_theme_color_override(&"font_color", Color(1, 1, 1, 0.42))
+		stamp.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		stamp.visible = false
-		slot.add_child(stamp)
-		_tab_row.add_child(slot)
+		stamp_slot.add_child(stamp)
+		var row_index := 0 if index < TAB_ROW_SIZE else 1
+		tab_rows[row_index].add_child(slot)
 		_tab_buttons.append(button)
 		_tab_stamps.append(stamp)
 		_tab_icons.append(icon)
@@ -235,14 +264,20 @@ func _build() -> void:
 	_list_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var list_box := StyleBoxFlat.new()
 	list_box.bg_color = BLACK_40
-	list_box.border_color = Color(RED_BRIGHT, 0.88)
-	list_box.set_border_width_all(2)
+	list_box.set_border_width_all(0)
 	list_box.set_corner_radius_all(0)
 	list_box.content_margin_left = 12
 	list_box.content_margin_top = 12
 	list_box.content_margin_right = 12
 	list_box.content_margin_bottom = 12
 	_list_host.add_theme_stylebox_override(&"panel", list_box)
+	var list_rim := RedGlowPanel.add_to(_list_host)
+	list_rim.fill_color = Color.TRANSPARENT
+	list_rim.border_color = Color(RED_BRIGHT, 0.88)
+	list_rim.border_width = 2.0
+	list_rim.glow_intensity = 1.2
+	list_rim.glow_spread = 8.0
+	list_rim.glow_layers = 4
 	column.add_child(_list_host)
 
 	var list_column := VBoxContainer.new()
@@ -296,14 +331,14 @@ func _refresh() -> void:
 	if _list == null:
 		return
 	var progress := _player.crawler_progress if _player != null else null
-	var gold := progress.gold if progress != null else 0
-	_gold.text = "GOLD  %d    GEMS  %d" % [gold, CrawlerMeta.gems()]
+	var gold := _purse(progress)
+	_set_gold_line(progress)
 	var in_city := _player != null and _player.in_crawler_city()
 	if _title != null:
 		_title.visible = in_city
 	_gold.visible = in_city
-	if _tab_row != null:
-		_tab_row.visible = in_city
+	if _tab_host != null:
+		_tab_host.visible = in_city
 	for index in _tab_buttons.size():
 		var open := _shop_open(index as Tab)
 		_style_tab(_tab_buttons[index], index == int(_tab), open)
@@ -335,13 +370,13 @@ func _refresh() -> void:
 			_fill_hats(progress, gold)
 		Tab.CAPS:
 			_hint.text = "A / D flips stores. Caps for Sale fuses two owned hats into one model. One mash per city."
-			if progress != null and progress.shops_unlimited:
+			if progress != null and progress.shops_are_unlimited():
 				_hint.text = "A / D flips stores. Caps for Sale fuses two owned hats into one model, as often as you want."
 			elif progress != null and not progress.cap_merge_free(_city_key()):
 				_hint.text = "A / D flips stores. This city already mashed a pair. Next city, or rest-stop infinite stores."
 			_fill_caps_for_sale(progress, gold)
 		Tab.CAPES:
-			_hint.text = "A / D flips stores. Capes bought here stay on this run."
+			_hint.text = "A / D flips stores. Capes bought here stay on this run. Q uses a worn cape's ability."
 			_fill_capes(progress, gold)
 		Tab.CARDS:
 			_hint.text = "A / D flips stores. Buy mods for the abilities you already own."
@@ -355,14 +390,16 @@ func _refresh() -> void:
 			_fill_abilities(gold)
 		Tab.UPGRADES:
 			_hint.text = "A / D flips stores. Pick an ability or mod, then buy its upgrades."
-			if progress != null and progress.uses_limited_shop(_city_key()):
+			if progress != null and progress.shops_are_unlimited():
+				_hint.text = "A / D flips stores. Pick an ability or mod. Infinite stores let you keep buying upgrades."
+			elif progress != null and progress.uses_limited_shop(_city_key()):
 				_hint.text = "A / D flips stores. Pick an ability or mod. In-stock upgrades can be maxed. The rest stay listed as out of stock."
 			_fill_upgrades(gold)
 		Tab.INVENTORY:
 			_hint.text = "A / D flips stores. Drag abilities and mods into the city stash. They stay available in every city this run."
 			_fill_inventory()
 		Tab.LOCKER:
-			_hint.text = "A / D flips stores. Lock one ability and its mods here to take them into a later run."
+			_hint.text = "A / D flips stores. Pay 100g to deposit or withdraw one ability and its mods."
 			_fill_locker()
 		Tab.QUESTS:
 			_hint.text = "A / D flips stores. A bought quest marks the site on tilde."
@@ -374,8 +411,25 @@ func _refresh() -> void:
 			_hint.text = "A / D flips stores. The first refill in this city is free. Later visits cost gold."
 			_fill_reststop()
 		Tab.DUALS:
-			_hint.text = "A / D flips stores. Duals will host test battles."
+			_hint.text = "A / D flips stores. Training is always open. City duels need co-op."
 			_fill_duals()
+
+
+func refresh_wallet() -> void:
+	_set_gold_line(_player.crawler_progress if _player != null else null)
+
+
+func _set_gold_line(progress: CrawlerProgress) -> void:
+	if _gold == null:
+		return
+	_gold.text = "GOLD  %s    GEMS  %d" % [
+		progress.gold_text() if progress != null else "0",
+		CrawlerMeta.gems(),
+	]
+
+
+func _purse(progress: CrawlerProgress) -> int:
+	return progress.purse_gold() if progress != null else 0
 
 
 func _fill_inventory() -> void:
@@ -393,9 +447,21 @@ func _fill_locker() -> void:
 
 
 func _fill_duals() -> void:
-	if CrawlerRules.coop() and NetworkManager != null \
-			and NetworkManager.players.size() >= 2:
+	var can_duel := CrawlerRules.coop() and NetworkManager != null \
+			and NetworkManager.players.size() >= 2
+	if can_duel:
 		_show_empty("")
+	else:
+		_show_empty("City duels are for co-op. A solo run can still open a training field.")
+	_add_row(
+		"TRAINING",
+		"Teleport to a blank field outside the run. Every mob stands idle 50 m apart. E returns you or raises their level.",
+		"START",
+		true,
+		_start_training,
+		"DualsTrain"
+	)
+	if can_duel:
 		_add_row(
 			"CITY DUEL",
 			"Start a player battle. Mobs stay out. E ends it for everyone and puts you back.",
@@ -404,8 +470,13 @@ func _fill_duals() -> void:
 			_start_duel,
 			"DualsStart"
 		)
-		return
-	_show_empty("Duels are for co-op. Nothing happens here in a solo run.")
+
+
+func _start_training() -> void:
+	var world := NetworkManager.active_world as GameWorld
+	close()
+	if world != null:
+		world.request_start_training()
 
 
 func _start_duel() -> void:
@@ -417,7 +488,7 @@ func _start_duel() -> void:
 
 func _fill_reststop() -> void:
 	var progress := _player.crawler_progress if _player != null else null
-	var gold := progress.gold if progress != null else 0
+	var gold := _purse(progress)
 	var city := _player.crawler_city_key() if _player != null else ""
 	_show_empty("")
 	_add_rest_row(
@@ -445,18 +516,19 @@ func _fill_reststop() -> void:
 	)
 	if not CrawlerRules.crawler():
 		return
+	var infinite_gold := progress != null and progress.gold_unlimited
 	_add_row(
-		"ADD 10,000 GOLD",
-		"Put 10,000 gold in your purse.",
-		"TAKE",
+		"INFINITE GOLD",
+		"Spend without emptying the purse. Switch it off to use the gold you already hold.",
+		"OFF" if infinite_gold else "SET",
 		true,
-		_grant_rest_gold,
+		_toggle_rest_gold,
 		"RestAct_gold"
 	)
 	var unlimited := progress != null and progress.shops_unlimited
 	_add_row(
 		"INFINITE STORES",
-		"Keep every stall in stock. Nothing sells out or goes empty.",
+		"Open every closed stall and keep them in stock. Nothing sells out or goes empty.",
 		"ON" if unlimited else "SET",
 		not unlimited,
 		_enable_unlimited_shops,
@@ -492,10 +564,9 @@ func _add_rest_row(
 
 func _fill_market() -> void:
 	var progress := _player.crawler_progress if _player != null else null
-	var gold := progress.gold if progress != null else 0
 	var gems := CrawlerMeta.gems()
 	var held := progress.respawn_tickets if progress != null else 0
-	var afford := gold >= CrawlerProgress.TICKET_GOLD \
+	var afford := progress != null and progress.has_gold(CrawlerProgress.TICKET_GOLD) \
 			and gems >= CrawlerProgress.TICKET_GEMS
 	_show_empty("")
 	_add_row(
@@ -514,7 +585,7 @@ func _fill_market() -> void:
 
 func _fill_quests() -> void:
 	var progress := _player.crawler_progress if _player != null else null
-	var gold := progress.gold if progress != null else 0
+	var gold := _purse(progress)
 	var stock := CrawlerProgress.quest_stock()
 	if stock.is_empty():
 		_show_empty("The stall is empty.")
@@ -522,24 +593,29 @@ func _fill_quests() -> void:
 	_show_empty("")
 	for quest_id: String in stock:
 		var owned := progress != null and progress.owns_quest(quest_id)
+		var encounter := _quest_encounter(quest_id)
+		var title := CrawlerProgress.quest_title(quest_id, encounter)
+		var blurb := CrawlerProgress.quest_blurb(quest_id, encounter)
 		var price := CrawlerProgress.quest_price(quest_id)
 		if owned:
 			_add_row(
-				"%s   MARKED" % CrawlerProgress.quest_title(quest_id).to_upper(),
-				CrawlerProgress.quest_blurb(quest_id),
+				"%s   MARKED" % title.to_upper(),
+				blurb,
 				"OWNED",
 				false,
 				func() -> void: pass,
-				"QuestAct_%s" % quest_id
+				"QuestAct_%s" % quest_id,
+				"QuestTitle_%s" % quest_id
 			)
 			continue
 		_add_row(
-			"%s   %dg" % [CrawlerProgress.quest_title(quest_id).to_upper(), price],
-			CrawlerProgress.quest_blurb(quest_id),
+			"%s   %dg" % [title.to_upper(), price],
+			blurb,
 			"BUY",
 			gold >= price,
 			_buy_quest.bind(quest_id),
-			"QuestAct_%s" % quest_id
+			"QuestAct_%s" % quest_id,
+			"QuestTitle_%s" % quest_id
 		)
 
 
@@ -575,9 +651,10 @@ func _fill_hats(progress: CrawlerProgress, gold: int) -> void:
 
 func _make_hat_tile(hat_id: String, progress: CrawlerProgress, gold: int) -> Control:
 	var copies := progress.hat_count(hat_id) if progress != null else 0
-	var price := CrawlerProgress.hat_price(hat_id)
+	var price := progress.hat_shop_price(_city_key()) if progress != null \
+		else CrawlerProgress.hat_price(hat_id)
 	var tile := _stock_tile("HatTile_%s" % hat_id)
-	var copy := tile.get_child(0) as VBoxContainer
+	var copy := _stock_copy(tile)
 	var cached := ItemIcons.cached(hat_id)
 	var icon := _stock_icon("HatIcon_%s" % hat_id, cached, cached == null)
 	copy.add_child(icon)
@@ -646,7 +723,8 @@ func _fill_caps_for_sale(progress: CrawlerProgress, gold: int) -> void:
 		return
 	var keep_a := _cap_pick[0]
 	var other_a := _cap_pick[1]
-	var price := CrawlerProgress.HAT_MERGE_PRICE
+	var price := progress.cap_merge_price(_city_key()) if progress != null \
+		else CrawlerProgress.HAT_MERGE_PRICE
 	var can_pay := gold >= price
 	_add_cap_merge_row(progress, keep_a, other_a, can_pay, "CapMergeKeepA")
 	if progress.hat_model(keep_a) != progress.hat_model(other_a):
@@ -659,10 +737,8 @@ func _make_cap_tile(
 	var model := progress.hat_model(uid)
 	var tile := _stock_tile("CapTile_%s" % uid)
 	if selected:
-		tile.add_theme_stylebox_override(
-			&"panel", _tab_box(BLACK_40, GREEN, 2)
-		)
-	var copy := tile.get_child(0) as VBoxContainer
+		_paint_stock_tile(tile, GREEN)
+	var copy := _stock_copy(tile)
 	var cached := ItemIcons.cached(model)
 	var icon := _stock_icon("CapIcon_%s" % model, cached, cached == null)
 	copy.add_child(icon)
@@ -697,7 +773,7 @@ func _add_cap_merge_row(
 	_add_row(
 		"%s   %dg" % [
 			str(preview.get("title", "")).to_upper(),
-			CrawlerProgress.HAT_MERGE_PRICE,
+			progress.cap_merge_price(_city_key()),
 		],
 		str(preview.get("description", "")),
 		"MERGE INTO THIS",
@@ -733,11 +809,9 @@ func _merge_caps(keep_uid: String, other_uid: String) -> void:
 
 func _redraw_caps() -> void:
 	var progress := _player.crawler_progress if _player != null else null
-	var gold := progress.gold if progress != null else 0
-	if _gold != null:
-		_gold.text = "GOLD  %d    GEMS  %d" % [gold, CrawlerMeta.gems()]
+	_set_gold_line(progress)
 	_clear_list()
-	_fill_caps_for_sale(progress, gold)
+	_fill_caps_for_sale(progress, _purse(progress))
 
 
 func _fill_capes(progress: CrawlerProgress, gold: int) -> void:
@@ -753,7 +827,7 @@ func _make_cape_tile(cape_id: String, progress: CrawlerProgress, gold: int) -> C
 	var owned := progress != null and progress.owns_cape(cape_id)
 	var price := CrawlerProgress.cape_price(cape_id)
 	var tile := _stock_tile("CapeTile_%s" % cape_id)
-	var copy := tile.get_child(0) as VBoxContainer
+	var copy := _stock_copy(tile)
 	var cached := ItemIcons.cached(cape_id)
 	var icon := _stock_icon("CapeIcon_%s" % cape_id, cached, cached == null)
 	copy.add_child(icon)
@@ -877,7 +951,7 @@ func _fill_abilities(gold: int) -> void:
 
 func _make_ability_tile(catalog_id: String, price: int, gold: int) -> Control:
 	var tile := _stock_tile("AbilityTile_%s" % catalog_id)
-	var copy := tile.get_child(0) as VBoxContainer
+	var copy := _stock_copy(tile)
 	copy.add_child(_stock_icon(
 		"AbilityIcon_%s" % catalog_id,
 		CrawlerCatalog.texture_for(catalog_id),
@@ -916,7 +990,8 @@ func _make_ability_tile(catalog_id: String, price: int, gold: int) -> Control:
 
 func _make_mod_tile(catalog_id: String, price: int, gold: int) -> Control:
 	var tile := _stock_tile("ModTile_%s" % catalog_id)
-	var copy := tile.get_child(0) as VBoxContainer
+	tile.set_meta(&"crt_soft_glitch", true)
+	var copy := _stock_copy(tile)
 	copy.add_child(_stock_mod_icon(catalog_id))
 	var kind := "MOD" if CrawlerCatalog.is_modifier(catalog_id) else "ABILITY"
 	copy.add_child(_stock_label(
@@ -964,8 +1039,10 @@ func _stock_tile(node_name: String) -> PanelContainer:
 	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tile.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tile.custom_minimum_size = TILE_MIN
-	tile.add_theme_stylebox_override(&"panel", _tab_box(BLACK_40, Color(RED_BRIGHT, 0.82), 2))
+	tile.clip_contents = false
+	_paint_stock_tile(tile, RED_BRIGHT)
 	var copy := VBoxContainer.new()
+	copy.name = "StockCopy"
 	copy.add_theme_constant_override(&"separation", 6)
 	copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	copy.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -973,18 +1050,30 @@ func _stock_tile(node_name: String) -> PanelContainer:
 	return tile
 
 
+func _stock_copy(tile: Control) -> VBoxContainer:
+	return tile.get_node_or_null("StockCopy") as VBoxContainer
+
+
+func _paint_stock_tile(tile: Control, accent: Color) -> void:
+	tile.add_theme_stylebox_override(&"panel", _fill_box(BLACK_40, 12, 14))
+	_ensure_rim(tile, accent)
+
+
 func _stock_mod_icon(catalog_id: String) -> Control:
 	var column := VBoxContainer.new()
 	column.name = "ModIconHost_%s" % catalog_id
+	column.set_meta(&"crt_soft_glitch", true)
 	column.add_theme_constant_override(&"separation", 4)
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_child(_stock_icon(
 		"ModIcon_%s" % catalog_id,
 		CrawlerCatalog.texture_for(catalog_id),
-		CrawlerCatalog.icon_path(catalog_id).is_empty()
+		CrawlerCatalog.icon_path(catalog_id).is_empty(),
+		true
 	))
 	var marks := _stock_type_marks(catalog_id)
 	if marks != null:
+		marks.set_meta(&"crt_soft_glitch", true)
 		column.add_child(marks)
 	return column
 
@@ -996,7 +1085,12 @@ func _stock_type_marks(catalog_id: String) -> Control:
 	return CrawlerTypeMarks.make_row("TypeMarks_%s" % catalog_id, types, 22.0)
 
 
-func _stock_icon(node_name: String, texture: Texture2D, green := false) -> TextureRect:
+func _stock_icon(
+		node_name: String,
+		texture: Texture2D,
+		green := false,
+		soft := false
+	) -> TextureRect:
 	var icon := TextureRect.new()
 	icon.name = node_name
 	icon.custom_minimum_size = Vector2(88.0, 88.0)
@@ -1005,6 +1099,8 @@ func _stock_icon(node_name: String, texture: Texture2D, green := false) -> Textu
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.texture = texture
 	icon.modulate = Color(GREEN, 0.95) if green else Color.WHITE
+	if soft:
+		CrtType.mark_soft_icon(icon)
 	return icon
 
 
@@ -1051,11 +1147,13 @@ func _show_body(upgrades := false, inventory := false, locker := false) -> void:
 
 
 func _add_row(title: String, body: String, action: String, enabled: bool,
-		callback: Callable, button_name := "") -> void:
+		callback: Callable, button_name := "", label_name := "") -> void:
 	var row := VBoxContainer.new()
 	row.add_theme_constant_override(&"separation", 6)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var label := Label.new()
+	if not label_name.is_empty():
+		label.name = label_name
 	label.text = "%s\n%s" % [title, body]
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.add_theme_font_size_override(&"font_size", 13)
@@ -1071,7 +1169,12 @@ func _add_row(title: String, body: String, action: String, enabled: bool,
 	button.disabled = not enabled
 	button.pressed.connect(callback)
 	_style_action(button, enabled)
-	row.add_child(button)
+	var pad := MarginContainer.new()
+	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pad.add_theme_constant_override(&"margin_left", 6)
+	pad.add_theme_constant_override(&"margin_right", 6)
+	pad.add_child(button)
+	row.add_child(pad)
 	_list.add_child(row)
 
 
@@ -1085,17 +1188,19 @@ func _show_empty(text: String) -> void:
 func _style_action(button: Button, enabled: bool) -> void:
 	var accent := GREEN if enabled else Color(RED, 0.55)
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if enabled else Color(0.08, 0.02, 0.02, 0.9)
+	button.clip_contents = false
 	button.add_theme_font_size_override(&"font_size", 15)
 	button.add_theme_color_override(&"font_color", accent)
 	button.add_theme_color_override(&"font_hover_color", GREEN)
 	button.add_theme_color_override(&"font_pressed_color", GREEN)
 	button.add_theme_color_override(&"font_focus_color", accent)
 	button.add_theme_color_override(&"font_disabled_color", Color(1, 1, 1, 0.45))
-	button.add_theme_stylebox_override(&"normal", _tab_box(fill, Color(accent, 0.95), 2))
-	button.add_theme_stylebox_override(&"hover", _tab_box(BLACK, GREEN, 2))
-	button.add_theme_stylebox_override(&"pressed", _tab_box(Color(0.0, 0.19, 0.055, 0.90), GREEN, 2))
-	button.add_theme_stylebox_override(&"disabled", _tab_box(fill, Color(1, 1, 1, 0.28), 1))
-	button.add_theme_stylebox_override(&"focus", _tab_box(fill, GREEN, 2))
+	button.add_theme_stylebox_override(&"normal", _fill_box(fill, 8))
+	button.add_theme_stylebox_override(&"hover", _fill_box(BLACK, 8))
+	button.add_theme_stylebox_override(&"pressed", _fill_box(Color(0.0, 0.19, 0.055, 0.90), 8))
+	button.add_theme_stylebox_override(&"disabled", _fill_box(fill, 8))
+	button.add_theme_stylebox_override(&"focus", _fill_box(fill, 8))
+	_ensure_rim(button, accent, 1.75, 4.5)
 
 
 func _shop_id(index: int) -> String:
@@ -1120,24 +1225,49 @@ func _style_tab(button: Button, selected: bool, open := true) -> void:
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if selected and open else BLACK
 	if not open:
 		fill = Color(0.10, 0.10, 0.10, 0.78)
-	button.add_theme_font_size_override(&"font_size", 13)
+	button.clip_contents = false
+	button.add_theme_font_size_override(&"font_size", 12)
 	button.add_theme_color_override(&"font_color", accent)
 	button.add_theme_color_override(&"font_hover_color", GREEN if open else accent)
 	button.add_theme_color_override(&"font_pressed_color", GREEN if open else accent)
 	button.add_theme_color_override(&"font_focus_color", accent)
-	button.add_theme_stylebox_override(&"normal", _tab_box(fill, Color(accent, 0.95), 2 if selected else 1))
-	button.add_theme_stylebox_override(&"hover", _tab_box(BLACK, GREEN if open else accent, 2))
-	button.add_theme_stylebox_override(&"pressed", _tab_box(Color(0.0, 0.19, 0.055, 0.90) if open else fill, GREEN if open else accent, 2))
-	button.add_theme_stylebox_override(&"focus", _tab_box(Color.TRANSPARENT, GREEN if open else accent, 1))
+	button.add_theme_stylebox_override(&"normal", _fill_box(fill, 6))
+	button.add_theme_stylebox_override(&"hover", _fill_box(BLACK, 6))
+	button.add_theme_stylebox_override(
+		&"pressed",
+		_fill_box(Color(0.0, 0.19, 0.055, 0.90) if open else fill, 6)
+	)
+	button.add_theme_stylebox_override(&"focus", _fill_box(Color.TRANSPARENT, 6))
+	_ensure_rim(button, accent, 2.0 if selected else 1.5, 4.5)
 
 
-func _tab_box(fill: Color, border: Color, width: int) -> StyleBoxFlat:
+func _fill_box(fill: Color, margin := 8, bottom := -1) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = fill
-	box.border_color = border
-	box.set_border_width_all(width)
-	box.set_content_margin_all(8)
+	box.border_color = Color.TRANSPARENT
+	box.set_border_width_all(0)
+	box.set_content_margin_all(margin)
+	if bottom >= 0:
+		box.content_margin_bottom = bottom
 	return box
+
+
+func _ensure_rim(
+		target: Control,
+		accent: Color,
+		width := 2.0,
+		spread := 8.0
+	) -> RedGlowPanel:
+	var rim := target.get_node_or_null("RedGlowPanel") as RedGlowPanel
+	if rim == null:
+		rim = RedGlowPanel.add_to(target)
+	rim.fill_color = Color.TRANSPARENT
+	rim.border_color = Color(accent, 0.95)
+	rim.border_width = width
+	rim.glow_intensity = 1.05
+	rim.glow_spread = spread
+	rim.glow_layers = 3
+	return rim
 
 
 func _clear_list() -> void:
@@ -1158,9 +1288,9 @@ func _buy_rest_ammo() -> void:
 	_refresh()
 
 
-func _grant_rest_gold() -> void:
-	if _player != null:
-		_player.grant_crawler_rest_gold()
+func _toggle_rest_gold() -> void:
+	if _player != null and _player.crawler_progress != null:
+		_player.set_crawler_unlimited_gold(not _player.crawler_progress.gold_unlimited)
 	_refresh()
 
 
@@ -1174,6 +1304,21 @@ func _buy_ticket() -> void:
 	if _player != null:
 		_player.buy_crawler_ticket()
 	_refresh()
+
+
+func _quest_encounter(quest_id: String) -> String:
+	var reveals := PackedStringArray()
+	if _player != null and _player.crawler_progress != null:
+		reveals = _player.crawler_progress.quest_reveals
+	var layout := CrawlerRunLayout.instance(get_tree())
+	if layout != null:
+		return layout.quest_shop_encounter(_player, quest_id, reveals)
+	for site_id: String in reveals:
+		if CrawlerProgress.quest_matches_site(quest_id, site_id):
+			return CrawlerRun.boss_encounter(site_id) \
+				if CrawlerRules.is_boss_id(site_id) \
+				else ""
+	return ""
 
 
 func _buy_quest(quest_id: String) -> void:
@@ -1227,7 +1372,7 @@ func _add_shop_refresh(kind: String, progress: CrawlerProgress) -> void:
 func _make_empty_slot_tile(kind: String, index: int) -> Control:
 	var tile := _stock_tile("SoldSlot_%s_%d" % [kind, index])
 	tile.modulate = Color(1, 1, 1, 0.38)
-	var copy := tile.get_child(0) as VBoxContainer
+	var copy := _stock_copy(tile)
 	var filler := Control.new()
 	filler.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	copy.add_child(filler)

@@ -1,8 +1,8 @@
 class_name CrawlerLevelBurst
 extends Control
 
-## Top-of-HUD sting after a crawler level-up. The world stays live; stats are
-## claimed automatically before this plays.
+## Top-of-HUD sting after a crawler level-up. Solo play opens the spend board
+## when this finishes. Coop claims the boosts automatically and stays live.
 
 signal finished
 

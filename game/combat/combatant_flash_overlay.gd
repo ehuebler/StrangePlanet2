@@ -9,7 +9,12 @@ var _peak := 0.62
 var _material: StandardMaterial3D
 
 
-func setup(source: MeshInstance3D, duration: float, peak: float) -> void:
+func setup(
+		source: MeshInstance3D,
+		duration: float,
+		peak: float,
+		color := Color(0.95, 0.08, 0.06)
+	) -> void:
 	if source == null:
 		queue_free()
 		return
@@ -31,7 +36,7 @@ func setup(source: MeshInstance3D, duration: float, peak: float) -> void:
 	# both faces doubled a skinned transparent pass that is retriggered on every
 	# tick of sustained fire.
 	_material.cull_mode = BaseMaterial3D.CULL_BACK
-	_material.albedo_color = Color(0.95, 0.08, 0.06, _peak)
+	_material.albedo_color = Color(color.r, color.g, color.b, _peak)
 	# Lift the shell a few millimetres so it does not z-fight the source mesh.
 	_material.grow = true
 	_material.grow_amount = 0.006
@@ -39,10 +44,13 @@ func setup(source: MeshInstance3D, duration: float, peak: float) -> void:
 	set_process(true)
 
 
-func retrigger() -> void:
+func retrigger(color := Color.TRANSPARENT) -> void:
 	_left = _duration
 	if _material != null:
-		_material.albedo_color.a = _peak
+		if color.a > 0.0:
+			_material.albedo_color = Color(color.r, color.g, color.b, _peak)
+		else:
+			_material.albedo_color.a = _peak
 	set_process(true)
 
 

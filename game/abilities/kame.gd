@@ -26,6 +26,10 @@ func _beam_tint() -> Color:
 	return COLOR
 
 
+func _beam_invert() -> bool:
+	return true
+
+
 func _follow_mode() -> int:
 	return LaserBeams.FOLLOW_HANDS_MERGED
 
@@ -35,7 +39,7 @@ func _damage_hz() -> float:
 
 
 func _beam_width() -> float:
-	return maxf(stat("beam_width", CrawlerRules.KAME_BEAM_WIDTH), 0.35)
+	return maxf(_beam_radius() / LaserBeams.RADIUS, 0.35)
 
 
 func _beam_radius() -> float:
@@ -43,10 +47,7 @@ func _beam_radius() -> float:
 
 
 func _scar_scale() -> float:
-	var authored := CrawlerRules.KAME_RADIUS
-	if authored <= 0.001:
-		return 1.0
-	return maxf(_beam_radius() / authored, 0.25)
+	return maxf(_beam_radius() / SCAR_RADIUS, 0.05)
 
 
 func _pulse_mode() -> bool:

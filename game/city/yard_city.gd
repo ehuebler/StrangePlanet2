@@ -89,8 +89,6 @@ func _build_fabric(shape: PlanetShape, buckets: Dictionary) -> void:
 		_deck_pad(street_st, shape, row["at"], float(row["half"]), colour)
 	_fabric_streets = _commit_ghost(street_st, "FabricStreets")
 	_emit_fabric_buildings(shape)
-	print("yard_city: fabric %s — %d streets, %d plots"
-		% [plan.patch_name, streets.size(), fabric.get("lots", []).size()])
 
 
 func _build_city(shape: PlanetShape) -> void:
@@ -108,8 +106,6 @@ func _build_city(shape: PlanetShape) -> void:
 	if is_instance_valid(_fabric_buildings):
 		_fabric_buildings.visible = false
 	set_process(true)
-	print("yard_city: built %s — %d MeshMaker plots, %d lamps"
-		% [plan.patch_name, fabric.get("lots", []).size(), _lamp_spots.size()])
 
 
 func _solidify_buildings(shape: PlanetShape) -> void:

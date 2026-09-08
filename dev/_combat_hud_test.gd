@@ -70,7 +70,7 @@ func _ready() -> void:
 
 	_hud = _player.combat_hud()
 	_expect(_hud != null, "local player owns a CombatHud")
-
+	await _check_fps_overlay()
 	await _check_compact_player_hud()
 	await _check_boss_bar()
 	await _check_flightless_chip()
@@ -89,6 +89,25 @@ func _ready() -> void:
 		"all checks passed" if _failures == 0
 		else "%d check(s) failed" % _failures))
 	get_tree().quit(1 if _failures > 0 else 0)
+
+
+func _check_fps_overlay() -> void:
+	var hud := _player.combat_hud() as CombatHud
+	var meter: Control = hud.fps_overlay() if hud != null else null
+	_expect(meter != null, "combat HUD shows a live FPS meter")
+	if meter == null:
+		return
+	_expect(is_equal_approx(meter.anchor_left, 1.0)
+			and is_equal_approx(meter.anchor_top, 0.0)
+			and meter.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"the FPS chart sits in the upper-right")
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_expect(int(meter.call(&"sample_count")) >= 2
+			and float(meter.call(&"current_fps")) > 0.0
+			and meter.find_child("FpsChart", true, false) != null
+			and meter.find_child("FpsHitchNote", true, false) == null,
+		"the FPS line chart records frames as they land")
 
 
 func _check_compact_player_hud() -> void:
@@ -142,10 +161,14 @@ func _check_compact_player_hud() -> void:
 	_expect(weapon_bar != null, "themed weapon bar exists")
 	if weapon_bar != null:
 		var slots := weapon_bar.find_children("*", "ItemSlot", true, false)
-		var themed := slots.size() == OnlinePlayer.ABILITY_SLOTS
+		var themed := weapon_bar._ability_slots.size() == OnlinePlayer.ABILITY_SLOTS
 		for node: Node in slots:
 			themed = themed and (node as ItemSlot).hud_style
+		var juke_slot := weapon_bar.find_child("JukeSlot", true, false) as ItemSlot
 		_expect(themed, "all four ability squares use the red HUD style")
+		_expect(juke_slot != null and juke_slot.badge == "F" and juke_slot.visible
+				and juke_slot.forced_item_id == CrawlerProgress.STAT_JUKE,
+			"juke sits on the hotbar as an F tile")
 
 		_player.abilities.set_item(0, "nuke")
 		await get_tree().process_frame
@@ -276,7 +299,7 @@ func _check_hero_status_rows() -> void:
 	page.refresh()
 	var section := page.find_child("StatusSection", true, false) as VBoxContainer
 	_expect(section != null and section.visible,
-		"hero stats overlay includes temporary effects section")
+		"hero stats include temporary effects section")
 	var row := page.find_child("Status_flightless", true, false)
 	_expect(row != null, "hero stats lists Flightless row")
 	page.queue_free()
@@ -290,8 +313,6 @@ func _check_parry_indicator() -> void:
 	indicator.refresh(_player)
 	_expect(is_equal_approx(indicator.shield_share(), 1.0),
 		"ready shield bar is full")
-	_expect(is_equal_approx(indicator.juke_share(), 1.0),
-		"ready juke bar is full")
 	_expect(indicator.find_children("*", "Label", true, false).is_empty(),
 		"shield HUD has no F or ready text")
 
@@ -314,17 +335,39 @@ func _check_parry_indicator() -> void:
 	indicator.refresh(_player)
 	_expect(absf(indicator.health_share() - 0.4) < 0.01,
 		"health bar sits under shield and tracks player health")
-	var juke := indicator.find_child("JukeBar", true, false) as ProgressBar
 	var shield := indicator.find_child("ShieldBar", true, false) as ProgressBar
 	var health := indicator.find_child("HealthBar", true, false) as ProgressBar
-	_expect(juke != null and shield != null and health != null
-		and juke.get_index() < shield.get_index()
+	_expect(indicator.find_child("JukeBar", true, false) == null
+		and shield != null and health != null
 		and shield.get_index() < health.get_index(),
-		"juke sits above the blue bar, which sits above health")
-	_player._juke_cooldown_left = _player.juke_cooldown() * 0.4
+		"the blue bar sits above health with no juke bar under the hotbar")
+	_player.statuses.apply(CombatStatuses.POISON, 4.0, 3.0)
 	indicator.refresh(_player)
-	_expect(absf(indicator.juke_share() - 0.6) < 0.02,
-		"juke bar grows through dash regeneration")
+	var goop := health.get_node_or_null("ToxicGoop") as ColorRect
+	var track := health.get_theme_stylebox(&"background") as StyleBoxFlat
+	_expect(indicator.toxic_active() and goop != null and goop.visible
+			and track != null and track.border_width_left >= 4
+			and track.border_color.is_equal_approx(ParryIndicator.TOXIC),
+		"poison outlines the health bar in neon green goop")
+	_player.statuses.clear(CombatStatuses.POISON)
+	indicator.refresh(_player)
+	_expect(not indicator.toxic_active() and goop != null and not goop.visible,
+		"the toxic outline leaves when poison ends")
+	var weapon_bar := _player.find_child("WeaponBar", true, false) as WeaponBar
+	var juke_slot := weapon_bar.find_child("JukeSlot", true, false) as ItemSlot \
+		if weapon_bar != null else null
+	_player._juke_cooldown_left = 0.0
+	if weapon_bar != null:
+		weapon_bar._process(0.0)
+	_expect(juke_slot != null and not juke_slot.cooldown_active
+			and is_equal_approx(juke_slot.cooldown_fill, 1.0),
+		"ready juke icon is full")
+	_player._juke_cooldown_left = _player.juke_cooldown() * 0.4
+	if weapon_bar != null:
+		weapon_bar._process(0.0)
+	_expect(juke_slot != null and juke_slot.cooldown_active
+			and absf(juke_slot.cooldown_fill - 0.6) < 0.02,
+		"juke icon refills through dash regeneration")
 	_player._juke_cooldown_left = 0.0
 	_player.stats.set_health(maximum)
 

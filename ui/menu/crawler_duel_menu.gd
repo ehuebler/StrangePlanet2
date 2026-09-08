@@ -44,10 +44,16 @@ func _ready() -> void:
 	card.offset_bottom = 110.0
 	var box := StyleBoxFlat.new()
 	box.bg_color = BLACK
-	box.border_color = RED_BRIGHT
-	box.set_border_width_all(2)
+	box.set_border_width_all(0)
 	box.set_corner_radius_all(12)
 	card.add_theme_stylebox_override(&"panel", box)
+	var rim := RedGlowPanel.add_to(card)
+	rim.fill_color = Color.TRANSPARENT
+	rim.border_color = Color(RED_BRIGHT, 0.95)
+	rim.border_width = 2.0
+	rim.glow_intensity = 1.25
+	rim.glow_spread = 8.0
+	rim.glow_layers = 4
 	add_child(card)
 
 	var column := VBoxContainer.new()

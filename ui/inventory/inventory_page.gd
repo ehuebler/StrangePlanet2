@@ -1016,8 +1016,8 @@ func _build_tooltip() -> void:
 # --- Reacting ---------------------------------------------------------------
 
 ## Everything that depends on a container, in one call. Public because the owner
-## changes containers behind the page's back — the admin tab fills the backpack,
-## and the home screen restocks the rail when the body changes.
+## changes containers behind the page's back — the home screen restocks the
+## rail when the body changes.
 func refresh() -> void:
 	for slot in _slots:
 		slot.queue_redraw()
@@ -1086,6 +1086,7 @@ func _paint_model() -> void:
 		var colour := Color.html(str(_tints[target]))
 		for material: Variant in derived.values():
 			SurfaceSkin.tint_material(material as ShaderMaterial, colour)
+	SurfaceSkin.apply_outline_tint(_preview_character, _tints)
 
 
 ## Shift-clicking sends an item where it most obviously wants to go: onto the body

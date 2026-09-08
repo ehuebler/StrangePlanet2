@@ -7,6 +7,8 @@ extends Control
 
 const OVERDRIVE_VIGNETTE := preload("res://ui/combat/overdrive_vignette.gd")
 const FIELD_VIGNETTE := preload("res://ui/combat/field_vignette.gd")
+const GOLD_CAPE_VIGNETTE := preload("res://ui/combat/gold_cape_vignette.gd")
+const FPS_OVERLAY := preload("res://ui/combat/fps_overlay.gd")
 
 var _player: Node3D
 var _coordinates: CoordinatePlate
@@ -16,13 +18,17 @@ var _parry: ParryIndicator
 var _crawler_vitals: CrawlerVitalsPlate
 var _entering: CrawlerEnteringNote
 var _hit_log: HitLog
+var _fps: Control
 var _overdrive: Control
 var _field: Control
+var _gold_cape: Control
 
 var _menu_open := false
+var _cutscene := false
 var _session_engaged := false
 var _last_boss_health := -1.0
 var _boss: Node
+var _weapon_bar: Control
 
 
 func _init() -> void:
@@ -32,9 +38,10 @@ func _init() -> void:
 
 
 func configure(player: Node3D, _hud: CanvasLayer,
-		coordinates: CoordinatePlate, _weapon_bar: Control) -> void:
+		coordinates: CoordinatePlate, weapon_bar: Control) -> void:
 	_player = player
 	_coordinates = coordinates
+	_weapon_bar = weapon_bar
 	_boss_bar = BossBar.new()
 	_status_layer = StatusChipLayer.new()
 	_parry = ParryIndicator.new()
@@ -42,8 +49,8 @@ func configure(player: Node3D, _hud: CanvasLayer,
 		child.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(child)
 	_parry.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if _weapon_bar is WeaponBar:
-		(_weapon_bar as WeaponBar).add_vitals(_parry)
+	if weapon_bar is WeaponBar:
+		(weapon_bar as WeaponBar).add_vitals(_parry)
 	else:
 		add_child(_parry)
 	if CrawlerRules.active():
@@ -56,10 +63,15 @@ func configure(player: Node3D, _hud: CanvasLayer,
 	_hit_log = HitLog.new()
 	_hit_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_hit_log)
+	_fps = FPS_OVERLAY.new()
+	_fps.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_fps)
 	_overdrive = OVERDRIVE_VIGNETTE.new()
 	add_child(_overdrive)
 	_field = FIELD_VIGNETTE.new()
 	add_child(_field)
+	_gold_cape = GOLD_CAPE_VIGNETTE.new()
+	add_child(_gold_cape)
 	if _player != null:
 		if _player.has_signal(&"status_changed") \
 				and not _player.status_changed.is_connected(_on_status_changed):
@@ -84,9 +96,27 @@ func configure(player: Node3D, _hud: CanvasLayer,
 func set_menu_open(open: bool) -> void:
 	_menu_open = open
 	if _hit_log != null:
-		_hit_log.set_suppressed(open)
-	if open:
+		_hit_log.set_suppressed(_hud_hidden())
+	if _hud_hidden():
 		_set_boss_boundary(false)
+
+
+func set_cutscene(on: bool) -> void:
+	_cutscene = on
+	if _hit_log != null:
+		_hit_log.set_suppressed(_hud_hidden())
+	if _weapon_bar != null:
+		_weapon_bar.visible = not on
+	if on:
+		_set_boss_boundary(false)
+
+
+func is_cutscene() -> bool:
+	return _cutscene
+
+
+func _hud_hidden() -> bool:
+	return _menu_open or _cutscene
 
 
 func _exit_tree() -> void:
@@ -97,10 +127,12 @@ func refresh(delta: float) -> void:
 	if _player == null:
 		return
 	if _overdrive != null and _overdrive.has_method(&"refresh"):
-		_overdrive.call(&"refresh", _player, _menu_open, delta)
+		_overdrive.call(&"refresh", _player, _hud_hidden(), delta)
 	if _field != null and _field.has_method(&"refresh"):
-		_field.call(&"refresh", _player, _menu_open, delta)
-	if _menu_open:
+		_field.call(&"refresh", _player, _hud_hidden(), delta)
+	if _gold_cape != null and _gold_cape.has_method(&"refresh"):
+		_gold_cape.call(&"refresh", _player, _hud_hidden(), delta)
+	if _hud_hidden():
 		if _boss_bar != null:
 			_boss_bar.visible = false
 		_set_boss_boundary(false)
@@ -112,7 +144,13 @@ func refresh(delta: float) -> void:
 			_crawler_vitals.visible = false
 		if _hit_log != null:
 			_hit_log.set_suppressed(true)
+		if _entering != null:
+			_entering.visible = false
+		if _fps != null:
+			_fps.visible = false
 		return
+	if _fps != null:
+		_fps.visible = true
 	_poll_boss(delta)
 	_sync_statuses()
 	if _parry != null:
@@ -144,6 +182,10 @@ func city_siege_bar() -> CrawlerCitySiegeBar:
 
 func hit_log() -> HitLog:
 	return _hit_log
+
+
+func fps_overlay() -> Control:
+	return _fps
 
 
 func show_entering(place: String, gems := 0) -> void:
@@ -188,6 +230,8 @@ func _poll_boss(delta: float) -> void:
 	if found != _boss:
 		_set_boss_boundary(false)
 		_boss = found
+		if _boss != null:
+			_boss_bar.set_title(BossAdapter.display_name(_boss))
 	if _boss == null:
 		_session_engaged = false
 		_last_boss_health = -1.0
@@ -258,7 +302,7 @@ func _flash_boss() -> void:
 func _on_enemy_damaged(target: Node, amount: float, _hit: DamageHit) -> void:
 	if amount <= 0.0 or target == null:
 		return
-	if not target.is_in_group(BossAdapter.GROUP):
+	if not BossAdapter.is_boss_node(target):
 		return
 	_session_engaged = true
 	CombatantFlash.flash(BossAdapter.model_root(target))
@@ -274,12 +318,12 @@ func _on_status_changed(_id: StringName, _remaining: float) -> void:
 
 
 func _on_parry_started() -> void:
-	if _parry != null and _player != null and not _menu_open:
+	if _parry != null and _player != null and not _hud_hidden():
 		_parry.refresh(_player)
 
 
 func _on_parry_blocked(_perfect: bool, _hit: DamageHit) -> void:
-	if _parry != null and _player != null and not _menu_open:
+	if _parry != null and _player != null and not _hud_hidden():
 		_parry.refresh(_player)
 
 
@@ -292,7 +336,7 @@ func _on_damage_number(event: DamageNumberEvent) -> void:
 func _place_hit_log() -> void:
 	if _hit_log == null:
 		return
-	_hit_log.set_suppressed(_menu_open)
+	_hit_log.set_suppressed(_hud_hidden())
 	var lift := 0.0
 	if _coordinates != null and _coordinates.visible:
 		lift = _coordinates.size.y + 8.0

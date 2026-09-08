@@ -152,10 +152,5 @@ func _host() -> Planet:
 
 
 func _report(found: Dictionary) -> void:
-	print("%s: %d junctions of %d nodes, %d roads in %d runs, %.1f km of street" % [
-		_plan.title, found["junctions"], found["nodes"], found["roads"],
-		found["runs"], (found["length"] as float) / 1000.0])
-	print("  %d nodes reachable, %d dead ends" % [
-		found["reached"], (found["dead_ends"] as Array[String]).size()])
 	for problem: String in found["problems"] as PackedStringArray:
 		push_error("%s: %s" % [_plan.title, problem])

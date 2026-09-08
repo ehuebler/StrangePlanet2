@@ -1,8 +1,8 @@
 class_name CrawlerGloam
 extends CrawlerMob
 
-## Small two-winged demon. Roams on the ground in flocks. Bites up close,
-## then takes off if the player pulls away and lands on a flank to bite again.
+## Small two-winged demon. Swarms on foot at a jog and bites over and over.
+## When the player runs, the flock flies ahead, lands in the way, and bites.
 
 const BODY := preload("res://game/crawler/crawler_demon_body.gd")
 const PAINT_PATH := "res://assets/runtime/biomes/paint/gloam_paint.png"
@@ -17,10 +17,11 @@ var _flank := 1.0
 
 
 func _ready() -> void:
-	_base_health = 36.0
-	_base_damage = 8.0
+	_base_health = 4.0
+	_base_damage = 3.0
 	_base_speed = 9.0
 	_faces_motion = true
+	_uses_model_front = true
 	super._ready()
 	_flank = -1.0 if (hash(mob_id) & 1) == 0 else 1.0
 
@@ -31,7 +32,11 @@ func _build_body() -> void:
 	box.size = Vector3(WIDTH, HEIGHT, WIDTH * 0.78)
 	shape.shape = box
 	add_child(shape)
-	BODY.build(self, 2, HEIGHT, INK, BODY.load_paint(PAINT_PATH))
+	var packed := CrawlerDemonModels.scene(wild_kind())
+	if packed != null:
+		_attach_skinned(packed, HEIGHT)
+	else:
+		BODY.build(self, 2, HEIGHT, INK, BODY.load_paint(PAINT_PATH))
 
 
 func wild_kind() -> String:
@@ -62,6 +67,16 @@ func flyer_floor() -> float:
 	return HEIGHT * 0.7 + 1.4
 
 
+func ground_clearance() -> float:
+	return HEIGHT * 0.5
+
+
+func _clip_aliases(clip: String) -> PackedStringArray:
+	if clip == CLIP_ATTACK:
+		return PackedStringArray(["Bite", "Strike", CLIP_ATTACK])
+	return super._clip_aliases(clip)
+
+
 func _desired_clip() -> String:
 	if not _alive:
 		return CLIP_HIT
@@ -74,22 +89,61 @@ func _desired_clip() -> String:
 	return super._desired_clip()
 
 
+func _tick_idle(delta: float) -> void:
+	_roam(delta)
+
+
 func _tick_ai(delta: float) -> void:
 	_bite_left = maxf(_bite_left - delta, 0.0)
 	var player := _hunt_target(delta)
 	if player == null:
-		_roam(delta)
+		_tick_idle(delta)
+		return
+	_pursue(player, delta, true)
+
+
+func _tick_far(delta: float) -> void:
+	_bite_left = maxf(_bite_left - delta, 0.0)
+	var player := _nearest_player()
+	if player != null and tick_agro(player, delta):
+		_pursue(player, delta, false)
+		return
+	_tick_idle(delta)
+
+
+func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
+	if _movement_locked():
+		velocity = Vector3.ZERO
+		return
+	var step := maxf(delta, 0.0)
+	_bite_left = maxf(_bite_left - step, 0.0)
+	if player != null and _apply_agro(player, step, in_city):
+		_pursue(player, step, false)
+	else:
+		_tick_idle(step)
+	if flies():
+		_director_climb()
+
+
+func _pursue(player: Node, delta: float, think: bool) -> void:
+	var running := CrawlerRules.gloam_running(_player_speed(player))
+	var gap := global_position.distance_to(_combat_position_of(player))
+	if running or (_airborne and (running or gap > 3.4)):
+		if not _airborne:
+			_takeoff()
+		_chase_air(player, delta)
 		return
 	if _airborne:
-		_chase_air(player, delta)
-	else:
-		_chase_ground(player, delta)
+		_land()
+	if think:
+		snap_to_ground()
+	_chase_ground(player, delta)
 
 
 func _roam(delta: float) -> void:
 	if _airborne:
 		_land()
-	_stick_to_surface()
+	snap_to_ground()
 	_match_speed(move_speed() * 0.42, delta, 1.1, 6.0)
 	_patrol_left -= delta
 	if _patrol_left <= 0.0 or global_position.distance_to(_patrol_goal) < 2.4:
@@ -103,21 +157,14 @@ func _roam(delta: float) -> void:
 
 
 func _chase_ground(player: Node, delta: float) -> void:
-	_stick_to_surface()
 	var at := _combat_position_of(player)
 	var gap := global_position.distance_to(at)
-	var player_speed := _player_speed(player)
-	if gap > CrawlerRules.GLOAM_FLEE_GAP or player_speed > move_speed() * 1.35:
-		_takeoff()
-		_chase_air(player, delta)
-		return
-	var wanted := minf(move_speed(), player_speed * 0.62 + 2.4)
-	_match_speed(wanted, delta, 0.32, 4.0)
+	_match_speed(move_speed(), delta, 0.45, 8.0)
 	var along := _tangent_toward(at)
 	if along.length_squared() > 0.0001:
-		_steer_toward(along.normalized() * _cruise, delta, 10.0)
+		_steer_toward(along.normalized() * _cruise, delta, 11.0)
 	var reach := CrawlerRules.GLOAM_BITE_REACH
-	if player.has_method(&"combat_radius"):
+	if player != null and player.has_method(&"combat_radius"):
 		reach += float(player.call(&"combat_radius"))
 	if gap <= reach and _bite_left <= 0.0:
 		_bite(player)
@@ -137,24 +184,31 @@ func _chase_air(player: Node, delta: float) -> void:
 
 func _land_perch(player: Node) -> Vector3:
 	var at := _combat_position_of(player)
-	var up := _up()
+	var up := _loft_axis()
 	var look := _player_ahead(player)
 	var right := look.cross(up)
 	if right.length_squared() < 0.0001:
 		right = up.cross(Vector3.RIGHT)
+	if right.length_squared() < 0.0001:
+		right = Vector3.RIGHT
 	right = right.normalized()
-	var perch := at + look * CrawlerRules.GLOAM_LAND_GAP \
-		+ right * _flank * (CrawlerRules.GLOAM_LAND_GAP * 0.55)
-	if _planet != null:
-		var local := _planet.to_local(perch)
-		if local.length_squared() > 0.0001:
-			var surface := _planet.surface_position(local)
-			perch = surface + _planet.up_at(surface) * flyer_floor()
+	var ahead := CrawlerRules.GLOAM_LAND_GAP
+	var motion := _player_velocity(player)
+	motion -= up * motion.dot(up)
+	if motion.length() > CrawlerRules.GLOAM_RUN_SPEED:
+		ahead += clampf(motion.length() * 0.22, 0.0, 6.0)
+	var perch := at + look * ahead + right * _flank * CrawlerRules.GLOAM_CUT_SIDE
+	if _planet == null:
+		return perch
+	var surface := ground_surface(perch)
+	if surface.is_finite() and surface.distance_to(perch) < 12.0:
+		up = _planet.up_at(surface)
+		perch = surface + up * flyer_floor()
 	return perch
 
 
 func _player_ahead(player: Node) -> Vector3:
-	var lift := _up()
+	var lift := _loft_axis()
 	var motion := _player_velocity(player)
 	motion -= lift * motion.dot(lift)
 	if motion.length_squared() > 0.36:
@@ -176,7 +230,7 @@ func _takeoff() -> void:
 
 func _land() -> void:
 	_airborne = false
-	_stick_to_surface()
+	snap_to_ground()
 	velocity -= _up() * velocity.dot(_up())
 
 
@@ -213,11 +267,11 @@ func _flock_wander() -> Vector3:
 	var yaw := rng.randf() * TAU
 	var reach := rng.randf_range(5.0, 16.0)
 	var at := hang_origin + (east * cos(yaw) + north * sin(yaw)) * reach
-	if _planet != null:
-		var local := _planet.to_local(at)
-		if local.length_squared() > 0.0001:
-			var surface := _planet.surface_position(local)
-			at = surface + _planet.up_at(surface) * (HEIGHT * 0.5)
+	var surface := ground_surface(at)
+	if surface.is_finite():
+		if _planet != null:
+			up = _planet.up_at(surface)
+		at = surface + up * ground_clearance()
 	return at
 
 
@@ -229,12 +283,6 @@ func _tangent_toward(at: Vector3) -> Vector3:
 
 
 func _stick_to_surface() -> void:
-	if _airborne or _planet == null:
+	if _airborne:
 		return
-	var local := _planet.to_local(global_position)
-	if local.length_squared() < 0.0001:
-		local = Vector3.UP
-	var surface := _planet.surface_position(local)
-	var up := _planet.up_at(surface)
-	global_position = surface + up * (HEIGHT * 0.5)
-	velocity -= up * velocity.dot(up)
+	snap_to_ground()

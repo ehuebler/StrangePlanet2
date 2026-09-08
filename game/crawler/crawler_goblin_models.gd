@@ -26,7 +26,7 @@ static func paths(kind: String) -> PackedStringArray:
 	if clean.is_empty():
 		return PackedStringArray()
 	var names := PackedStringArray([
-		clean,
+		clean.to_upper(),
 		clean.capitalize(),
 		"goblin_%s" % clean,
 		"goblin-%s" % clean,

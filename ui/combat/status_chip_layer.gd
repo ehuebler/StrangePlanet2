@@ -4,7 +4,7 @@ extends Control
 ## Upper-right stack of transient combat statuses, positioned below a
 ## [CoordinatePlate].
 
-const GAP := 8.0
+const GAP := 4.0
 
 var _chips: Dictionary = {}
 
@@ -18,7 +18,7 @@ func _init() -> void:
 	anchor_bottom = 1.0
 	grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	grow_vertical = Control.GROW_DIRECTION_END
-	offset_left = -240.0
+	offset_left = -188.0
 	offset_right = -CoordinatePlate.MARGIN
 	offset_top = CoordinatePlate.MARGIN
 	offset_bottom = -CoordinatePlate.MARGIN
@@ -27,7 +27,7 @@ func _init() -> void:
 func _ready() -> void:
 	var column := VBoxContainer.new()
 	column.name = "ChipColumn"
-	column.add_theme_constant_override(&"separation", 6)
+	column.add_theme_constant_override(&"separation", 3)
 	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	add_child(column)

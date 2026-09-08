@@ -1,12 +1,14 @@
 class_name BossAdapter
 extends RefCounted
 
-## Small read-only adapter for a boss node in group [code]bigfoot_boss[/code].
+## Small read-only adapter for a boss node in group [code]bigfoot_boss[/code]
+## or [code]crawler_boss[/code].
 ##
 ## The concurrently-built controller may expose slightly different method names;
 ## this layer normalises them so HUD code stays stable.
 
 const GROUP := &"bigfoot_boss"
+const CRAWLER_GROUP := &"crawler_boss"
 const DEFAULT_RADIUS := 200.0
 const FADE_MARGIN := 20.0
 
@@ -14,8 +16,28 @@ const FADE_MARGIN := 20.0
 static func find_in_tree(from: Node) -> Node:
 	if from == null or not from.is_inside_tree():
 		return null
+	var found := _find_group(from, GROUP)
+	if found != null:
+		return found
+	return _find_group(from, CRAWLER_GROUP)
+
+
+static func is_boss_node(node: Node) -> bool:
+	return node != null and is_instance_valid(node) \
+		and (node.is_in_group(GROUP) or node.is_in_group(CRAWLER_GROUP))
+
+
+static func display_name(boss: Node) -> String:
+	if boss != null and boss.has_method(&"combat_display_name"):
+		var named := String(boss.call(&"combat_display_name"))
+		if not named.is_empty():
+			return named
+	return "Boss"
+
+
+static func _find_group(from: Node, group: StringName) -> Node:
 	var local_world := DamageHit.game_world_of(from)
-	for node: Node in from.get_tree().get_nodes_in_group(GROUP):
+	for node: Node in from.get_tree().get_nodes_in_group(group):
 		if node != null and is_instance_valid(node) \
 				and (local_world == null
 					or DamageHit.in_same_world(from, node)):

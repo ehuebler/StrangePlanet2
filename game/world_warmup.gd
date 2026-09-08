@@ -26,7 +26,8 @@ extends Node3D
 ## have to share the player's viewport. A small isolated SubViewport renders it
 ## offscreen so the title screen can remain unchanged while this runs.
 ##
-## Nothing here changes the world. Everything it makes, it takes away again.
+## Shader-compile geometry is thrown away again. Flora tiles are not grown here:
+## they stream in-game, trees first, once a session is live.
 
 ## Fired as each step finishes so the caller can draw a bar. The share is 0..1
 ## across the whole warm-up.
@@ -62,17 +63,25 @@ var compiled := 0
 
 ## Runs the whole warm-up. Awaited by the caller while the ordinary title screen
 ## remains visible.
-func run(world: Node, camera: Camera3D) -> void:
+func run(world: Node, camera: Camera3D, _game_mode := "") -> void:
 	var planet := world.find_child("Planet", true, false) as Planet
-	progressed.emit(0.0, "Waking the planet")
+	if CrawlerRules.uses_mode(_game_mode) and CrawlerMeta._test_payload == null:
+		progressed.emit(0.0, "Choosing a run")
+		await get_tree().process_frame
+		CrawlerRun.clear()
+		CrawlerRun.pick_random()
+		progressed.emit(0.04, "Loading world layout")
+		await get_tree().process_frame
+	progressed.emit(0.08, "Waking the planet")
 	await get_tree().process_frame
 
 	var draws := await _collect(world)
 	compiled = draws.size()
-	progressed.emit(0.15, "Preparing plants")
+	progressed.emit(0.18, "Preparing plants")
 
+	progressed.emit(0.22, "Compiling shaders")
 	await _compile(draws, camera)
-	progressed.emit(0.85, "Building terrain")
+	progressed.emit(0.72, "Building terrain")
 
 	await _settle_terrain(planet)
 	# The offscreen viewport and its last batch are freed deferred. Returning
@@ -182,7 +191,7 @@ func _compile(draws: Array[Dictionary], source_camera: Camera3D) -> void:
 		for made in batch:
 			made.queue_free()
 		progressed.emit(
-			lerpf(0.15, 0.85, float(done) / float(draws.size())),
+			lerpf(0.15, 0.72, float(done) / float(draws.size())),
 			"Compiling shaders")
 	viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	viewport.queue_free()
@@ -275,5 +284,5 @@ func _settle_terrain(planet: Planet) -> void:
 		await get_tree().process_frame
 		waited += 1
 		if waited % 15 == 0:
-			progressed.emit(lerpf(0.85, 0.99,
+			progressed.emit(lerpf(0.72, 0.99,
 				float(waited) / float(TERRAIN_PATIENCE)), "Building terrain")

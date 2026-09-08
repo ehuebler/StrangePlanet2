@@ -90,8 +90,11 @@ var _think_left := 0.0
 var _surface_guard_left := 0.0
 var _contact_scan_left := 0.0
 var _cached_nearest_player: Node3D
-var _player_gap := INF
+var _player_gap := 0.0
 var _physics_body := false
+var _far_coast := 0.0
+var _cached_up := Vector3.ZERO
+var _cached_up_at := Vector3.INF
 var _graze_left := 0.0
 var _provoked_left := 0.0
 var _spit_windup_left := 0.0
@@ -179,6 +182,19 @@ func _physics_process(delta: float) -> void:
 		return
 	if _lassoed:
 		return
+	if _player_gap > 72.0 and _provoked_left <= 0.0 and _alert_left <= 0.0 \
+			and _spit_windup_left <= 0.0 and _knockback_left <= 0.0 \
+			and _motion_state != MotionState.ATTACK:
+		_far_coast -= delta
+		if _far_coast > 0.0:
+			_glide(delta, _up())
+			_tick_surface_guard(delta)
+			_sync_left -= delta
+			if _sync_left <= 0.0:
+				_sync_left = STATE_SYNC_INTERVAL
+				_publish_state()
+			return
+		_far_coast = 0.22
 
 	# The spit leaves the muzzle on its own clock, so a creature that stops
 	# circling mid-throw still finishes the throw it has already started.
@@ -481,7 +497,8 @@ func _apply_body_slap() -> void:
 func _try_contact_damage() -> void:
 	if _attack_cooldown_left > 0.0:
 		return
-	for player_variant: Variant in get_tree().get_nodes_in_group(&"network_players"):
+	CrawlerMobSense.ensure_frame(get_tree())
+	for player_variant: Variant in CrawlerMobSense.players():
 		var player := player_variant as Node3D
 		if player == null or not DamageHit.in_same_world(self, player) \
 				or _player_dead(player):
@@ -1210,6 +1227,36 @@ func _nearest_player_for_behaviour(delta: float) -> Node3D:
 
 
 func _nearest_player() -> Node3D:
+	if not is_inside_tree():
+		return null
+	CrawlerMobSense.ensure_frame(get_tree())
+	var found := CrawlerMobSense.nearest_player(self)
+	if found != null:
+		return found
+	return _scan_nearest_player()
+
+
+func _player_for_peer(peer: int) -> Node3D:
+	if peer <= 0 or not is_inside_tree():
+		return null
+	CrawlerMobSense.ensure_frame(get_tree())
+	var found := _match_peer(CrawlerMobSense.players(), peer)
+	if found != null:
+		return found
+	return _match_peer(get_tree().get_nodes_in_group(&"network_players"), peer)
+
+
+func _match_peer(candidates: Array, peer: int) -> Node3D:
+	for player_variant: Variant in candidates:
+		var player := player_variant as Node3D
+		if player != null and _peer_id(player) == peer \
+				and DamageHit.in_same_world(self, player) \
+				and not _player_dead(player):
+			return player
+	return null
+
+
+func _scan_nearest_player() -> Node3D:
 	var nearest: Node3D
 	var nearest_squared := INF
 	for player_variant: Variant in get_tree().get_nodes_in_group(&"network_players"):
@@ -1222,18 +1269,6 @@ func _nearest_player() -> Node3D:
 			nearest_squared = away
 			nearest = player
 	return nearest
-
-
-func _player_for_peer(peer: int) -> Node3D:
-	if peer <= 0:
-		return null
-	for player_variant: Variant in get_tree().get_nodes_in_group(&"network_players"):
-		var player := player_variant as Node3D
-		if player != null and _peer_id(player) == peer \
-				and DamageHit.in_same_world(self, player) \
-				and not _player_dead(player):
-			return player
-	return null
 
 
 func _peer_id(player: Node) -> int:
@@ -1266,11 +1301,17 @@ func _find_planet() -> Planet:
 
 
 func _up() -> Vector3:
-	if _planet == null:
-		return global_basis.y.normalized()
-	var local := _planet.to_local(global_position)
-	return (_planet.global_basis * local.normalized()).normalized() \
-		if local.length_squared() > 1.0 else global_basis.y.normalized()
+	if global_position.distance_squared_to(_cached_up_at) < 1.0 \
+			and _cached_up.length_squared() > 0.0001:
+		return _cached_up
+	var up := global_basis.y.normalized()
+	if _planet != null:
+		var local := _planet.to_local(global_position)
+		if local.length_squared() > 1.0:
+			up = (_planet.global_basis * local.normalized()).normalized()
+	_cached_up = up
+	_cached_up_at = global_position
+	return up
 
 
 func _flat_direction(direction: Vector3, up: Vector3) -> Vector3:

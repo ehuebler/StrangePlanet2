@@ -7,6 +7,21 @@ extends RefCounted
 
 const CLIP_FLY := "Fly"
 const CLIP_CAST := "Cast"
+const RAYS_NAME := "CursedRays"
+
+static var _ray_image: Texture2D
+
+
+class RayPulse extends Node3D:
+	var _clock := 0.0
+
+	func _process(delta: float) -> void:
+		_clock += delta
+		var wide := 0.92 + 0.08 * sin(_clock * 1.25)
+		scale = Vector3(wide, 1.0, wide)
+		var lamp := get_node_or_null("CursedLamp") as OmniLight3D
+		if lamp != null:
+			lamp.light_energy = 3.2 + sin(_clock * 1.7) * 0.7
 
 
 static func build(host: CrawlerMob, wings: int, height: float, colour: Color,
@@ -45,30 +60,49 @@ static func build(host: CrawlerMob, wings: int, height: float, colour: Color,
 			vane.name = "Wing%d%s" % [pair, "L" if side < 0.0 else "R"]
 			vane.position = Vector3(side * height * 0.12, lift, -height * 0.04)
 			vane.rotation.y = side * 0.22
-	if aura.a > 0.04:
-		var glow := SphereMesh.new()
-		glow.radius = height * 0.62
-		glow.height = height * 1.24
-		var haze := MeshInstance3D.new()
-		haze.name = "CursedAura"
-		haze.mesh = glow
-		haze.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		var mat := StandardMaterial3D.new()
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.albedo_color = aura
-		mat.emission_enabled = true
-		mat.emission = Color(aura.r, aura.g, aura.b)
-		mat.emission_energy_multiplier = 2.4
-		haze.material_override = mat
-		root.add_child(haze)
-		var lamp := OmniLight3D.new()
-		lamp.light_color = Color(aura.r, aura.g, aura.b)
-		lamp.light_energy = 2.8
-		lamp.omni_range = height * 3.4
-		root.add_child(lamp)
+	add_god_rays(root, height, aura)
 	_bind_clips(host, root, pairs, height)
 	return root
+
+
+static func add_aura(host: Node3D, height: float, aura: Color) -> void:
+	add_god_rays(host, height, aura)
+
+
+static func add_god_rays(host: Node3D, height: float, aura: Color) -> void:
+	if host == null or aura.a <= 0.04:
+		return
+	var existing := host.get_node_or_null(RAYS_NAME)
+	if existing != null:
+		return
+	var ink := Color(aura.r, aura.g, aura.b)
+	var root := RayPulse.new()
+	root.name = RAYS_NAME
+	host.add_child(root)
+	var core := MeshInstance3D.new()
+	core.name = "RayCore"
+	var orb := SphereMesh.new()
+	orb.radius = height * 0.10
+	orb.height = height * 0.20
+	core.mesh = orb
+	core.material_override = _ray_material(Color(ink.lightened(0.32), 0.46), 6.4)
+	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(core)
+	var shaft := _ray_texture()
+	_add_shaft(root, "RayDown", ink, shaft, height * 2.5, height * 0.07, height * 0.52, 0.0, 0.0)
+	_add_shaft(root, "RayUp", ink, shaft, height * 1.7, height * 0.028, height * 0.16, PI, 0.0)
+	for i in 6:
+		var yaw := float(i) * TAU / 6.0
+		var tilt := 0.38 + float(i % 2) * 0.10
+		_add_shaft(
+			root, "Ray%d" % i, ink, shaft,
+			height * 2.15, height * 0.04, height * 0.34, tilt, yaw)
+	var lamp := OmniLight3D.new()
+	lamp.name = "CursedLamp"
+	lamp.light_color = ink
+	lamp.light_energy = 3.4
+	lamp.omni_range = height * 4.2
+	root.add_child(lamp)
 
 
 static func _mesh(host: CrawlerMob, root: Node3D, mesh: Mesh, colour: Color,
@@ -81,6 +115,63 @@ static func _mesh(host: CrawlerMob, root: Node3D, mesh: Mesh, colour: Color,
 	if host._visual == null:
 		host._visual = visual
 	return visual
+
+
+static func _add_shaft(
+		root: Node3D, shaft_name: String, ink: Color, texture: Texture2D,
+		length: float, tip: float, base: float, tilt: float, yaw: float
+	) -> void:
+	var pivot := Node3D.new()
+	pivot.name = shaft_name
+	pivot.rotation = Vector3(tilt, yaw, 0.0)
+	root.add_child(pivot)
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = maxf(tip, 0.01)
+	mesh.bottom_radius = maxf(base, tip)
+	mesh.height = maxf(length, 0.2)
+	mesh.radial_segments = 16
+	var visual := MeshInstance3D.new()
+	visual.name = "Shaft"
+	visual.mesh = mesh
+	visual.position.y = -mesh.height * 0.48
+	visual.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	visual.material_override = _ray_material(Color(ink, 0.30), 5.2, texture)
+	pivot.add_child(visual)
+
+
+static func _ray_material(
+		color: Color, energy: float, texture: Texture2D = null
+	) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.albedo_color = color
+	if texture != null:
+		material.albedo_texture = texture
+	material.emission_enabled = true
+	material.emission = Color(color.r, color.g, color.b)
+	material.emission_energy_multiplier = energy
+	material.disable_receive_shadows = true
+	return material
+
+
+static func _ray_texture() -> Texture2D:
+	if _ray_image != null:
+		return _ray_image
+	const WIDTH := 32
+	const HEIGHT := 128
+	var image := Image.create(WIDTH, HEIGHT, false, Image.FORMAT_RGBA8)
+	for y in HEIGHT:
+		var along := float(y) / float(HEIGHT - 1)
+		var rise := pow(along, 0.62)
+		var fade := smoothstep(1.0, 0.88, along)
+		var pixel := Color(1.0, 1.0, 1.0, rise * fade)
+		for x in WIDTH:
+			image.set_pixel(x, y, pixel)
+	_ray_image = ImageTexture.create_from_image(image)
+	return _ray_image
 
 
 static func load_paint(path: String) -> Texture2D:

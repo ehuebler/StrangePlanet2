@@ -1420,9 +1420,7 @@ func _closer_candidate(p: Dictionary, q: Dictionary) -> bool:
 func _infill_leftover_lots(arteries: Dictionary) -> void:
 	if _lots.is_empty() or _owner.is_empty():
 		return
-	var added := _infill_pass(arteries)
-	if added > 0:
-		print("patch_fabric: squeezed %d leftover lots" % added)
+	_infill_pass(arteries)
 
 
 func _infill_pass(arteries: Dictionary) -> int:

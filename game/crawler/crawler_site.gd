@@ -3,8 +3,8 @@ extends Landmark
 
 ## Named crawler place. The first city lights its tilde mark immediately;
 ## the spawn reveal turns the player to see it before tilde is needed.
-## Spawn and later sites wait until the player walks in. Monuments keep
-## their own [PatchMonument] type and join the same poll.
+## Tide Margin and later towns wait until Neon Fjord is entered. Monuments
+## keep their own [PatchMonument] type and join the same poll.
 
 var site_id := ""
 var city_key := ""
@@ -30,5 +30,6 @@ func unlock_waypoint(announce := true) -> void:
 	waypoint = true
 	if not is_in_group(CrawlerRules.CITY_WAYPOINT_GROUP):
 		add_to_group(CrawlerRules.CITY_WAYPOINT_GROUP)
+	CrawlerRules.apply_crawler_waypoint_tint(self)
 	if first and announce:
 		CrawlerSites.announce_unlock(self)

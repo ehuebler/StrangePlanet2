@@ -8,7 +8,7 @@
 script = ExtResource("1_definition")
 ability_id = "starfire"
 title = "Starfire"
-description = "Hold to toss blazing, frisbee-like energy disks from alternating hands. Each disk inherits your momentum, bursts on contact, and cuts a crater half the linear size of Meteor Punch's standard impact."
+description = "Hold to toss blazing, frisbee-like energy disks from alternating hands. Each disk inherits your momentum, bursts on contact, and cuts a crater half the linear size of Meteor Punch's standard impact. Standing in the burst hurts you unless you have explosion immunity."
 implementation = ExtResource("2_implementation")
 icon = ExtResource("3_icon")
 tint = Color(0.847059, 0.298039, 1.000000, 1.000000)
@@ -33,10 +33,11 @@ allowed_stances = PackedInt32Array(0, 1, 2, 3)
 stats = {
 "damage": 350.0,
 "impact": 650.0,
+"player_damage": 24.0,
 "speed": 95.0,
 "range": 70.0,
 "radius": 4.5,
-"cooldown": 2.0,
+"cooldown": 2.5,
 "projectile_radius": 0.36,
 "animation_duration": 0.32,
 "crater_radius": 3.0,

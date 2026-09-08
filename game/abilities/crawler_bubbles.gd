@@ -47,19 +47,16 @@ static func recipe_from(mod: CrawlerCard, host: CrawlerCard,
 	var host_scale := host_size_scale(host.id if host != null else "", host_stats)
 	var recipe := {
 		"ability_id": host.id if host != null else "bubble",
-		"damage": CrawlerRules.BUBBLE_DAMAGE
-			+ CrawlerRules.BUBBLE_DAMAGE_PER_RANK * float(damage_rank),
-		"size": (CrawlerRules.BUBBLE_SIZE
-			+ CrawlerRules.BUBBLE_SIZE_PER_RANK * float(size_rank)) * host_scale,
-		"linger": CrawlerRules.BUBBLE_LINGER
-			+ CrawlerRules.BUBBLE_LINGER_PER_RANK * float(linger_rank)
+		"damage": CrawlerRules.scaled_stat(CrawlerRules.BUBBLE_DAMAGE, damage_rank),
+		"size": CrawlerRules.scaled_stat(CrawlerRules.BUBBLE_SIZE, size_rank) * host_scale,
+		"linger": CrawlerRules.scaled_stat(CrawlerRules.BUBBLE_LINGER, linger_rank)
 			+ CrawlerLingers.bubble_bonus(host),
-		"homing": CrawlerRules.BUBBLE_HOMING_PER_RANK * float(homing_rank)
+		"homing": CrawlerRules.BUBBLE_HOMING_PER_RANK
+			* CrawlerRules.upgrade_steps(homing_rank)
 			+ CrawlerHoming.range_of(host_stats),
 		"steer": maxf(CrawlerBubble.STEER, CrawlerHoming.steer_of(host_stats)),
-		"pop": CrawlerRules.BUBBLE_POP_PER_RANK * float(pop_rank),
-		"speed": CrawlerRules.BUBBLE_SPEED
-			+ CrawlerRules.BUBBLE_SPEED_PER_RANK * float(speed_rank),
+		"pop": CrawlerRules.BUBBLE_POP_PER_RANK * CrawlerRules.upgrade_steps(pop_rank),
+		"speed": CrawlerRules.scaled_stat(CrawlerRules.BUBBLE_SPEED, speed_rank),
 		"spreader": spreader_on,
 		"bounce": CrawlerBounce.count(host_stats),
 		"status_id": "",

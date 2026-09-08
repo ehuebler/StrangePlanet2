@@ -60,7 +60,6 @@ func _ready() -> void:
 		"gameplay resets the home-screen sunset to full daylight")
 	_player.display_name = "Menu Harness"
 	await _check_ability_test_site()
-	await _check_grapple_at_test_site()
 
 	await _run()
 	await _finish()
@@ -115,67 +114,6 @@ func _check_ability_test_site() -> void:
 		"the practice pad clears flowers, grass, and giant trees")
 
 
-func _check_grapple_at_test_site() -> void:
-	var planet := _world.get_node_or_null("Planet") as Planet
-	var site := _world.get_node_or_null(
-		"Planet/AbilityTestingSite") as AbilityTestSite
-	var dummy := _world.get_node_or_null(
-		"Planet/AbilityTestingSite/TrainingDummy") as TrainingDummy
-	if not _expect(planet != null and site != null and dummy != null,
-			"the Grapple check finds the marked site's centre dummy"):
-		return
-	var restore_transform := _player.global_transform
-	var restore_pitch := _player._pitch
-	var near := dummy.global_position - site.global_basis.z * 2.0
-	var direction := planet.to_local(near).normalized()
-	var up := (planet.global_basis * direction).normalized()
-	var at := planet.to_global(
-		planet.shape.surface_point(direction, planet.finest_spacing())
-			+ direction * 0.3)
-	var toward := dummy.combat_position() - at
-	var flat := toward - up * toward.dot(up)
-	_player._apply_stance(OnlinePlayer.Stance.STAND)
-	_player.global_transform = Transform3D(
-		Basis.looking_at(flat.normalized(), up), at)
-	_player.velocity = Vector3.ZERO
-	_player._pitch = asin(clampf(
-		(dummy.combat_position() - _player.camera.global_position)
-			.normalized().dot(up), -1.0, 1.0))
-	_player.head.rotation.x = _player._pitch
-	_player.reset_network_state(_player.global_transform)
-	_player.reset_physics_interpolation()
-	_player.abilities.set_item(0, "grapple")
-	await _wait_frames(12)
-
-	var origin := _player.global_position
-	var launch_up := up
-	var dispatched := _player.activate_ability(0)
-	# This is the ordinary click that used to cancel a client before approval.
-	_player.release_ability(0)
-	var started := _player.grapple_active_or_pending()
-	var highest := 0.0
-	var completed := false
-	for _frame in 360:
-		await get_tree().physics_frame
-		highest = maxf(highest,
-			(_player.global_position - origin).dot(launch_up))
-		if started and not _player.grapple_active_or_pending():
-			completed = true
-			break
-	_expect(dispatched and started and completed and highest >= 18.0
-		and dummy.can_be_grappled(),
-		"Grapple quick-click carries the site dummy 20 m and completes its slam")
-	await _wait_frames(60)
-	_player._apply_stance(OnlinePlayer.Stance.STAND)
-	_player.global_transform = restore_transform
-	_player.velocity = Vector3.ZERO
-	_player._pitch = restore_pitch
-	_player.head.rotation.x = restore_pitch
-	_player.reset_network_state(restore_transform)
-	_player.reset_physics_interpolation()
-	await _wait_frames(4)
-
-
 func _run() -> void:
 	await _check_open_and_close_policy()
 
@@ -189,7 +127,7 @@ func _run() -> void:
 	await _check_apparel(menu)
 	await _check_items(menu)
 	await _check_hero_abilities(menu)
-	await _check_data_settings_and_admin(menu)
+	await _check_data_and_settings(menu)
 	await _check_graphics_toggle_rows(menu)
 	await _check_isolated_leave_hold()
 	await _check_isolated_respawn_hold()
@@ -226,6 +164,9 @@ func _check_open_and_close_policy() -> void:
 			"MenuBackground", true, false) as TextureRect
 		var outer_border := menu.find_child(
 			"MenuBackgroundBorder", true, false) as RedGlowPanel
+		_expect(outer_border != null and outer_border.crt_material() != null
+			and outer_border.crt_material().shader != null,
+			"menu frames wear the CRT rim")
 		var content := menu.find_child("ContentFrame", true, false) as Control
 		var selector := menu.find_child("BottomSelector", true, false) as Control
 		var hero_tab := menu.find_child("TabHero", true, false) as Control
@@ -379,25 +320,62 @@ func _check_hero(menu: GameMenu) -> void:
 	var hero_name := page.find_child("HeroName", true, false) as Label
 	_expect(hero_name != null and hero_name.text == "MENU HARNESS",
 		"Hero shows the current player name")
-	var preview := page.find_child("CharacterPreview", true, false)
+	var preview := page.find_child("CharacterPreview", true, false) as RedCharacterPreview
 	_expect(preview is RedCharacterPreview,
 		"Hero owns a CharacterPreview control")
+	if preview != null:
+		_expect(preview.hover_in_frame,
+			"Hero portrait is set to hover in its frame")
+		var first_bob := preview.bob_offset()
+		var started := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - started < 350:
+			await get_tree().process_frame
+		_expect(absf(preview.bob_offset() - first_bob) > 0.01,
+			"Hero portrait floats while the menu pauses the world")
 	var character_frame := page.find_child(
 		"CharacterFrame", true, false) as Control
 	var hat_slot := page.find_child("HatSlot", true, false) as RedItemSlot
 	var cape_slot := page.find_child("CapeSlot", true, false) as RedItemSlot
+	var juke_slot := page.find_child("JukeSlot", true, false) as RedItemSlot
 	var hotbar_frame := page.find_child("HotbarFrame", true, false) as Control
 	var ability_library := page.find_child(
 		"AbilityLibraryFrame", true, false) as Control
 	_expect(character_frame != null and hat_slot != null and cape_slot != null
+		and juke_slot != null
 		and hotbar_frame != null and ability_library != null
 		and hat_slot.badge == "HAT"
 		and cape_slot.badge == "CAPE"
+		and juke_slot.badge == "JUKE"
+		and juke_slot.item_id() == CrawlerProgress.STAT_JUKE
 		and hotbar_frame.get_global_rect().position.x
 			>= character_frame.get_global_rect().end.x - 8.0
 		and ability_library.get_global_rect().position.x
 			>= character_frame.get_global_rect().end.x - 8.0,
 		"Hero keeps the hat and cape tiles on the portrait and the ability column to the right")
+	var hat_chrome := (
+		hat_slot.find_child("CrtChrome", true, false) as Node2D
+		if hat_slot != null else null
+	)
+	var hat_rim := (
+		hat_slot.get_node_or_null("RedGlowPanel") as RedGlowPanel
+		if hat_slot != null else null
+	)
+	_expect(hat_rim != null and hat_chrome != null
+			and hat_chrome.get_parent() == hat_slot
+			and hat_rim.crt_material() != null
+			and hat_rim.crt_material().shader != null,
+		"inventory tiles overlay a CRT rim on the red border")
+	var hat_badge := hat_slot.find_child("ItemBadge", true, false) as Label
+	var hat_badge_crt := CrtType.host_of(hat_badge)
+	_expect(hat_badge != null and hat_badge.text == "HAT"
+			and hat_badge_crt != null and hat_badge_crt.glitch > 0.0
+			and hat_badge_crt.chromatic() < 0.5,
+		"hat badge wears slightly glitched type without chromatic aberration")
+	var hat_glyph := hat_slot.find_child("EmptyGlyph_hat", true, false)
+	var hat_glyph_crt := CrtType.host_of(hat_glyph)
+	_expect(hat_glyph != null and hat_glyph_crt != null
+			and hat_glyph_crt.chromatic() > 0.5,
+		"hat glyph keeps chromatic aberration")
 
 	var stat_rows := page.find_child("StatRows", true, false)
 	var wanted_stats: Array = CrawlerMeta.hero_stat_rows()
@@ -414,24 +392,15 @@ func _check_hero(menu: GameMenu) -> void:
 			"Hero stat %s has a value" % id_text)
 	var stats_frame := page.find_child("StatsFrame", true, false) as Control
 	var stats_toggle := page.find_child("StatsToggle", true, false) as Button
-	var stats_glyph := page.find_child("StatsGlyph", true, false) as Control
-	_expect(stats_frame != null and stats_toggle != null
-		and not stats_frame.visible,
-		"Hero stats begin hidden inside the character screen")
-	_expect(_centres_match(stats_toggle, stats_glyph),
-		"Hero Stats icon is centered in its circular key")
-	if stats_toggle != null:
-		stats_toggle.pressed.emit()
-		await _wait_frames(2)
-		_expect(stats_frame.visible
-			and character_frame.get_global_rect().encloses(
-				stats_frame.get_global_rect()),
-			"Hero Stats button opens the in-screen stats overlay")
-		await _capture("menu_hero_stats")
-		stats_toggle.pressed.emit()
-		await _wait_frames(1)
-		_expect(not stats_frame.visible,
-			"Hero Stats button closes the stats overlay")
+	var character_stage := page.find_child("CharacterStage", true, false) as Control
+	_expect(stats_frame != null and stats_toggle == null and stats_frame.visible
+		and character_stage != null
+		and stats_frame.get_global_rect().position.y
+			>= character_stage.get_global_rect().end.y - 8.0
+		and character_frame.get_global_rect().encloses(
+			stats_frame.get_global_rect()),
+		"Hero stats sit under the portrait")
+	await _capture("menu_hero_stats")
 
 	var hotbar_root := page.find_child("HotbarSlots", true, false)
 	var hotbar_slots: Array[RedItemSlot] = []
@@ -490,6 +459,7 @@ func _check_hero(menu: GameMenu) -> void:
 			if tab_button != null
 			else null
 		)
+		var tab_crt := CrtType.host_of(tab_button)
 		_expect(tab_button != null and glyph_lane != null and glyph != null
 			and style != null
 			and glyph_lane.get_global_rect().encloses(glyph.get_global_rect())
@@ -497,6 +467,9 @@ func _check_hero(menu: GameMenu) -> void:
 				glyph.get_global_rect().get_center()) <= 1.0
 			and style.content_margin_left >= glyph_lane.size.x + 4.0,
 			"%s centers its icon in an evenly spaced glyph lane" % tab_name)
+		_expect(tab_crt != null and tab_crt.glitch > 0.0
+				and tab_crt.chromatic() < 0.5,
+			"%s type is slightly glitched without chromatic aberration" % tab_name)
 	await _capture("menu_hero")
 
 
@@ -635,8 +608,8 @@ func _check_hero_abilities(menu: GameMenu) -> void:
 			if child is RedItemSlot:
 				library_slots.append(child as RedItemSlot)
 	var expected := PackedStringArray([
-		"laser_eyes", "kame", "meteor_punch", "hero_punch", "starfire", "grapple",
-		"nuke", "mini_nuke", "lasso", "wall", "nausicaa", "lightning",
+		"laser_eyes", "kame", "meteor_punch", "hero_punch", "starfire",
+		"nuke", "mini_nuke", "wall", "nausicaa", "lightning",
 		"light_bolt", "icicle", "teleport", "fus",
 		"roar", "toxic_blast", "charming_aura", "freeze_blast",
 		"static_field", "toxic_field", "freeze_field", "healing_field",
@@ -673,7 +646,7 @@ func _check_hero_abilities(menu: GameMenu) -> void:
 			"shift-clicking a library tile assigns the first empty hotbar slot")
 
 
-func _check_data_settings_and_admin(menu: GameMenu) -> void:
+func _check_data_and_settings(menu: GameMenu) -> void:
 	menu.show_tab(GameMenu.Tab.DATA)
 	await _wait_frames(3)
 	var data := _active_page(menu) as RedDataPage
@@ -718,17 +691,15 @@ func _check_data_settings_and_admin(menu: GameMenu) -> void:
 		and _panel_button(settings_panel, "LEAVE GAME") == null,
 		"in-game Settings omits the redundant Leave Game action")
 	await _capture("menu_settings_red")
-
-	menu.show_tab(GameMenu.Tab.ADMIN)
-	await _wait_frames(2)
-	var admin := _active_page(menu)
-	_expect(admin != null and admin is AdminPage and admin.name == "AdminPage",
-		"Admin routes to AdminPage with the lag tracker")
-	if admin != null:
-		_expect(_panel_button(admin, "EXPORT") != null
-			and _panel_button(admin, "OPEN FOLDER") != null
-			and _panel_button(admin, "LAST 30S") != null,
-			"Admin lag tracker exposes export, folder, and window controls")
+	_expect(menu.find_child("AdminButton", true, false) == null,
+		"the pause menu has no admin tab")
+	if settings_panel != null:
+		var doomed := Label.new()
+		doomed.text = "queued crt dress"
+		settings_panel.add_child(doomed)
+		doomed.queue_free()
+		CrtType._dress_later(doomed)
+		await _wait_frames(4)
 
 
 ## The two atmosphere toggles on the shared Display page.
@@ -755,17 +726,37 @@ func _check_graphics_toggle_rows(menu: GameMenu) -> void:
 	# whatever section a previous row left open.
 	panel.show_section(0)
 	await _wait_frames(3)
+	var display_tab := panel.find_child(
+		"SettingsTab_Display", true, false) as Button
+	var tab_rim := display_tab.get_node_or_null("RedGlowPanel") as RedGlowPanel \
+		if display_tab != null else null
+	if tab_rim == null and display_tab != null:
+		var tab_host := CrtType.host_of(display_tab)
+		tab_rim = tab_host.get_node_or_null("RedGlowPanel") as RedGlowPanel \
+			if tab_host != null else null
+	var tab_box := display_tab.get_theme_stylebox(&"normal") as StyleBoxFlat \
+		if display_tab != null else null
+	_expect(display_tab != null and tab_rim != null
+			and tab_rim.border_color.g > tab_rim.border_color.r
+			and tab_rim.border_width >= 2.0
+			and tab_box != null
+			and tab_box.get_border_width(SIDE_LEFT) == 0,
+		"selected settings tab wears its green rim on the outer edge")
 
 	var rays_row := _display_toggle(panel, "God rays")
 	var air_row := _display_toggle(panel, "Atmospheric scattering")
+	var glitch_row := _display_toggle(panel, "UI glitch")
 	_expect(rays_row != null, "Display page offers a named God rays row")
 	_expect(air_row != null, "Display page offers a named Atmospheric scattering row")
-	if rays_row == null or air_row == null:
+	_expect(glitch_row != null, "Display page offers a named UI glitch row")
+	if rays_row == null or air_row == null or glitch_row == null:
 		return
 	_expect(rays_row.button_pressed and rays_row.text == "ON",
 		"the God rays row opens showing the saved ON state")
 	_expect(air_row.button_pressed and air_row.text == "ON",
 		"the Atmospheric scattering row opens showing the saved ON state")
+	_expect(glitch_row.button_pressed and glitch_row.text == "ON",
+		"the UI glitch row opens showing the saved ON state")
 
 	var effect := _god_rays_effect()
 	_expect(effect != null, "the loaded world carries a god rays compositor effect")
@@ -787,6 +778,14 @@ func _check_graphics_toggle_rows(menu: GameMenu) -> void:
 	# shape of mistake where both end up pointing at the same one.
 	_expect(SettingsManager.get_setting(&"graphics", &"god_rays", true) == false,
 		"the scattering row leaves the God rays setting where it was")
+	glitch_row.button_pressed = false
+	await _wait_frames(2)
+	_expect(SettingsManager.get_setting(&"graphics", &"ui_glitch", true) == false,
+		"pressing the UI glitch row writes the setting off")
+	_expect(CrtType.ui_fx_enabled() == false,
+		"switching UI glitch off zeros CRT tear and fringe")
+	_expect(SettingsManager.get_setting(&"graphics", &"god_rays", true) == false,
+		"the UI glitch row leaves the God rays setting where it was")
 
 	# Reset rebuilds the whole panel, so the rows are looked up again rather than
 	# reused: the old Buttons have been freed by the time this returns.
@@ -801,7 +800,8 @@ func _check_graphics_toggle_rows(menu: GameMenu) -> void:
 		await _wait_frames(3)
 	_expect(SettingsManager.get_setting(&"graphics", &"god_rays", false) == true
 		and SettingsManager.get_setting(
-			&"graphics", &"atmospheric_scattering", false) == true,
+			&"graphics", &"atmospheric_scattering", false) == true
+		and SettingsManager.get_setting(&"graphics", &"ui_glitch", false) == true,
 		"resetting defaults returns both effects to on")
 	_expect(effect == null or effect.enabled,
 		"resetting defaults re-enables the compositor effect")

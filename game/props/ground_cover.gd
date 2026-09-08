@@ -36,6 +36,12 @@ extends SurfaceAnchor
 ## [method PlantSpecies.keep_at]. The result is that a tile on the horizon costs
 ## a tenth of what it costs underfoot, on both sides of the bus.
 ##
+## Streaming is not a full circle past the player's feet. A short keep-circle
+## stays grown in every direction so a snap-turn still has plants around the
+## body. Outside that, tiles are only grown and drawn in a look cone, with a
+## little extra length reserved for preload so the next stretch is already
+## sowing as the viewer walks into it.
+##
 ## What is left for the CPU each frame is four positions published as shader
 ## globals so the plants know who is walking through them. Tile distances are
 ## refreshed only after meaningful viewer movement; sub-metre camera drift
@@ -161,6 +167,12 @@ extends SurfaceAnchor
 ## because the answer only changes when the viewer has crossed a good part of a
 ## tile, and the survey is the one part of this that scales with the area.
 @export var survey_interval := 0.35
+## Seconds of travel flora is sown ahead of the viewer, and the metre cap on
+## that preview. Used by trees and other skyline species so a fast run still
+## sees trunks on the corridor. Grass and shrubs stay on a near disk until the
+## viewer slows down.
+@export_range(0.0, 2.0, 0.05) var lead_time := 1.0
+@export_range(0.0, 600.0, 10.0) var lead_distance := 280.0
 
 @export_group("Editor")
 ## Grows the field in the editor as well as in the game. Off by default: the
@@ -225,26 +237,47 @@ const DRESS_SLICES := 4
 ##
 ## A tile is never free. It is a dictionary entry, a survey candidate, a worker
 ## job, up to one MultiMesh per species, a node in the tree, and a distance
-## evaluation every time the viewer moves far enough to matter. Standing still
-## none of that shows: the thirteen biome fields cost half a millisecond a frame
-## between them. Flying, the same fields cost twenty-one milliseconds of a
-## thirty-millisecond frame, and they were holding five and a half thousand
-## tiles to do it.
-##
-## Reach is what runs the count up, because tiles go with its square. The view
-## range setting doubles the draw distance of the tall species, which asks a
-## field authored with sensible squares for four times as many of them — and the
-## fields this happens to are the ones growing trees and monoliths tens of metres
-## apart, where a tile holds a handful of plants and the bookkeeping costs more
-## than the planting. Growing the square instead holds the count flat.
-##
-## What it spends is granularity: thinning, culling, shadow and collision are all
-## decided per tile. That is why this is a ceiling rather than a target. A field
-## whose authored squares already fit inside it keeps them, so the dense
-## short-reach cover — grass, flowers, reef — is untouched, and only the sparse
-## long-reach fields are coarsened, which is where a coarser decision cannot be
-## seen.
-const TILE_BUDGET := 180
+## evaluation every time the viewer moves far enough to matter. 180 kept
+## long-reach trees on ~34 m squares — a 7–8 tile radius that resurveyed every
+## few metres at speed. 48 puts a 260 m tree field on ~66 m squares, so the
+## live ring is two or three tiles and generation is not re-armed by a step.
+## Authored grass and reef squares stay as written when they already fit.
+const TILE_BUDGET := 48
+## Near plants stay in every direction so a quick turn is not bare ground.
+## Past this, only the look cone is grown and drawn.
+const KEEP_CIRCLE_MIN := 24.0
+const KEEP_CIRCLE_MAX := 52.0
+const KEEP_CIRCLE_SHARE := 0.28
+## Half-angle of the drawn cone, and the slightly wider one used to hold tiles
+## already grown so a small glance does not rebuild the ring.
+const VIEW_CONE_COS := 0.6157
+const VIEW_CONE_KEEP_COS := 0.4384
+## Extra metres past draw reach sown inside the cone, not drawn until the eye
+## gets closer. Skyline species use this; grass does not while the viewer is
+## rushing.
+const STREAM_PAD := 36.0
+## How far fill species (grass, shrubs, coral) may stream while the viewer is
+## moving fast. Trees keep the full look cone and travel corridor; this is only
+## the near disk the small stuff is allowed to spend budget on.
+const FILL_STREAM_METRES := 56.0
+## Lead length that counts as a rush. Below this, fill is allowed to catch up.
+const RUSH_LEAD := 36.0
+## Grass, flowers, shrubs and other short cover. Off while that layer is baked
+## onto finest terrain chunks; trees and other skyline species still stream.
+static var stream_fill := false
+## Shared main-thread tokens across every GroundCover on the planet. Thirteen
+## fields each applying one MultiMesh used to stack into a 7 ms hitch; one
+## budget is what a frame can actually afford.
+const FRAME_SURVEYS := 1
+const FRAME_APPLIES := 2
+const FRAME_SOWS := 4
+const FRAME_DROPS := 8
+const IDLE_SURVEYS := 2
+const IDLE_APPLIES := 2
+const IDLE_SOWS := 6
+const IDLE_DROPS := 12
+const LOOK_SURVEY_DOT := 0.93
+const LOOK_DRESS_DOT := 0.97
 ## Densities a tile may be sown at, as shares of the species' full one.
 ##
 ## Most of a field is far away — a ring's area is nearly all outer ring — and at
@@ -281,6 +314,10 @@ class Tile extends RefCounted:
 	## Middle of the square in world metres, and how far the viewer is from it.
 	var at := Vector3.ZERO
 	var away := INF
+	## Perpendicular metres to the viewer's travel path. Dispatch and re-sow
+	## read this so a tile on the track is grown at the density it will need
+	## when arrived at, not the coarse band of being two hundred metres out.
+	var path_away := INF
 	## One MultiMesh per species, in the same order as [member species]. Empty
 	## until the tile has been applied; a species that grew nothing on this tile
 	## gets a null rather than an empty stand.
@@ -348,6 +385,12 @@ class Tile extends RefCounted:
 ## frame would only be overwriting the first with the same answer.
 static var _pushed_frame := -1
 static var _pushed := {}
+static var _looked_frame := -1
+static var _shared_look := Vector3.ZERO
+static var _budget_frame := -1
+static var _survey_left := 0
+static var _apply_left := 0
+static var _sow_left := 0
 
 var _shape: PlanetShape
 var _radius := 1.0
@@ -425,9 +468,20 @@ var _dispatch_needed := true
 ## this is queued, grown or gone and never needs looking at again until the next
 ## survey rebuilds the order.
 var _dispatch_from := 0
+var _has_skyline := false
+var _has_fill := false
 var _since_survey := INF
-var _lag_seen := {}
 var _surveyed_at := Vector3.INF
+## Predicted point the last survey was aimed at. A heading change can move the
+## corridor a tile's width without the eye itself crossing that far.
+var _surveyed_ahead := Vector3.INF
+## World-space travel corridor, taken from the planet's smoothed drift so every
+## field agrees with the terrain about where the viewer is going.
+var _lead_direction := Vector3.ZERO
+var _lead_length := 0.0
+var _look_dir := Vector3.ZERO
+var _surveyed_look := Vector3.ZERO
+var _dressed_look := Vector3.ZERO
 ## Last eye position whose thinning, LOD, shadow and collision rings were
 ## applied. New stands invalidate it so they are dressed on their first frame.
 var _dressed_at := Vector3.INF
@@ -519,9 +573,10 @@ func _ready() -> void:
 		_tallest = maxf(_tallest, plant.height * (1.0 + plant.height_variation))
 		_shortest = minf(_shortest, plant.height)
 		growing += 1
+	_classify_species()
 	_publish_wind()
 	_prepare_aerial_glow()
-	set_process(growing > 0)
+	_apply_stream_mode(growing > 0)
 
 
 ## Tile side for the range currently in force.
@@ -584,9 +639,6 @@ func _follow_view_range() -> void:
 ## a second or two of repopulating, which is the same wait as walking into new
 ## country.
 func _replant() -> void:
-	var started := Time.get_ticks_msec()
-	if not Engine.is_editor_hint():
-		LagTracker.note("flora", "replant start")
 	for task in _pending:
 		WorkerThreadPool.wait_for_task_completion(task)
 	_pending.clear()
@@ -613,6 +665,8 @@ func _replant() -> void:
 	_tallest = 0.0
 	_height_margin = 0.0
 	_dressed_at = Vector3.INF
+	_surveyed_look = Vector3.ZERO
+	_dressed_look = Vector3.ZERO
 	_resize_tiles()
 	if global_cover:
 		_grid = SphericalCoverGrid.new(_radius, _tile)
@@ -626,10 +680,16 @@ func _replant() -> void:
 		_reach = maxf(_reach, plant.draw_reach())
 		_tallest = maxf(_tallest, plant.height * (1.0 + plant.height_variation))
 		_shortest = minf(_shortest, plant.height)
+	_classify_species()
+	var growing := false
+	for plant in species:
+		if plant != null:
+			growing = true
+			break
+	_apply_stream_mode(growing)
 	_since_survey = INF
 	_surveyed_at = Vector3.INF
-	if not Engine.is_editor_hint():
-		LagTracker.note("flora", "replant done in %d ms" % (Time.get_ticks_msec() - started))
+	_surveyed_ahead = Vector3.INF
 
 
 func _exit_tree() -> void:
@@ -759,18 +819,7 @@ static func _charge(phase: StringName, from: int) -> int:
 
 
 func _report_lag() -> void:
-	if Engine.is_editor_hint():
-		return
-	var apply_ms := float(int(phase_cost.get(&"apply", 0)) - int(_lag_seen.get(&"apply", 0))) / 1000.0
-	var dress_ms := float(int(phase_cost.get(&"dress", 0)) - int(_lag_seen.get(&"dress", 0))) / 1000.0
-	var survey_ms := float(int(phase_cost.get(&"survey", 0)) - int(_lag_seen.get(&"survey", 0))) / 1000.0
-	_lag_seen = phase_cost.duplicate()
-	var total := apply_ms + dress_ms + survey_ms
-	LagTracker.set_gauge("flora", total)
-	if total >= 5.0:
-		LagTracker.note_throttled("flora", "flora_pass",
-			"survey %.1f  apply %.1f  dress %.1f ms" % [
-				survey_ms, apply_ms, dress_ms], 0.4)
+	pass
 
 
 func _process(delta: float) -> void:
@@ -782,25 +831,61 @@ func _process(delta: float) -> void:
 	var host := planet_host()
 	if host == null:
 		return
+	if not _session_allows_stream():
+		return
 	var eye := host.to_global(host.viewer_position())
 	_publish_walkers(delta)
 
 	_since_survey += delta
 	_since_lights += delta
+	_follow_lead(host)
+	_follow_look(eye)
+	# Sixteen skyline fields used to survey, dress and report every frame. At
+	# speed only a quarter of them do the grid walk; the rest still drain the
+	# worker pool so trees keep arriving on the track.
+	var rush := _rushing()
+	var heavy := true
+	if rush and _surveyed_at.is_finite():
+		heavy = int(Engine.get_process_frames() % 4) == int(get_instance_id() % 4)
+	if not heavy:
+		if _dispatch_needed or not _pending.is_empty() or not _finished.is_empty():
+			_dispatch(eye)
+			_apply()
+		if not _glow_lights.is_empty():
+			_fade_glow_lights(delta)
+		return
 	# Both throttled and movement-driven. The previous OR surveyed every field on
 	# its timer while the viewer stood still, even though the answer cannot
 	# change; four independent cover fields then produced a steady cadence of
 	# main-thread grid walks. A third of a tile is still early enough to grow the
-	# next ring before a walking viewer reaches it.
-	var moved_to_new_ground := _surveyed_at.distance_squared_to(eye) \
-		> _tile * _tile * 0.1
+	# next ring before a walking viewer reaches it. A heading or look change
+	# moves the corridor the same way a step does, so that is a survey too.
+	var step := _tile * _tile * 0.1
+	var ahead := eye + _lead_direction * _lead_length
+	var moved_to_new_ground := _surveyed_at.distance_squared_to(eye) > step \
+		or _surveyed_ahead.distance_squared_to(ahead) > step
+	var turned := _look_dir.length_squared() > 0.0001 \
+		and _look_dir.dot(_surveyed_look) < LOOK_SURVEY_DOT
+	var interval := survey_interval
+	if rush:
+		# Movement is already true every frame at speed. Tightening the clock
+		# just makes sixteen fields fight for one survey token.
+		interval = maxf(survey_interval, 0.45)
+	elif _lead_length > _tile or turned:
+		interval = minf(survey_interval, 0.2)
 	var clock := Time.get_ticks_usec()
-	if _since_survey > survey_interval and moved_to_new_ground:
+	# The first pass cannot wait on the interval: spawn is standing still, and
+	# the keep-circle has to exist before the first look-around.
+	var due := not _surveyed_at.is_finite() \
+		or (_since_survey > interval and (moved_to_new_ground or turned))
+	if due and _take_survey():
 		_since_survey = 0.0
 		_surveyed_at = eye
+		_surveyed_ahead = ahead
+		_surveyed_look = _look_dir
 		_survey(eye)
 	clock = _charge(&"survey", clock)
-	_dispatch()
+	_dispatch(eye)
 	clock = _charge(&"dispatch", clock)
 	_apply()
 	clock = _charge(&"apply", clock)
@@ -1034,7 +1119,11 @@ func _blur_aerial_density(source: PackedFloat32Array, size: int,
 
 ## Which tiles should exist, and the retirement of the ones that should not.
 func _survey(eye: Vector3) -> void:
-	var span := int(ceil(_reach / _tile)) + 1
+	var host := planet_host()
+	if host != null:
+		_follow_lead(host)
+		_follow_look(eye)
+	var span := int(ceil(_wanted_reach() / _tile)) + 1
 	_wanted.clear()
 	_dispatch_needed = true
 	if global_cover:
@@ -1045,14 +1134,23 @@ func _survey(eye: Vector3) -> void:
 	# hundred comparisons once or twice a second; the scan it replaces was the
 	# same few hundred entries walked again in every field in every frame for as
 	# long as anything was still streaming, which while flying is always.
-	_wanted.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
-		return (_tiles[a] as Tile).away < (_tiles[b] as Tile).away)
+	# Path distance so the corridor being run into is grown before the sides.
+	# A named compare avoids a lambda allocation per survey; the planet already
+	# measured `sort_custom` script calls as the expensive part of a small sort.
+	if _wanted.size() > 1:
+		_wanted.sort_custom(_wanted_nearer)
 	_dispatch_from = 0
 	# Hysteresis, so a viewer standing on a tile boundary does not rebuild the
-	# same ring of tiles every survey.
+	# same ring of tiles every survey. Retirement stays around the true eye:
+	# leading a drop would take plants out from under a viewer that turned.
+	# Cap the frees: a ring falling out of range used to queue_free every
+	# leftover stand in one survey, which is the despawn hitch at speed.
+	var drops := FRAME_DROPS if _rushing() else IDLE_DROPS
 	for cell: Vector3i in _tiles.keys():
+		if drops <= 0:
+			break
 		var tile := _tiles[cell] as Tile
-		if tile.queued or eye.distance_to(tile.at) < _reach + _tile * 2.0:
+		if tile.queued or _cell_held(tile.at, eye):
 			continue
 		for stand in tile.stands:
 			if is_instance_valid(stand):
@@ -1062,32 +1160,282 @@ func _survey(eye: Vector3) -> void:
 				body.queue_free()
 		_tiles.erase(cell)
 		_tile_list_stale = true
+		drops -= 1
+
+
+func _survey_anchors(eye: Vector3) -> Array[Vector3]:
+	var anchors: Array[Vector3] = [eye]
+	if _fill_only() and _rushing():
+		return anchors
+	if _lead_length <= _tile * 0.5:
+		return anchors
+	anchors.append(eye + _lead_direction * _lead_length)
+	if _lead_length > _reach and not _rushing():
+		anchors.append(eye + _lead_direction * (_lead_length * 0.5))
+	return anchors
+
+
+## Copies the planet's smoothed travel into this field's world-space corridor.
+## Length is this field's own cap: terrain may look a kilometre ahead, and that
+## is too many tiles for plants.
+func _follow_lead(host: Planet) -> void:
+	var drift := host.viewer_drift()
+	var speed := drift.length()
+	if lead_time <= 0.0 or speed < 8.0:
+		_lead_direction = Vector3.ZERO
+		_lead_length = 0.0
+		return
+	_lead_direction = (host.global_transform.basis * (drift / speed)).normalized()
+	_lead_length = minf(speed * lead_time, lead_distance)
+
+
+func _follow_look(_eye: Vector3) -> void:
+	var frame := Engine.get_process_frames()
+	if frame == _looked_frame:
+		_look_dir = _shared_look
+		return
+	_looked_frame = frame
+	var look := Vector3.ZERO
+	if is_inside_tree():
+		var camera := get_viewport().get_camera_3d()
+		if camera != null:
+			look = -camera.global_transform.basis.z
+	if look.length_squared() > 0.0001:
+		_shared_look = look.normalized()
+	_look_dir = _shared_look
+
+
+func keep_circle_metres() -> float:
+	return clampf(_reach * KEEP_CIRCLE_SHARE, KEEP_CIRCLE_MIN, KEEP_CIRCLE_MAX)
+
+
+func _stream_reach() -> float:
+	return _reach + maxf(STREAM_PAD, _tile * 1.5)
+
+
+func _fill_stream_reach() -> float:
+	return maxf(keep_circle_metres(), FILL_STREAM_METRES)
+
+
+func _wanted_reach() -> float:
+	if _fill_only() and _rushing():
+		return _fill_stream_reach()
+	return _stream_reach()
+
+
+func _rushing() -> bool:
+	return _lead_length >= RUSH_LEAD
+
+
+func _fill_only() -> bool:
+	return _has_fill and not _has_skyline
+
+
+func _apply_stream_mode(growing: bool) -> void:
+	set_process(growing and (stream_fill or _has_skyline))
+
+
+func _classify_species() -> void:
+	_has_skyline = false
+	_has_fill = false
+	for plant in species:
+		if plant == null:
+			continue
+		if plant.is_skyline():
+			_has_skyline = true
+		else:
+			_has_fill = true
+	if _has_skyline and not _has_fill:
+		process_priority = -20
+	elif _has_fill and not _has_skyline:
+		process_priority = 20
+	else:
+		process_priority = 0
+
+
+func _session_allows_stream() -> bool:
+	if Engine.is_editor_hint():
+		return editor_preview
+	return NetworkManager.state == NetworkManager.SessionState.IN_GAME
+
+
+static func _refresh_budgets() -> void:
+	var frame := Engine.get_process_frames()
+	if frame == _budget_frame:
+		return
+	_budget_frame = frame
+	_survey_left = IDLE_SURVEYS
+	_apply_left = IDLE_APPLIES
+	_sow_left = IDLE_SOWS
+
+
+func _take_survey() -> bool:
+	_refresh_budgets()
+	if _rushing():
+		_survey_left = mini(_survey_left, FRAME_SURVEYS)
+	if _survey_left <= 0:
+		return false
+	_survey_left -= 1
+	return true
+
+
+func _take_apply() -> bool:
+	_refresh_budgets()
+	if _rushing():
+		_apply_left = mini(_apply_left, FRAME_APPLIES)
+	if _apply_left <= 0:
+		return false
+	_apply_left -= 1
+	return true
+
+
+func _take_sow() -> bool:
+	_refresh_budgets()
+	if _rushing():
+		_sow_left = mini(_sow_left, FRAME_SOWS)
+	if _sow_left <= 0:
+		return false
+	_sow_left -= 1
+	return true
+
+
+## True when a world point sits inside the look cone and inside `far`.
+## The keep-circle around the viewer is applied by the tile filters, not here.
+static func in_view_volume(at: Vector3, eye: Vector3, look: Vector3,
+		cone_cos: float, far: float) -> bool:
+	var delta := at - eye
+	var away2 := delta.length_squared()
+	if away2 > far * far:
+		return false
+	if look.length_squared() < 0.0001:
+		return false
+	if away2 < 0.0001:
+		return true
+	return delta.normalized().dot(look.normalized()) >= cone_cos
+
+
+func _cell_wanted(at: Vector3, eye: Vector3) -> bool:
+	var keep := keep_circle_metres()
+	var away := eye.distance_to(at)
+	if _fill_only() and _rushing():
+		return away <= _fill_stream_reach() + _tile
+	if away <= keep + _tile:
+		return true
+	if in_view_volume(at, eye, _look_dir, VIEW_CONE_COS, _stream_reach() + _tile):
+		return true
+	if _lead_length > _tile * 0.5 and _path_away(at, eye) <= keep:
+		var along := (at - eye).dot(_lead_direction)
+		return along > 0.0 and along <= _lead_length + _tile
+	return false
+
+
+func _cell_shown(at: Vector3, eye: Vector3) -> bool:
+	var keep := keep_circle_metres()
+	if eye.distance_to(at) <= keep + _tile * 0.35:
+		return true
+	return in_view_volume(at, eye, _look_dir, VIEW_CONE_COS, _reach + _tile * 0.5)
+
+
+func _cell_held(at: Vector3, eye: Vector3) -> bool:
+	var keep := keep_circle_metres()
+	var away := eye.distance_to(at)
+	if _fill_only() and _rushing():
+		return away <= _fill_stream_reach() + _tile * 2.2
+	var along := (at - eye).dot(_lead_direction)
+	if _rushing() and along < -_tile:
+		return false
+	if away <= keep + _tile * 2.2:
+		return true
+	if in_view_volume(at, eye, _look_dir, VIEW_CONE_KEEP_COS,
+			_stream_reach() + _tile * 2.0):
+		return true
+	if _lead_length > _tile * 0.5 and along > 0.0 \
+			and _path_away(at, eye) <= keep + _tile:
+		return true
+	return false
+
+
+func _path_away(at: Vector3, eye: Vector3) -> float:
+	if _lead_length <= 0.0:
+		return eye.distance_to(at)
+	var to_tile := at - eye
+	var along := clampf(to_tile.dot(_lead_direction), 0.0, _lead_length)
+	return (to_tile - _lead_direction * along).length()
+
+
+func _ahead_pending() -> int:
+	if _has_skyline and _lead_length >= maxf(_tile, 1.0):
+		return mini(pending_limit + 2, 4)
+	return pending_limit
+
+
+func _wanted_nearer(a: Vector3i, b: Vector3i) -> bool:
+	var left := _tiles.get(a) as Tile
+	var right := _tiles.get(b) as Tile
+	if left == null:
+		return false
+	if right == null:
+		return true
+	return left.path_away < right.path_away
+
+
+func _ensure_tile_list() -> void:
+	if not _tile_list_stale:
+		return
+	_tile_list.assign(_tiles.values())
+	_tile_list_stale = false
 
 
 func _survey_local(eye: Vector3, span: int) -> void:
-	var here := _cell_of(eye)
 	var edge := spread / _tile
-	for x in range(here.y - span, here.y + span + 1):
-		for y in range(here.z - span, here.z + span + 1):
-			var middle := Vector2(float(x) + 0.5, float(y) + 0.5)
-			if middle.length() > edge:
-				continue
-			_want_cell(Vector3i(LOCAL_FACE, x, y), eye)
+	var seen := {}
+	var anchors := _survey_anchors(eye)
+	var keep_span := _keep_span()
+	for index in anchors.size():
+		var disk_only := index > 0
+		var walk := keep_span if disk_only else span
+		var here := _cell_of(anchors[index])
+		var look_flat := _look_on_tangent(_east, _north)
+		for x in range(here.y - walk, here.y + walk + 1):
+			for y in range(here.z - walk, here.z + walk + 1):
+				var cell := Vector3i(LOCAL_FACE, x, y)
+				if seen.has(cell):
+					continue
+				var middle := Vector2(float(x) + 0.5, float(y) + 0.5)
+				if middle.length() > edge:
+					continue
+				var offset := Vector2(float(x - here.y), float(y - here.z)) * _tile
+				if not _offset_wanted(offset, look_flat, disk_only):
+					continue
+				seen[cell] = true
+				_want_cell(cell, eye)
 
 
 func _survey_global(eye: Vector3, span: int) -> void:
+	var seen := {}
+	var anchors := _survey_anchors(eye)
+	var keep_span := _keep_span()
+	for index in anchors.size():
+		_survey_global_around(anchors[index],
+			keep_span if index > 0 else span, seen, eye, index > 0)
+
+
+func _survey_global_around(anchor: Vector3, span: int, seen: Dictionary,
+		eye: Vector3, disk_only: bool) -> void:
 	var host := planet_host()
-	var up := host.to_local(eye).normalized()
+	if host == null or _grid == null:
+		return
+	var up := host.to_local(anchor).normalized()
 	var east := up.cross(Vector3.UP if absf(up.y) < 0.9 else Vector3.RIGHT).normalized()
 	var north := up.cross(east)
-	var seen := {}
+	var look_flat := _look_on_tangent(east, north)
 	# Sampling the viewer's tangent square and canonicalising each direction to a
 	# cube-face key naturally crosses face seams. Oversampling by one cell avoids
 	# a missed corner where cube projection compresses the grid.
 	for x in range(-span - 1, span + 2):
 		for y in range(-span - 1, span + 2):
 			var offset := Vector2(float(x), float(y)) * _tile
-			if offset.length() > _reach + _tile * 1.5:
+			if not _offset_wanted(offset, look_flat, disk_only):
 				continue
 			var direction_at := (up
 				+ (east * offset.x + north * offset.y) / _radius).normalized()
@@ -1096,6 +1444,45 @@ func _survey_global(eye: Vector3, span: int) -> void:
 				continue
 			seen[cell] = true
 			_want_cell(cell, eye)
+
+
+func _keep_span() -> int:
+	return int(ceil(keep_circle_metres() / _tile)) + 2
+
+
+## Look direction in the same east/north frame the survey walks, so a cell
+## behind the viewer can be skipped before it is projected or height-sampled.
+func _look_on_tangent(east: Vector3, north: Vector3) -> Vector2:
+	var look := _look_dir
+	var host := planet_host()
+	if host != null:
+		look = host.global_transform.basis.inverse() * _look_dir
+	return Vector2(look.dot(east), look.dot(north))
+
+
+func _offset_wanted(offset: Vector2, look_flat: Vector2, disk_only: bool) -> bool:
+	var away := offset.length()
+	var keep := keep_circle_metres() + _tile
+	if _fill_only() and _rushing():
+		return away <= _fill_stream_reach() + _tile
+	if disk_only:
+		return away <= keep
+	var far := _stream_reach() + _tile * 1.5
+	if away > far:
+		return false
+	if away <= keep:
+		return true
+	# No camera yet: only the keep-circle, matching `_cell_wanted`. A zero look
+	# must not be read as "looking down" or the first survey walks a full ring.
+	if _look_dir.length_squared() < 0.0001:
+		return false
+	# Looking down (or up) onto the disk: the 3D cone covers the ground around
+	# the viewer, so the whole radius has to stay in play.
+	if look_flat.length_squared() < 0.08:
+		return true
+	if away < 0.0001:
+		return true
+	return offset.normalized().dot(look_flat.normalized()) >= VIEW_CONE_KEEP_COS
 
 
 func _want_cell(cell: Vector3i, eye: Vector3) -> void:
@@ -1109,7 +1496,7 @@ func _want_cell(cell: Vector3i, eye: Vector3) -> void:
 			_barren[cell] = true
 			return
 		var at := _ground_point(cell)
-		if eye.distance_to(at) > _reach + _tile * 1.8:
+		if not _cell_wanted(at, eye):
 			return
 		tile = Tile.new()
 		tile.cell = cell
@@ -1118,10 +1505,15 @@ func _want_cell(cell: Vector3i, eye: Vector3) -> void:
 		_next_slice = (_next_slice + 1) % DRESS_SLICES
 		_tiles[cell] = tile
 		_tile_list_stale = true
+	elif not _cell_wanted(tile.at, eye):
+		return
 	tile.away = eye.distance_to(tile.at)
+	tile.path_away = _path_away(tile.at, eye)
 	# Coming closer earns a tile plants its distance had not. Re-sowing is not a
 	# rebuild: the finer band repeats the prefix it already grew and appends to
 	# it, so this adds plants between the standing ones rather than moving them.
+	# Path distance so a tile on the track is thickened before the viewer
+	# arrives, instead of waiting for the true gap to fall into the next band.
 	if tile.grown and not tile.queued and _detail_short(tile):
 		tile.grown = false
 		_dispatch_needed = true
@@ -1145,9 +1537,16 @@ func _detail_needed(plant: PlantSpecies, away: float) -> float:
 func _detail_plan(away: float) -> PackedFloat32Array:
 	var plan := PackedFloat32Array()
 	plan.resize(species.size())
+	var fill_cap := _fill_stream_reach() if _rushing() else INF
 	for index in species.size():
 		var plant := species[index] as PlantSpecies
-		plan[index] = 0.0 if plant == null else _detail_needed(plant, away)
+		if plant == null:
+			plan[index] = 0.0
+			continue
+		if not plant.is_skyline() and (not stream_fill or away > fill_cap):
+			plan[index] = 0.0
+			continue
+		plan[index] = _detail_needed(plant, away)
 	return plan
 
 
@@ -1159,7 +1558,7 @@ func _detail_short(tile: Tile) -> bool:
 		if plant == null:
 			continue
 		var have := tile.detail[index] if index < tile.detail.size() else 1.0
-		if _detail_needed(plant, tile.away) > have + 0.0001:
+		if _detail_needed(plant, tile.path_away) > have + 0.0001:
 			return true
 	return false
 
@@ -1172,22 +1571,21 @@ func _cell_may_grow(cell: Vector3i) -> bool:
 		return false
 	var low := _height_floor - _height_margin
 	var high := _height_ceiling + _height_margin
-	for sample: Vector2 in [
-			Vector2(0.5, 0.5),
-			Vector2(0.0, 0.0), Vector2(1.0, 0.0),
-			Vector2(0.0, 1.0), Vector2(1.0, 1.0),
-	]:
-		var direction_at := _direction_in_cell(cell, sample.x, sample.y)
-		var height := _shape.elevation(direction_at, _spacing)
+	var here := _shape.elevation(_direction_in_cell(cell, 0.5, 0.5), _spacing)
+	if here >= low and here <= high:
+		return true
+	for sample: Vector2 in [Vector2(0.0, 0.0), Vector2(1.0, 1.0)]:
+		var height := _shape.elevation(
+			_direction_in_cell(cell, sample.x, sample.y), _spacing)
 		if height >= low and height <= high:
 			return true
 	return false
 
 
-func _dispatch() -> void:
+func _dispatch(eye: Vector3) -> void:
 	if not _dispatch_needed:
 		return
-	var slots := pending_limit - _pending.size()
+	var slots := _ahead_pending() - _pending.size()
 	while slots > 0:
 		# The tile underfoot matters more than one at the edge of sight, and the
 		# wanted set is already in that order, so this only ever walks past
@@ -1202,35 +1600,44 @@ func _dispatch() -> void:
 		if nearest == null:
 			_dispatch_needed = false
 			return
+		if not _take_sow():
+			return
 		nearest.queued = true
 		# Decided here and not on the thread, so the worker reads a plan that
 		# cannot change under it and the tile remembers what it was given.
-		nearest.detail = _detail_plan(nearest.away)
+		# Path distance, not the dressed true gap: dress overwrites `away`
+		# every few metres, and sowing from that would grow the corridor at
+		# horizon density and hitch again when the viewer arrived.
+		nearest.path_away = _path_away(nearest.at, eye)
+		nearest.detail = _detail_plan(nearest.path_away)
 		_pending[WorkerThreadPool.add_task(_sow.bind(nearest))] = nearest
 		_dispatch_from += 1
 		slots -= 1
 
 
 func _apply() -> void:
+	if _pending.is_empty() and _finished.is_empty():
+		return
 	for task in _pending.keys():
 		if WorkerThreadPool.is_task_completed(task):
 			WorkerThreadPool.wait_for_task_completion(task)
 			_finished.append(_pending[task])
 			_pending.erase(task)
-	var applied := 0
-	while applied < applies_per_frame and not _finished.is_empty():
-		var tile := _finished.pop_front() as Tile
+	while not _finished.is_empty():
+		var tile := _finished[0] as Tile
+		if not _tiles.has(tile.cell):
+			_finished.pop_front()
+			tile.queued = false
+			continue
+		if not _take_apply():
+			return
+		_finished.pop_front()
 		tile.queued = false
 		tile.grown = true
-		# Retired while it was on the thread. Its buffers are the only thing it
-		# owns and they go with it.
-		if not _tiles.has(tile.cell):
-			continue
 		tile.glow_points = tile.sow_glow_points
 		tile.glow_levels = tile.sow_glow_levels
 		tile.glow_species = tile.sow_glow_species
 		_raise(tile)
-		applied += 1
 
 
 func _stand_of(tile: Tile, index: int) -> MultiMeshInstance3D:
@@ -1291,10 +1698,12 @@ func _raise(tile: Tile) -> void:
 				tile.stands[index] = null
 			continue
 		var count := buffer.size() / STRIDE
-		var multimesh := MultiMesh.new()
-		multimesh.transform_format = MultiMesh.TRANSFORM_3D
-		multimesh.use_colors = true
-		multimesh.use_custom_data = true
+		var multimesh := stand.multimesh if stand != null else null
+		if multimesh == null:
+			multimesh = MultiMesh.new()
+			multimesh.transform_format = MultiMesh.TRANSFORM_3D
+			multimesh.use_colors = true
+			multimesh.use_custom_data = true
 		multimesh.instance_count = count
 		buffer = _apply_broken_instances(tile.cell, index, buffer)
 		multimesh.buffer = buffer
@@ -1330,21 +1739,44 @@ func _raise(tile: Tile) -> void:
 		# a rendering-server instance for a tile that already had both was the
 		# single largest part of what applying a tile cost.
 		stand.multimesh = multimesh
+		# Preload tiles exist so a turn or a step has plants ready, but they
+		# must not spend a frame as a full-density draw behind the camera.
+		if not _cell_shown(tile.at, _viewer_eye()):
+			multimesh.visible_instance_count = 0
+			stand.visible = false
 	tile.buffers.clear()
 	_dressed_at = Vector3.INF
+
+
+func _viewer_eye() -> Vector3:
+	var host := planet_host()
+	if host == null:
+		return global_position
+	return host.to_global(host.viewer_position())
 
 
 ## Per-frame distance work: how much of each tile to draw, which mesh to draw it
 ## with, and whether it is worth a shadow. Everything here is per tile and per
 ## species — a few hundred numbers — and nothing is per plant.
 func _dress(eye: Vector3) -> void:
+	if _tiles.is_empty():
+		return
+	var turned := _look_dir.length_squared() > 0.0001 \
+		and _look_dir.dot(_dressed_look) < LOOK_DRESS_DOT
 	if _dressed_at.is_finite() \
-			and _dressed_at.distance_squared_to(eye) < DRESS_STEP * DRESS_STEP:
+			and _dressed_at.distance_squared_to(eye) < DRESS_STEP * DRESS_STEP \
+			and not turned:
 		return
 	_dressed_at = eye
-	_dress_slice = (_dress_slice + 1) % DRESS_SLICES
-	for tile: Tile in _tiles.values():
-		if tile.slice != _dress_slice and not tile.fresh:
+	_dressed_look = _look_dir
+	# A heading change has to hide the old back-hemisphere this frame. Walking
+	# the usual slice would leave three quarters of those MultiMeshes submitted
+	# until the next few metres of travel, which is the snap-turn hitch.
+	if not turned:
+		_dress_slice = (_dress_slice + 1) % DRESS_SLICES
+	_ensure_tile_list()
+	for tile: Tile in _tile_list:
+		if not turned and tile.slice != _dress_slice and not tile.fresh:
 			continue
 		tile.fresh = false
 		tile.away = eye.distance_to(tile.at)
@@ -1370,7 +1802,12 @@ func _dress(eye: Vector3) -> void:
 			# Past the far edge of the fade rather than the reach itself: the
 			# curve is still handing out the far share at the reach and only
 			# reaches zero twelve per cent beyond it.
-			if nearest >= plant.draw_reach() * 1.12:
+			if not _cell_shown(tile.at, eye):
+				showing = 0
+			elif not plant.is_skyline() and _rushing() \
+					and nearest > _fill_stream_reach():
+				showing = 0
+			elif nearest >= plant.draw_reach() * 1.12:
 				showing = 0
 			elif nearest > plant.full_within():
 				showing = clampi(int(plant.keep_at(nearest)
@@ -1382,8 +1819,9 @@ func _dress(eye: Vector3) -> void:
 			var wanted_visible := showing > 0
 			if stand.visible != wanted_visible:
 				stand.visible = wanted_visible
-			_dress_collision(tile, index, plant, stand,
-				wanted_visible and nearest < plant.collision_within)
+			if not _rushing():
+				_dress_collision(tile, index, plant, stand,
+					wanted_visible and nearest < plant.collision_within)
 			if showing == 0:
 				continue
 			# Compared against what the stand is already holding rather than
@@ -1630,9 +2068,7 @@ func collision_rids() -> Array[RID]:
 	if not _collision_rids_stale:
 		return _collision_rids
 	_collision_rids.clear()
-	if _tile_list_stale:
-		_tile_list.assign(_tiles.values())
-		_tile_list_stale = false
+	_ensure_tile_list()
 	for tile in _tile_list:
 		for body_variant in tile.collisions:
 			var body := body_variant as CollisionObject3D
@@ -1682,9 +2118,7 @@ func apply_damage(hit: DamageHit) -> float:
 	var middle := (hit.origin + hit.toward) * 0.5
 	var gross := hit.extent() + tile_bound + _tallest
 	var gross_squared := gross * gross
-	if _tile_list_stale:
-		_tile_list.assign(_tiles.values())
-		_tile_list_stale = false
+	_ensure_tile_list()
 	for tile in _tile_list:
 		if tile.at.distance_squared_to(middle) >= gross_squared:
 			continue
@@ -1700,7 +2134,7 @@ func apply_damage(hit: DamageHit) -> float:
 			if plant.height < hit.min_plant_height:
 				continue
 			var stand := _stand_of(tile, index)
-			if stand == null or not stand.visible:
+			if stand == null:
 				continue
 			# Asked again with this species' own height in place of the field's
 			# tallest. The tile above is admitted because a twenty-five metre
@@ -1724,9 +2158,10 @@ func _damage_stand(hit: DamageHit, sweep: Sweep, tile: Tile, index: int,
 	var to_world := sweep.to_world
 	var centre := sweep.centre
 	var multimesh := stand.multimesh
-	var showing := multimesh.visible_instance_count
-	if showing < 0:
-		showing = multimesh.instance_count
+	# Drawn-or-not is a rendering decision. Streamed plants still occupy the
+	# ground — a blast behind the camera, or one that reaches a preloaded cone
+	# tile, has to find them.
+	var showing := multimesh.instance_count
 	if showing <= 0:
 		return 0.0
 	var roots: PackedVector3Array = tile.roots[index]
@@ -2059,6 +2494,7 @@ func restore_within(centre: Vector3, radius: float) -> int:
 		# missing until someone did. This is the same nudge a range change gives.
 		_since_survey = INF
 		_surveyed_at = Vector3.INF
+		_surveyed_ahead = Vector3.INF
 	return restored
 
 
@@ -2188,7 +2624,8 @@ func _place_glow_lights(eye: Vector3) -> void:
 	var levels := PackedFloat32Array()
 	var source_species := PackedInt32Array()
 	for tile: Tile in _tiles.values():
-		if tile.glow_points.is_empty() or tile.away > glow_light_range * 5.0:
+		if tile.glow_points.is_empty() or tile.away > glow_light_range * 5.0 \
+				or not _cell_shown(tile.at, eye):
 			continue
 		var count := mini(
 			tile.glow_points.size(),
@@ -2363,7 +2800,8 @@ func _scatter(species_index: int, plant: PlantSpecies, patch: FastNoiseLite,
 	# untouched by this: stopping the loop early cannot change the spots the
 	# earlier turns of it drew, which is what lets a finer sow later reproduce
 	# this one exactly and add to it.
-	var expected_tries := plant.per_square_metre * area / float(clump) * detail
+	var expected_tries := plant.per_square_metre * area / float(clump) \
+		* detail
 	var tries := int(round(expected_tries))
 	if plant.fractional_density:
 		tries = floori(expected_tries)
@@ -2758,6 +3196,7 @@ func replant_around(direction: Vector3, radius_m: float) -> void:
 		return
 	_since_survey = INF
 	_surveyed_at = Vector3.INF
+	_surveyed_ahead = Vector3.INF
 	if _tiles.is_empty():
 		return
 	var host := planet_host()

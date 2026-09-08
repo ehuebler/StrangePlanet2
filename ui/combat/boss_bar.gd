@@ -34,6 +34,12 @@ func _ready() -> void:
 	_build()
 
 
+func set_title(title: String) -> void:
+	if _title == null:
+		return
+	_title.text = title if not title.is_empty() else TITLE
+
+
 func set_encounter(alpha: float, health: float, maximum: float, delta: float,
 		warning := false) -> void:
 	_warning_active = warning
@@ -103,6 +109,7 @@ func _build() -> void:
 	RedHudTheme.label(_title, 12)
 	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(_title)
+	CrtType.watch(_title, true)
 
 	_track = PanelContainer.new()
 	_track.custom_minimum_size = Vector2(WIDTH - 16.0, 7.0)

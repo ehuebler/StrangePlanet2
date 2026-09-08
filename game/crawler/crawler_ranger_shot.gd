@@ -5,9 +5,7 @@ extends Node3D
 ## launch the host published; only the host turns a hit into damage.
 
 const LIFETIME := 5.2
-const CORE_COLOR := Color(0.92, 0.72, 1.0)
-const GLOW_COLOR := Color(0.62, 0.22, 1.0)
-const HALO_COLOR := Color(0.48, 0.10, 0.95, 0.42)
+const GLOW_COLOR := EnergyVfx.TINT_GREEN
 
 var damage := 14.0
 var gravity := 16.0
@@ -23,9 +21,9 @@ var _velocity := Vector3.ZERO
 var _planet: Planet
 var _blocker := RID()
 var _live := 0.0
-var _core: MeshInstance3D
-var _halo: MeshInstance3D
+var _core: EnergyVfx
 var _spent := false
+var _charm_frame := -1
 
 
 func launch(planet: Planet, from: Vector3, along: Vector3, by: Node) -> bool:
@@ -57,41 +55,9 @@ func _begin(host: Node, from: Vector3, along: Vector3, by: Node) -> bool:
 
 func _ready() -> void:
 	_planet = get_parent() as Planet
-	var mesh := SphereMesh.new()
-	mesh.radius = ball_radius
-	mesh.height = ball_radius * 2.0
-	mesh.radial_segments = 18
-	mesh.rings = 10
-	_core = MeshInstance3D.new()
-	_core.mesh = mesh
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = CORE_COLOR
-	material.emission_enabled = true
-	material.emission = GLOW_COLOR
-	material.emission_energy_multiplier = 6.4
-	_core.material_override = material
-	_core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_core = EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, GLOW_COLOR)
 	add_child(_core)
-	var halo_mesh := SphereMesh.new()
-	halo_mesh.radius = ball_radius * 1.55
-	halo_mesh.height = ball_radius * 3.1
-	halo_mesh.radial_segments = 16
-	halo_mesh.rings = 8
-	_halo = MeshInstance3D.new()
-	_halo.mesh = halo_mesh
-	var halo_material := StandardMaterial3D.new()
-	halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	halo_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	halo_material.albedo_color = HALO_COLOR
-	halo_material.emission_enabled = true
-	halo_material.emission = GLOW_COLOR
-	halo_material.emission_energy_multiplier = 3.8
-	_halo.material_override = halo_material
-	_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_halo)
+	_core.set_ball_radius(ball_radius)
 	var lamp := OmniLight3D.new()
 	lamp.light_color = GLOW_COLOR
 	lamp.light_energy = 4.6
@@ -102,9 +68,9 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	_live += delta
-	if is_instance_valid(_halo):
+	if is_instance_valid(_core):
 		var pulse := 1.0 + sin(_live * 11.0) * 0.10
-		_halo.scale = Vector3.ONE * pulse
+		_core.set_ball_radius(ball_radius * pulse)
 	if _live >= LIFETIME:
 		queue_free()
 		return
@@ -149,20 +115,14 @@ func _victim_along(from: Vector3, to: Vector3) -> Node:
 
 func _hurt_targets() -> Array[Node]:
 	var found: Array[Node] = []
-	var seen := {}
 	if not is_inside_tree():
 		return found
-	for group: StringName in [&"network_players", DamageHit.COMBATANT_GROUP]:
-		for node_variant: Variant in get_tree().get_nodes_in_group(group):
-			if not is_instance_valid(node_variant):
-				continue
-			var node := node_variant as Node
-			if node == null:
-				continue
-			var key := node.get_instance_id()
-			if seen.has(key) or not _should_hurt(node):
-				continue
-			seen[key] = true
+	var charmed := _shooter_charmed()
+	if is_inside_tree():
+		CrawlerMobSense.ensure_frame(get_tree())
+	for node_variant: Variant in CrawlerMobSense.shot_targets(charmed):
+		var node := node_variant as Node
+		if node != null and _should_hurt(node):
 			found.append(node)
 	return found
 
@@ -172,24 +132,21 @@ func _should_hurt(node: Node) -> bool:
 		return false
 	if not node is Node3D:
 		return false
-	if DamageHit.game_world_of(self) != null \
-			and not DamageHit.in_same_world(self, node):
-		return false
 	if node.has_method(&"is_dead") and bool(node.call(&"is_dead")):
 		return false
 	if node.has_method(&"is_alive") and not bool(node.call(&"is_alive")):
 		return false
 	if _shooter_charmed():
 		return node is CrawlerMob
-	if node.is_in_group(&"network_players"):
-		return true
-	var mob := node as CrawlerMob
-	return mob != null and mob.is_charmed()
+	return node.is_in_group(&"network_players")
 
 
 func _shooter_charmed() -> bool:
-	if is_instance_valid(shooter):
-		_charmed_shot = _read_shooter_charmed()
+	var frame := Engine.get_physics_frames()
+	if frame != _charm_frame:
+		_charm_frame = frame
+		_charmed_shot = _read_shooter_charmed() if is_instance_valid(shooter) \
+			else false
 	return _charmed_shot
 
 

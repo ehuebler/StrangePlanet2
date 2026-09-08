@@ -1,0 +1,164 @@
+{
+  "actions": [
+    "BODY \u2022 Branch Tentacles \u2022 trunk locked \u2022 loop",
+    "BODY \u2022 Rubber Damage Shake \u2022 loop",
+    "BODY \u2022 Rubber Sway 360 \u2022 loop",
+    "BODY \u2022 Scream Throwback",
+    "FACE \u2022 Angry \u2022 blendable",
+    "FACE \u2022 Happy \u2022 blendable",
+    "FACE \u2022 Hurt \u2022 blendable",
+    "FACE \u2022 Scream \u2022 blendable"
+  ],
+  "armatures": [
+    "ELDERWOOD \u2022 animation & expression controls"
+  ],
+  "meshes": [
+    {
+      "name": "Elderwood \u2022 continuous trunk roots and branches",
+      "verts": 16290,
+      "shape_keys": []
+    },
+    {
+      "name": "Elderwood \u2022 face | Happy Hurt Angry Scream Blink",
+      "verts": 5767,
+      "shape_keys": [
+        "Basis",
+        "Happy",
+        "Hurt",
+        "Angry",
+        "Scream",
+        "Blink"
+      ]
+    },
+    {
+      "name": "Foliage_01 \u2022 L_LOW \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_02 \u2022 L_LOW \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_03 \u2022 R_LOW \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_04 \u2022 R_LOW \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_05 \u2022 L_HIGH \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_06 \u2022 L_HIGH \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_07 \u2022 L_HIGH \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_08 \u2022 R_HIGH \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_09 \u2022 R_HIGH \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_10 \u2022 R_HIGH \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_11 \u2022 BACK_L \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_12 \u2022 BACK_L \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_13 \u2022 BACK_L \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_14 \u2022 BACK_R \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_15 \u2022 BACK_R \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_16 \u2022 BACK_R \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_17 \u2022 CROWN_L \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_18 \u2022 CROWN_L \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_19 \u2022 CROWN_R \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_20 \u2022 CROWN_R \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_21 \u2022 CENTRAL \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    },
+    {
+      "name": "Foliage_22 \u2022 CENTRAL \u2022 damage chunk",
+      "verts": 610,
+      "shape_keys": []
+    }
+  ],
+  "bounds": {
+    "min": [
+      -9.503175735473633,
+      -4.320406436920166,
+      -0.18526703119277954
+    ],
+    "max": [
+      7.05469274520874,
+      7.989444255828857,
+      15.86270809173584
+    ],
+    "size": [
+      16.557868480682373,
+      12.309850692749023,
+      16.04797512292862
+    ],
+    "height": 16.04797512292862
+  },
+  "glb": "c:\\Users\\ellio\\Desktop\\Strange Planet\\assets\\runtime\\crawler\\bosses\\elderwood.glb",
+  "glb_bytes": 5700956
+}

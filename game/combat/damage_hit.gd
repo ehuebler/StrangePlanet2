@@ -34,8 +34,6 @@ const ABILITY_DISPLAY_NAMES := {
 	"bigfoot_throw": "Grab Throw",
 	"bigfoot_roar": "Roar",
 	"bigfoot_trample": "Trample",
-	"grapple": "Grapple",
-	"lasso": "Lasso",
 	"kame": "Kame",
 	"laser_eyes": "Laser Eyes",
 	"meteor_punch": "Meteor Punch",
@@ -46,6 +44,7 @@ const ABILITY_DISPLAY_NAMES := {
 	"mini_nuke": "Mini Nuke",
 	"building_collapse": "Collapse",
 	"parry_reflect": "Parry Reflection",
+	"cape_reflect": "Gold Cape",
 	"starfire": "Starfire",
 	"light_bolt": "Light Bolt",
 	"icicle": "Icicle",
@@ -75,6 +74,11 @@ const ABILITY_DISPLAY_NAMES := {
 	"crawler_gruk_swing": "Gruk Swing",
 	"crawler_nix_swing": "Nix Swing",
 	"crawler_vex_mortar": "Vex Mortar",
+	"crawler_bastion_mortar": "Bastion Shell",
+	"crawler_bastion_burst": "Bastion Burst",
+	"crawler_scout_beam": "Scout Beam",
+	"crawler_gray_shot": "Gray Shot",
+	"crawler_tanglemaw_bite": "Tanglemaw Bite",
 	"fauna_body_slap": "Body Slam",
 	"fauna_quills": "Quills",
 	"fauna_spit": "Spit",
@@ -209,6 +213,9 @@ var sequence := 0
 var explosive := false
 ## Flown shots (bolts, missiles, ranger fire). Phase hats can pass through these.
 var projectile := false
+## Local-only handle for the body that authored the hit. Headless tests and
+## scenes without a GameWorld still need a source for reflection.
+var _source_ref: WeakRef
 
 
 ## A cutting line between two points.
@@ -273,6 +280,7 @@ func set_source(source: Variant, peer := -1) -> DamageHit:
 	if source == null or not is_instance_valid(source) or not source is Node:
 		return self
 	var node := source as Node
+	_source_ref = weakref(node)
 	var world := game_world_of(node)
 	if world != null:
 		source_path = world.get_path_to(node)
@@ -443,12 +451,21 @@ func ability_display_name() -> String:
 
 func source_node(anywhere: Node) -> Node:
 	var world := game_world_of(anywhere)
-	if world == null or source_path.is_empty() or source_path.is_absolute():
-		return null
-	for index in source_path.get_name_count():
-		if source_path.get_name(index) == &"..":
-			return null
-	return world.get_node_or_null(source_path)
+	if world != null and not source_path.is_empty() and not source_path.is_absolute():
+		var rooted := true
+		for index in source_path.get_name_count():
+			if source_path.get_name(index) == &"..":
+				rooted = false
+				break
+		if rooted:
+			var from_path := world.get_node_or_null(source_path)
+			if from_path != null:
+				return from_path
+	if _source_ref != null:
+		var held: Variant = _source_ref.get_ref()
+		if held is Node and is_instance_valid(held):
+			return held as Node
+	return null
 
 
 func affects_combatant(combatant: Node) -> bool:

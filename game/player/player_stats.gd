@@ -8,13 +8,12 @@ extends RefCounted
 ## because the inventory screen has to *enumerate* stats — draw a row per stat
 ## with a name, a value and a bar — and a screen that hard-codes "health then
 ## speed" has to be edited every time a third one is added. [constant STATS] is
-## the table it walks, so a new stat is one row here and appears in the menu, in
-## the admin tab's stat picker and in a save with no UI change.
+## the table it walks, so a new stat is one row here and appears in the menu
+## and in a save with no UI change.
 ##
 ## Two kinds of number are kept apart on purpose:
 ##
-## - The **base** is what the character is worth, and it is what gets saved and
-##   what the admin tab edits.
+## - The **base** is what the character is worth, and it is what gets saved.
 ## - The **effective** value is the base after whatever the world is currently
 ##   doing to it, which is where a speed bonus from apparel or a debuff from deep
 ##   snow would go. Nothing modifies anything yet, so the two agree; the split is

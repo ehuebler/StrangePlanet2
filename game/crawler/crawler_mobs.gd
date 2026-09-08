@@ -1,29 +1,38 @@
 class_name CrawlerMobs
 extends RefCounted
 
-## Runtime reader for [code]assets/runtime/crawler/mobs.csv[/code].
+## Runtime reader for [code]assets/runtime/crawler/mobs.json[/code].
 ##
-## Each row is one kind at one level: stats, spawn, and attack behavior.
-## A patch calls the kinds whose [code]patches[/code] token matches it.
-## [code]*[/code] is the fallback roster for unnamed tiles.
-## [code]Tide Margin 4:near[/code] / [code]:far[/code] split the start pad.
-## Demon tokens pin Gloam, Vesper, and Threnody to the castle and office
-## tiles; a token also covers a named child such as [code]Long Shore 4 Keep[/code].
+## Each record is one kind at one level: stats, spawn, and attack behavior.
+## The file already stores a patch-call index, so a fill does not scan every
+## row to decide who belongs on a tile. [code]*[/code] is the fallback roster
+## for unnamed tiles. [code]Tide Margin 4[/code] near/far split the start pad.
+## Demon names pin Gloam, Vesper, and Threnody to Quiet Inlet 4 and
+## Quiet Inlet 4 Southeast. The office tile fields Kestrel, Bastion, and
+## Weaver. Alien tiles field Scout, Gray, and Tanglemaw. Castle tiles
+## keep the goblin garrison and do not field a patch combo. A named token
+## also covers a child such as
+## [code]Far Beacon 4 Plaza[/code].
 
-const PATH := "res://assets/runtime/crawler/mobs.csv"
-const FIELD_ORDER: PackedStringArray = ["ranger", "rammer", "rhino", "rift_hulk", "gloam", "vesper", "threnody", "gruk", "nix", "vex"]
+const PATH := "res://assets/runtime/crawler/mobs.json"
+const FIELD_ORDER: PackedStringArray = ["ranger", "rammer", "rhino", "rift_hulk", "gloam", "vesper", "threnody", "kestrel", "bastion", "weaver", "scout", "gray", "tanglemaw", "gruk", "nix", "vex"]
+## Level-1 catalog rows are the live L1 combat numbers (health 4–20, hits 2–20).
+## Each later ring adds about 25% of those L1 numbers: L2 is 1.25×, L3 is 1.5×.
+const LEVEL_STEP := 0.25
 
-static var _rows: Array[Dictionary] = []
 static var _by_key: Dictionary = {}
 static var _max_level: Dictionary = {}
+static var _call_index: Dictionary = {}
+static var _kinds_for_cache: Dictionary = {}
 static var _loaded := false
 
 
 static func reload() -> void:
 	_loaded = false
-	_rows.clear()
 	_by_key.clear()
 	_max_level.clear()
+	_call_index.clear()
+	_kinds_for_cache.clear()
 	ensure_loaded()
 
 
@@ -39,12 +48,31 @@ static func stats(kind: String, level: int) -> Dictionary:
 	var clean := kind.strip_edges()
 	if clean.is_empty():
 		return {}
-	var rank := _clamped_level(clean, level)
-	return _by_key.get(_key(clean, rank), {})
+	var base: Variant = _by_key.get(_key(clean, 1))
+	if not base is Dictionary:
+		var rank := _clamped_level(clean, 1)
+		base = _by_key.get(_key(clean, rank))
+	if not base is Dictionary:
+		return {}
+	var row: Dictionary = (base as Dictionary).duplicate()
+	if level <= 1:
+		return row
+	var scale := 1.0 + LEVEL_STEP * float(level - 1)
+	for key: String in ["health", "damage", "speed", "xp", "shot_speed", "cap"]:
+		if not row.has(key):
+			continue
+		row[key] = float(row[key]) * scale
+	row["level"] = level
+	return row
 
 
 static func title(kind: String, level := 1) -> String:
 	return str(stats(kind, level).get("title", kind))
+
+
+static func max_level_for(kind: String) -> int:
+	ensure_loaded()
+	return maxi(int(_max_level.get(kind.strip_edges(), 1)), 1)
 
 
 static func agro_mode(kind: String, level := 1) -> String:
@@ -76,28 +104,51 @@ static func number(kind: String, level: int, key: String, fallback: float) -> fl
 
 static func kinds_for(patch_name: String, from_start := -1.0) -> PackedStringArray:
 	ensure_loaded()
+	if CrawlerRun.active():
+		var listed := CrawlerRun.kinds_for_patch(patch_name)
+		if not listed.is_empty():
+			return listed
 	var patch := patch_name.strip_edges()
-	var band := "far" if CrawlerRules.start_patch(patch) \
-			and from_start > CrawlerRules.START_NEAR_RANGE else "near"
-	if not CrawlerRules.start_patch(patch):
-		band = "any"
+	var combo := CrawlerRules.patch_combo(patch)
+	var started := CrawlerRules.start_patch(patch)
+	var band := "any"
+	if started:
+		band = "far" if from_start > CrawlerRules.START_NEAR_RANGE else "near"
+	var cache_key := "%s|%s|%s" % [patch, band, combo]
+	var cached: Variant = _kinds_for_cache.get(cache_key)
+	if cached is PackedStringArray:
+		return cached
+	var out := PackedStringArray()
+	if combo == CrawlerRules.PATCH_COMBO_GOBLIN:
+		_kinds_for_cache[cache_key] = out
+		return out
+	if combo == CrawlerRules.PATCH_COMBO_DEMON:
+		for kind: String in CrawlerRules.DEMON_KINDS:
+			out.append(kind)
+		_kinds_for_cache[cache_key] = out
+		return out
+	if combo == CrawlerRules.PATCH_COMBO_ROBOT:
+		for kind: String in CrawlerRules.ROBOT_KINDS:
+			out.append(kind)
+		_kinds_for_cache[cache_key] = out
+		return out
+	if combo == CrawlerRules.PATCH_COMBO_ALIEN:
+		for kind: String in CrawlerRules.ALIEN_KINDS:
+			out.append(kind)
+		_kinds_for_cache[cache_key] = out
+		return out
 	var called := {}
 	for kind: String in FIELD_ORDER:
 		if _kind_called_by(kind, patch, band):
 			called[kind] = true
 	var order := CrawlerRules.WILD_KINDS
-	if CrawlerRules.start_patch(patch):
+	if started:
 		order = CrawlerRules.START_FAR_KINDS if band == "far" \
 			else CrawlerRules.START_NEAR_KINDS
-	var out := PackedStringArray()
 	for kind: String in order:
 		if called.has(kind):
 			out.append(kind)
-	for kind: String in FIELD_ORDER:
-		if kind == "rift_hulk" or CrawlerRules.is_goblin_kind(kind) \
-				or not called.has(kind) or out.has(kind):
-			continue
-		out.append(kind)
+	_kinds_for_cache[cache_key] = out
 	return out
 
 
@@ -109,36 +160,43 @@ static func kind_cap(kind: String, level: int) -> int:
 
 
 static func _kind_called_by(kind: String, patch: String, band: String) -> bool:
+	var info: Variant = _call_index.get(kind)
+	if info == null:
+		return false
+	var names: Dictionary = info["names"]
 	var named := false
 	var hit := false
-	var wildcard := false
-	for row: Dictionary in _rows:
-		if str(row.get("kind", "")) != kind:
-			continue
-		for token: String in _patch_tokens(row):
-			if token == "*":
-				wildcard = true
-				continue
-			var bits := token.split(":")
-			var name := bits[0]
-			if name != patch and not patch.begins_with(name + " "):
+	var exact: Variant = names.get(patch)
+	if exact != null:
+		named = true
+		hit = _band_matches(exact, band)
+	else:
+		for name: String in names:
+			if not patch.begins_with(name + " "):
 				continue
 			named = true
-			var need := bits[1] if bits.size() > 1 else "any"
-			if need == "any" or band == "any" or need == band:
+			if _band_matches(names[name], band):
 				hit = true
+				break
 	if named:
 		return hit
-	return wildcard
+	return bool(info["wildcard"])
 
 
-static func _patch_tokens(row: Dictionary) -> PackedStringArray:
-	var out := PackedStringArray()
-	for bit: String in str(row.get("patches", "")).split(";"):
-		var token := bit.strip_edges()
-		if not token.is_empty():
-			out.append(token)
-	return out
+static func _band_matches(bands: Variant, band: String) -> bool:
+	if band == "any":
+		return true
+	if bands is PackedStringArray:
+		for need: String in bands:
+			if need == "any" or need == band:
+				return true
+		return false
+	if bands is Array:
+		for need_variant: Variant in bands:
+			var need := str(need_variant)
+			if need == "any" or need == band:
+				return true
+	return false
 
 
 static func _clamped_level(kind: String, level: int) -> int:
@@ -151,48 +209,21 @@ static func _key(kind: String, level: int) -> String:
 
 
 static func _load() -> void:
-	var file := FileAccess.open(PATH, FileAccess.READ)
-	if file == null:
+	var text := FileAccess.get_file_as_string(PATH)
+	if text.is_empty():
 		push_error("CrawlerMobs could not read %s" % PATH)
 		return
-	var headers := file.get_csv_line()
-	while not file.eof_reached():
-		var cells := file.get_csv_line()
-		if cells.is_empty() or (cells.size() == 1 and cells[0].is_empty()):
-			continue
-		var raw: Dictionary = {}
-		for index in headers.size():
-			raw[headers[index]] = cells[index] if index < cells.size() else ""
-		var kind := str(raw.get("kind", "")).strip_edges()
-		var level := maxi(int(raw.get("level", 1)), 1)
-		if kind.is_empty():
-			continue
-		var row := _parse_row(raw, kind, level)
-		_rows.append(row)
-		_by_key[_key(kind, level)] = row
-		_max_level[kind] = maxi(int(_max_level.get(kind, 0)), level)
-
-
-static func _parse_row(raw: Dictionary, kind: String, level: int) -> Dictionary:
-	var row := {
-		"kind": kind,
-		"level": level,
-		"title": str(raw.get("title", kind)).strip_edges(),
-		"patches": str(raw.get("patches", "")).strip_edges(),
-		"agro": str(raw.get("agro", "leash")).strip_edges(),
-		"spawn": str(raw.get("spawn", "ahead")).strip_edges(),
-		"attack": str(raw.get("attack", "")).strip_edges(),
-		"notes": str(raw.get("notes", "")).strip_edges(),
-	}
-	for key: String in [
-		"health", "damage", "speed", "cap", "agro_range", "deagro_range",
-		"spawn_min", "spawn_max", "flyer_ceiling", "engage_min", "engage_max",
-		"standoff_min", "standoff_max", "shot_speed", "shot_ball", "shot_hit",
-		"aim_seconds", "charge_from", "charge_mul", "ram_top", "ram_accel",
-		"fire", "xp",
-	]:
-		var text := str(raw.get(key, "")).strip_edges()
-		if text.is_empty():
-			continue
-		row[key] = float(text)
-	return row
+	var parsed: Variant = JSON.parse_string(text)
+	if not parsed is Dictionary:
+		push_error("CrawlerMobs could not parse %s" % PATH)
+		return
+	var data: Dictionary = parsed
+	var stats: Variant = data.get("stats", {})
+	var levels: Variant = data.get("max_level", {})
+	var calls: Variant = data.get("call", {})
+	if stats is Dictionary:
+		_by_key = stats
+	if levels is Dictionary:
+		_max_level = levels
+	if calls is Dictionary:
+		_call_index = calls

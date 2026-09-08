@@ -142,6 +142,17 @@ static func _crater_blast(shooter: OnlinePlayer,
 		blast.radial_lift = knockback * 0.18
 	CrawlerElements.stamp(blast, shooter, ability_id, stats)
 	shooter.deal_damage(blast)
+	_hurt_source(
+		shooter,
+		definition,
+		at,
+		blast_radius,
+		stats,
+		DamageHit.Reaction.NONE,
+		knockback,
+		knockback * 0.18,
+		false
+	)
 
 	shooter.play_ability_explosion(at, blast_radius, definition.tint)
 	shooter.play_meteor_impact_dust(
@@ -317,18 +328,17 @@ static func _massive_blast(shooter: OnlinePlayer,
 	blast.blocked_by_world = definition.blast_occlusion
 	CrawlerElements.stamp(blast, shooter, ability_id, stats)
 	shooter.deal_authoritative_ability_damage(blast)
-
-	if definition.affects_players:
-		var player_blast := DamageHit.area(effect_at, blast_radius,
-			maxf(float(stats.get("player_damage", 0.0)), 0.0), 1.0)
-		player_blast.ability_id = ability_id
-		player_blast.explosive = true
-		player_blast.reaction = reaction
-		player_blast.radial_impulse = knockback
-		player_blast.radial_lift = lift
-		player_blast.blocked_by_world = definition.blast_occlusion
-		CrawlerElements.stamp(player_blast, shooter, ability_id, stats)
-		shooter.deal_authoritative_player_damage(player_blast)
+	_hurt_source(
+		shooter,
+		definition,
+		effect_at,
+		blast_radius,
+		stats,
+		reaction,
+		knockback,
+		lift,
+		definition.blast_occlusion
+	)
 
 	if definition.self_launch:
 		_launch_source(shooter, definition, effect_at, blast_radius, facing, stats)
@@ -385,6 +395,47 @@ static func _massive_blast(shooter: OnlinePlayer,
 ## say what it expects to see.
 static func _rim_seed(at: Vector3) -> float:
 	return fposmod(at.x * 0.7391 + at.y * 1.4142 + at.z * 2.2360, TAU)
+
+
+## Explosive volumes used to skip their caster and, when [member AbilityDefinition.affects_players]
+## was set, hit every other player. Coop partners stay clear. The caster takes
+## [code]player_damage[/code] unless an ordinance helm (or other explosive
+## immunity) blocks it.
+static func _hurt_source(
+		shooter: OnlinePlayer,
+		definition: AbilityDefinition,
+		at: Vector3,
+		radius: float,
+		stats: Dictionary,
+		reaction: DamageHit.Reaction,
+		knockback: float,
+		lift: float,
+		occluded: bool
+	) -> void:
+	if not is_instance_valid(shooter) or definition == null:
+		return
+	var amount := maxf(float(stats.get("player_damage", 0.0)), 0.0)
+	if amount <= 0.0:
+		amount = maxf(float(stats.get("impact", stats.get("damage", 0.0))), 0.0)
+	if amount <= 0.0:
+		return
+	var source_at := shooter.combat_position()
+	var bounds := maxf(shooter.combat_radius(), 0.0)
+	if maxf(source_at.distance_to(at) - bounds, 0.0) >= radius:
+		return
+	var hit := DamageHit.area(at, radius, amount, 1.0)
+	hit.ability_id = definition.ability_id
+	hit.explosive = true
+	hit.affects_flora = false
+	hit.reaction = reaction
+	hit.radial_impulse = knockback
+	hit.radial_lift = lift
+	hit.blocked_by_world = occluded
+	CrawlerElements.stamp(hit, shooter, definition.ability_id, stats)
+	hit.set_source(shooter, shooter.peer_id)
+	if occluded and hit._world_blocks(shooter, shooter, shooter):
+		return
+	shooter.deal_authoritative_self_explosion(hit)
 
 
 static func _launch_source(shooter: OnlinePlayer,

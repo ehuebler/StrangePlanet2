@@ -3,8 +3,7 @@ extends RefCounted
 
 ## Kill-loot rolls for crawler abilities, modifiers, and basic city hats.
 ##
-## Each kind has its own 1–3% base chance. Luck lifts every kind toward a
-## shared 10% cap so a fortune stack makes drops common without guaranteeing them.
+## Each kind drops at 10%. Luck cannot push a kind past that cap.
 
 const KIND_ABILITY := "ability"
 const KIND_MOD := "mod"
@@ -12,18 +11,18 @@ const KIND_HAT := "hat"
 const CHANCE_CAP := 0.10
 const LUCK_RATE := 0.20
 const BASE_CHANCE := {
-	KIND_ABILITY: 0.025,
-	KIND_MOD: 0.03,
-	KIND_HAT: 0.02,
+	KIND_ABILITY: 0.10,
+	KIND_MOD: 0.10,
+	KIND_HAT: 0.10,
 }
 
 
 static func base_chance(kind: String) -> float:
-	return float(BASE_CHANCE.get(kind, 0.02))
+	return float(BASE_CHANCE.get(kind, CHANCE_CAP))
 
 
 static func drop_chance(kind: String, luck_rank: float) -> float:
-	var base := clampf(base_chance(kind), 0.01, 0.03)
+	var base := clampf(base_chance(kind), 0.0, CHANCE_CAP)
 	var room := maxf(CHANCE_CAP - base, 0.0)
 	var lift := 1.0 - exp(-maxf(luck_rank, 0.0) * LUCK_RATE)
 	return clampf(base + room * lift, base, CHANCE_CAP)

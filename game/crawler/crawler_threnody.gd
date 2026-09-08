@@ -1,8 +1,9 @@
 class_name CrawlerThrenody
 extends CrawlerMob
 
-## Six-winged cursed giant. One engages at a time. Patrols an infinity loop,
-## then locks to the top-middle of the player's view and drops shock columns.
+## Six-winged cursed giant. One engages at a time; the rest despawn.
+## Patrols an infinity loop, then locks to the top-middle of the player's
+## view and drops iridescent shock columns.
 
 const BODY := preload("res://game/crawler/crawler_demon_body.gd")
 const COLUMN := preload("res://game/crawler/crawler_demon_column.gd")
@@ -10,7 +11,6 @@ const PAINT_PATH := "res://assets/runtime/biomes/paint/threnody_paint.png"
 const HEIGHT := 16.5
 const WIDTH := 5.8
 const INK := Color(0.10, 0.04, 0.16)
-const AURA := Color(0.55, 0.20, 0.95, 0.35)
 
 
 var _fire_left := 0.0
@@ -20,10 +20,11 @@ var _columns: Array = []
 
 
 func _ready() -> void:
-	_base_health = 220.0
-	_base_damage = 20.0
+	_base_health = 20.0
+	_base_damage = 13.0
 	_base_speed = 28.0
 	_faces_motion = true
+	_uses_model_front = true
 	super._ready()
 	_loop_u = float(hash(mob_id) % 97) * 0.07
 
@@ -34,8 +35,11 @@ func _build_body() -> void:
 	box.size = Vector3(WIDTH, HEIGHT, WIDTH * 0.72)
 	shape.shape = box
 	add_child(shape)
-	BODY.build(
-		self, 6, HEIGHT, INK, BODY.load_paint(PAINT_PATH), AURA)
+	var packed := CrawlerDemonModels.scene(wild_kind())
+	if packed != null:
+		_attach_skinned(packed, HEIGHT)
+	else:
+		BODY.build(self, 6, HEIGHT, INK, BODY.load_paint(PAINT_PATH))
 
 
 func wild_kind() -> String:
@@ -109,9 +113,23 @@ func sees_player(player: Node3D) -> bool:
 
 func tick_agro(player: Node3D, delta: float) -> bool:
 	if _other_threnody_engaged():
-		chase = false
+		_yield_field()
 		return false
-	return super.tick_agro(player, delta)
+	var engaged := super.tick_agro(player, delta)
+	if chase:
+		_clear_idle_siblings()
+	return engaged
+
+
+func apply_damage(hit: DamageHit) -> float:
+	var amount := super.apply_damage(hit)
+	if not _alive:
+		return amount
+	if _other_threnody_engaged():
+		_yield_field()
+	elif chase:
+		_clear_idle_siblings()
+	return amount
 
 
 func drop_column_now() -> Node:
@@ -128,13 +146,17 @@ func _desired_clip() -> String:
 	return BODY.CLIP_FLY
 
 
+func _tick_idle(delta: float) -> void:
+	_patrol_infinity(delta)
+
+
 func _tick_ai(delta: float) -> void:
 	_fire_left = maxf(_fire_left - delta, 0.0)
 	_sway_clock += delta
 	_prune_columns()
 	var player := _hunt_target(delta)
 	if player == null:
-		_patrol_infinity(delta)
+		_tick_idle(delta)
 		return
 	_lock_camera(player, delta)
 	if _fire_left <= 0.0 and live_columns() < CrawlerRules.THRENODY_COLUMN_CAP:
@@ -182,11 +204,9 @@ func _drop_column() -> Node:
 
 
 func _ground_under() -> Vector3:
-	if _planet != null:
-		var local := _planet.to_local(global_position)
-		if local.length_squared() < 0.0001:
-			local = _up()
-		return _planet.surface_position(local)
+	var surface := ground_surface()
+	if surface.is_finite():
+		return surface
 	var altitude := surface_altitude()
 	if altitude > 0.05:
 		return global_position - _up() * altitude
@@ -194,25 +214,36 @@ func _ground_under() -> Vector3:
 
 
 func _other_threnody_engaged() -> bool:
-	if not is_inside_tree():
-		return false
-	for node_variant: Variant in get_tree().get_nodes_in_group(GROUP):
-		var mob := node_variant as CrawlerMob
-		if mob == null or mob == self or not mob.is_alive():
+	return MobSense.any_chasing_kind("threnody", self)
+
+
+func _clear_idle_siblings() -> void:
+	if _horde != null and _horde.has_method(&"dismiss_idle_kind"):
+		_horde.call(&"dismiss_idle_kind", wild_kind(), self)
+	for item: Variant in MobSense.each_kind(wild_kind(), self):
+		var sibling := item as CrawlerMob
+		if sibling == null or sibling.chase or sibling.dismissed:
 			continue
-		if mob.wild_kind() != "threnody":
-			continue
-		if mob.chase:
-			return true
-	return false
+		sibling.dismiss()
+
+
+func _yield_field() -> void:
+	chase = false
+	if dismissed or not _alive:
+		return
+	if _horde != null and _horde.has_method(&"dismiss_mob"):
+		_horde.call(&"dismiss_mob", mob_id)
+		return
+	dismiss()
 
 
 func _prune_columns() -> void:
 	var kept: Array = []
 	for column_variant: Variant in _columns:
+		if not is_instance_valid(column_variant):
+			continue
 		var column := column_variant as Node
-		if column != null and is_instance_valid(column) \
-				and column.has_method(&"remaining") \
+		if column != null and column.has_method(&"remaining") \
 				and float(column.call(&"remaining")) > 0.0:
 			kept.append(column)
 	_columns = kept

@@ -157,14 +157,15 @@ func _check_status_object() -> void:
 	_expect(ailments.apply_status(CombatStatuses.POISON, 3.0, 8.0)
 			and ailments.apply_status(CombatStatuses.CHARM, 2.0)
 			and ailments.apply_status(CombatStatuses.FREEZE, 1.5)
+			and ailments.apply_status(CombatStatuses.SLOW, 1.0)
 			and ailments.apply_status(CombatStatuses.SHOCK, 2.0),
-		"poison, charm, freeze, and shock are known statuses")
+		"poison, charm, freeze, slow, and shock are known statuses")
 	_expect(is_equal_approx(ailments.strength(CombatStatuses.POISON), 8.0),
 		"poison stores its tick strength")
 	_expect(ailments.shock_locked(), "shock starts in a lock pulse")
 	ailments.tick(CombatStatuses.SHOCK_LOCK + 0.05)
 	_expect(not ailments.shock_locked(), "shock then lets the body twitch free")
-	_expect(ailments.rows().size() == 4, "each ailment exposes a HUD row")
+	_expect(ailments.rows().size() == 5, "each ailment exposes a HUD row")
 
 
 func _check_hit_geometry_and_wire() -> void:
@@ -482,10 +483,22 @@ func _check_juke(world: GameWorld, player: OnlinePlayer,
 		"a juke keeps the hit points")
 	var before := player.global_position
 	player._juke_move(0.05)
-	_expect(player.global_position.distance_to(before) > 0.8,
-		"a juke rushes the body a few metres")
+	_expect(player.global_position.distance_to(before) > 0.35,
+		"a juke rushes the body two metres")
 	player._tick_combat(OnlinePlayer.JUKE_TIME)
 	player._juke_cooldown_left = 0.0
+	var look := player.look_direction()
+	look.y = 0.0
+	_expect(player._juke_wish_direction().dot(look) < 0.0,
+		"juke goes backward unless a steer key is held")
+	Input.action_press("move_backward")
+	_expect(player._juke_wish_direction().dot(look) < 0.0,
+		"holding S still jukes backward")
+	Input.action_release("move_backward")
+	Input.action_press("move_forward")
+	_expect(player._juke_wish_direction().dot(look) > 0.0,
+		"holding W jukes forward")
+	Input.action_release("move_forward")
 	var along := player._juke_wish_direction()
 	var carried := along * 18.0
 	player.velocity = carried

@@ -10,11 +10,17 @@ const DURATION := 0.38
 const PEAK_ALPHA := 0.62
 
 
-static func flash(root: Node3D) -> void:
+static func flash(
+		root: Node3D,
+		color := Color(0.95, 0.08, 0.06),
+		duration := DURATION,
+		peak := PEAK_ALPHA,
+		overlay_name := "DamageFlashOverlay"
+	) -> void:
 	if root == null or not is_instance_valid(root):
 		return
 	for mesh: MeshInstance3D in _collect_meshes(root):
-		_flash_mesh(mesh)
+		_flash_mesh(mesh, color, duration, peak, overlay_name)
 
 
 static func _collect_meshes(node: Node) -> Array[MeshInstance3D]:
@@ -28,14 +34,20 @@ static func _collect_meshes(node: Node) -> Array[MeshInstance3D]:
 	return out
 
 
-static func _flash_mesh(source: MeshInstance3D) -> void:
+static func _flash_mesh(
+		source: MeshInstance3D,
+		color: Color,
+		duration: float,
+		peak: float,
+		overlay_name: String
+	) -> void:
 	if source.mesh == null:
 		return
 	for child: Node in source.get_children():
-		if child is CombatantFlashOverlay:
-			(child as CombatantFlashOverlay).retrigger()
+		if child is CombatantFlashOverlay and child.name == overlay_name:
+			(child as CombatantFlashOverlay).retrigger(color)
 			return
 	var overlay := CombatantFlashOverlay.new()
-	overlay.name = "DamageFlashOverlay"
+	overlay.name = overlay_name
 	source.add_child(overlay)
-	overlay.setup(source, DURATION, PEAK_ALPHA)
+	overlay.setup(source, duration, peak, color)

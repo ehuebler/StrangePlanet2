@@ -163,6 +163,12 @@ func _process(_delta: float) -> void:
 		if landmark == null:
 			continue
 		var revealing := is_revealing() and landmark == _reveal
+		if is_revealing() and not revealing:
+			# Unlock presentation is exclusive: the map overlay stays dark so
+			# only the new mark can be read.
+			if _markers.has(landmark):
+				(_markers[landmark] as Control).visible = false
+			continue
 		if not enabled and not revealing:
 			if _markers.has(landmark):
 				(_markers[landmark] as Control).visible = false
@@ -192,8 +198,11 @@ func _place(landmark: Landmark, marker: Control, eye: Vector3,
 	var away := eye.distance_to(at)
 
 	var revealing := is_revealing() and landmark == _reveal
+	if CrawlerRules.active():
+		CrawlerRules.apply_crawler_waypoint_tint(landmark)
+	_sync_marker_tint(marker, landmark.tint)
 	marker.visible = true
-	if revealing and not enabled:
+	if revealing:
 		marker.modulate.a = _reveal_alpha
 	else:
 		marker.modulate.a = 1.0
@@ -207,7 +216,7 @@ func _place(landmark: Landmark, marker: Control, eye: Vector3,
 
 
 func _place_mates(eye: Vector3, half: Vector2) -> void:
-	if not enabled or not CrawlerRules.coop():
+	if not enabled or is_revealing() or not CrawlerRules.coop():
 		_hide_mates()
 		return
 	var seen: Dictionary = {}
@@ -323,6 +332,21 @@ func _to_edge(toward: Vector2, half: Vector2) -> Vector2:
 ## sized on purpose: everything about the marker is positioned relative to the
 ## one point that means anything, and a rect would only be something else to keep
 ## in step with it.
+func _sync_marker_tint(marker: Control, tint: Color) -> void:
+	if marker == null:
+		return
+	if marker.get_meta(&"tint") is Color and marker.get_meta(&"tint") == tint:
+		return
+	marker.set_meta(&"tint", tint)
+	var title := marker.get_meta(&"title") as Label
+	if title != null:
+		title.add_theme_color_override(&"font_color", tint)
+	var distance := marker.get_meta(&"distance") as Label
+	if distance != null:
+		distance.add_theme_color_override(&"font_color", tint.lerp(PALETTE.text_muted, 0.55))
+	marker.queue_redraw()
+
+
 func _marker_for(landmark: Landmark) -> Control:
 	if _markers.has(landmark):
 		return _markers[landmark]

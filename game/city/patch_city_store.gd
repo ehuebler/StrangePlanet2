@@ -78,14 +78,6 @@ static func save_city(
 	if err != OK:
 		push_error("patch_city_store: save %s failed (%s)" % [path, error_string(err)])
 		return err
-	var bytes := 0
-	var saved := FileAccess.open(path, FileAccess.READ)
-	if saved != null:
-		bytes += saved.get_length()
-	saved = FileAccess.open(scene_path, FileAccess.READ)
-	if saved != null:
-		bytes += saved.get_length()
-	print("patch_city_store: wrote %s  %.1f MB" % [path, bytes / 1_000_000.0])
 	return OK
 
 

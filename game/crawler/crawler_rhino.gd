@@ -65,8 +65,8 @@ var _lagged_frame := Vector3.ZERO
 
 
 func _ready() -> void:
-	_base_health = 130.0
-	_base_damage = 20.0
+	_base_health = 12.0
+	_base_damage = 13.0
 	_base_speed = 7.0
 	_faces_motion = false
 	super._ready()
@@ -131,15 +131,19 @@ func _process(delta: float) -> void:
 	_update_meteor_shock()
 
 
+func _tick_idle(delta: float) -> void:
+	_abort_charge()
+	_patrol_ground(delta)
+	_face_along(_face if _face.length_squared() > 0.01 else velocity, delta)
+
+
 func _tick_ai(delta: float) -> void:
-	_stick_to_surface()
+	snap_to_ground()
 	_cooldown_left = maxf(_cooldown_left - delta, 0.0)
 	_gore_show_left = maxf(_gore_show_left - delta, 0.0)
 	var player := _hunt_target(delta)
 	if player == null:
-		_abort_charge()
-		_patrol_ground(delta)
-		_face_along(_face if _face.length_squared() > 0.01 else velocity, delta)
+		_tick_idle(delta)
 		return
 	match _phase:
 		Phase.PAW:
@@ -396,7 +400,10 @@ func _slam_point(heading: Vector3) -> Vector3:
 		var local := _planet.to_local(guess)
 		if local.length_squared() < 0.0001:
 			local = _up()
-		return _planet.surface_position(local)
+		var hit := ground_surface(guess)
+		if hit.is_finite():
+			return hit
+		return _planet.mesh_position(local)
 	return guess
 
 
@@ -659,12 +666,12 @@ func _wander_point() -> Vector3:
 	var yaw := rng.randf() * TAU
 	var reach := rng.randf_range(18.0, CrawlerRules.PATROL_RADIUS)
 	var at := hang_origin + (east * cos(yaw) + north * sin(yaw)) * reach
-	if _planet != null:
-		var local := _planet.to_local(at)
-		if local.length_squared() < 0.0001:
-			local = _up()
-		var surface := _planet.surface_position(local)
-		at = surface + _planet.up_at(surface) * (HEIGHT * 0.5)
+	var surface := ground_surface(at)
+	if surface.is_finite():
+		var lift := _up()
+		if _planet != null:
+			lift = _planet.up_at(surface)
+		at = surface + lift * ground_clearance()
 	return at
 
 
@@ -687,15 +694,7 @@ func _flat_forward() -> Vector3:
 
 
 func _stick_to_surface() -> void:
-	if _planet == null:
-		return
-	var local := _planet.to_local(global_position)
-	if local.length_squared() < 0.0001:
-		local = Vector3.UP
-	var surface := _planet.surface_position(local)
-	var up := _planet.up_at(surface)
-	global_position = surface + up * (HEIGHT * 0.5)
-	velocity -= up * velocity.dot(up)
+	snap_to_ground()
 
 
 func _face_along(ahead: Vector3, delta: float) -> void:

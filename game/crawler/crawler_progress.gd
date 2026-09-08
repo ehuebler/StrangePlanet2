@@ -46,12 +46,12 @@ const LUCK_COMMON_SHRINK := 0.14
 const REROLL_BASE := 1
 const REROLL_USES_CAP := 20
 
-const XP_BASE := 36
-const XP_GROWTH := 18
-const GOLD_BASE := 8
-const GOLD_PER_LEVEL := 6
-const XP_KILL_BASE := 12
-const XP_PER_LEVEL := 12
+const XP_BASE := 5
+const XP_GROWTH := 1
+const GOLD_BASE := 0
+const GOLD_PER_LEVEL := 1
+const XP_KILL_BASE := 0
+const XP_PER_LEVEL := 1
 const HEALTH_BASE := 100.0
 const HEALTH_PER_RANK := 22.0
 const DEX_PER_RANK := 0.14
@@ -68,11 +68,14 @@ const DODGE_PER_RANK := 0.06
 const DODGE_MAX := 0.40
 const DEFENSE_PER_RANK := 0.08
 const DEFENSE_MAX := 0.60
-const JUKE_COOLDOWN_BASE := 0.55
+const JUKE_COOLDOWN_BASE := 5.0
 const JUKE_COOLDOWN_PER_RANK := 0.10
 const JUKE_COOLDOWN_MIN := 0.25
-const JUKE_DISTANCE_BASE := 6.5
+const JUKE_DISTANCE_BASE := 2.0
 const JUKE_DISTANCE_PER_RANK := 0.80
+const TRAIT_BODY := "settler"
+const TRAIT_LEVEL_DAMAGE := "noct_level_damage"
+const TRAIT_DAMAGE_PER_LEVEL := 0.02
 const HAT_ID := "crawler_gale_hat"
 const HAT_WARD := "crawler_ward_hat"
 const HAT_LUCK := "crawler_luck_hat"
@@ -85,7 +88,10 @@ const HAT_ORDINANCE := "crawler_ordinance_hat"
 const HAT_RUBBER := "crawler_rubber_hat"
 const HAT_LEARNED := "crawler_learned_hat"
 const HAT_JUKE := "crawler_juke_hat"
-const HAT_PRICE := 45
+const HAT_REPEATER := "crawler_repeater_hat"
+const HAT_FOOL := "crawler_fool_hat"
+const HAT_BAZAAR := "crawler_bazaar_hat"
+const HAT_PRICE := 50
 const HAT_WARD_PRICE := 40
 const HAT_LUCK_PRICE := 50
 const HAT_KIT_PRICE := 48
@@ -97,12 +103,16 @@ const HAT_ORDINANCE_PRICE := 50
 const HAT_RUBBER_PRICE := 42
 const HAT_LEARNED_PRICE := 55
 const HAT_JUKE_PRICE := 44
+const HAT_REPEATER_PRICE := 54
+const HAT_FOOL_PRICE := 50
+const HAT_BAZAAR_PRICE := 58
 const HAT_LUCK_BONUS := 8.0
 const WARD_RESPAWN := 8.0
 const HAT_STOCK := [
 	HAT_ID, HAT_WARD, HAT_LUCK, HAT_KIT, HAT_MISSILE,
 	HAT_MINE, HAT_VAMPIRE, HAT_PHASE, HAT_ORDINANCE,
-	HAT_RUBBER, HAT_LEARNED, HAT_JUKE,
+	HAT_RUBBER, HAT_LEARNED, HAT_JUKE, HAT_REPEATER, HAT_FOOL,
+	HAT_BAZAAR,
 ]
 const HAT_PRICES := {
 	HAT_ID: HAT_PRICE,
@@ -117,8 +127,12 @@ const HAT_PRICES := {
 	HAT_RUBBER: HAT_RUBBER_PRICE,
 	HAT_LEARNED: HAT_LEARNED_PRICE,
 	HAT_JUKE: HAT_JUKE_PRICE,
+	HAT_REPEATER: HAT_REPEATER_PRICE,
+	HAT_FOOL: HAT_FOOL_PRICE,
+	HAT_BAZAAR: HAT_BAZAAR_PRICE,
 }
-const HAT_MERGE_PRICE := 36
+const HAT_MERGE_PRICE := 100
+const LOCKER_PRICE := 100
 const HAT_UID_PREFIX := "crawler_cap_"
 const FX_DEX := "dex"
 const FX_FLIGHT := "flight"
@@ -133,9 +147,13 @@ const FX_ORDINANCE := "ordinance"
 const FX_RUBBER := "rubber"
 const FX_LEARNED := "learned"
 const FX_JUKE := "juke"
+const FX_REPEATER := "repeater"
+const FX_FOOL := "fool"
+const FX_BAZAAR := "bazaar"
 const HAT_FX_KEYS: PackedStringArray = [
 	FX_DEX, FX_FLIGHT, FX_WARD, FX_LUCK, FX_KIT, FX_MISSILE,
 	FX_MINE, FX_VAMPIRE, FX_PHASE, FX_ORDINANCE, FX_RUBBER, FX_LEARNED, FX_JUKE,
+	FX_REPEATER, FX_FOOL, FX_BAZAAR,
 ]
 const HAT_BASE_EFFECTS := {
 	HAT_ID: {FX_DEX: 1, FX_FLIGHT: 1},
@@ -150,6 +168,9 @@ const HAT_BASE_EFFECTS := {
 	HAT_RUBBER: {FX_RUBBER: 1},
 	HAT_LEARNED: {FX_LEARNED: 1},
 	HAT_JUKE: {FX_JUKE: 1},
+	HAT_REPEATER: {FX_REPEATER: 1},
+	HAT_FOOL: {FX_FOOL: 1},
+	HAT_BAZAAR: {FX_BAZAAR: 1},
 }
 const HAT_NOUNS := {
 	HAT_ID: "Cap",
@@ -164,29 +185,34 @@ const HAT_NOUNS := {
 	HAT_RUBBER: "Beanie",
 	HAT_LEARNED: "Cap",
 	HAT_JUKE: "Cap",
+	HAT_REPEATER: "Cap",
+	HAT_FOOL: "Cap",
+	HAT_BAZAAR: "Fedora",
 }
 const CAPE_ID := "crawler_plain_cape"
-const CAPE_FOOL := "crawler_fool_cape"
-const CAPE_PRICE := 35
-const CAPE_FOOL_PRICE := 42
-const CAPE_STOCK := [CAPE_ID, CAPE_FOOL]
+const CAPE_GOLD := "crawler_gold_cape"
+const CAPE_PRICE := 250
+const CAPE_GOLD_PRICE := 280
+const CAPE_STOCK := [CAPE_ID, CAPE_GOLD]
 const CAPE_PRICES := {
 	CAPE_ID: CAPE_PRICE,
-	CAPE_FOOL: CAPE_FOOL_PRICE,
+	CAPE_GOLD: CAPE_GOLD_PRICE,
 }
 const QUEST_TOWER := "office_tower"
 const QUEST_CASTLE := "castle"
-const QUEST_ORDER := [QUEST_TOWER, QUEST_CASTLE]
+const QUEST_BOSS := "boss"
+const QUEST_TREE_TITLE := "Barking up the Wrong Tree"
+const QUEST_ORDER := [QUEST_TOWER, QUEST_CASTLE, QUEST_BOSS]
 const QUEST_PRICES := {
 	QUEST_TOWER: 30,
 	QUEST_CASTLE: 30,
+	QUEST_BOSS: 30,
 }
 const TICKET_ID := "crawler_respawn_ticket"
 const TICKET_GOLD := 50
 const TICKET_GEMS := 10
 const REST_HEALTH_PRICE := 25
 const REST_AMMO_PRICE := 20
-const REST_GOLD_GRANT := 10000
 const SHOP_IDS: PackedStringArray = [
 	"hats", "caps", "capes", "cards", "abilities", "upgrades",
 	"inventory", "locker", "quests", "market", "reststop", "duals",
@@ -205,10 +231,9 @@ const SHOP_MOD_SLOTS := 3
 const SITE_GEMS := 8
 const HAT_DEX := 1.45
 const HAT_FLIGHT := 1.55
-const UPGRADE_BASE := 28
-const UPGRADE_GROWTH := 16
-const BIG_UPGRADE_BASE := 80
-const BIG_UPGRADE_GROWTH := 1.55
+const UPGRADE_BASE := 10
+const STORE_MOD_PRICE := 10
+const STORE_ABILITY_PRICE := 25
 const SHOP_PRICES := {
 	"wobble": 22,
 	"big": 22,
@@ -238,8 +263,6 @@ const ABILITY_PRICES := {
 	"icicle": 40,
 	"teleport": 42,
 	"fus": 36,
-	"grapple": 36,
-	"lasso": 36,
 	"nuke": 44,
 	"mini_nuke": 38,
 	"wall": 34,
@@ -299,9 +322,13 @@ var claimed_statues: PackedStringArray = PackedStringArray()
 var rested_health_cities: PackedStringArray = PackedStringArray()
 var rested_ammo_cities: PackedStringArray = PackedStringArray()
 var fused_hat_cities: PackedStringArray = PackedStringArray()
+var hat_buy_cities: PackedStringArray = PackedStringArray()
 var shop_stock_slots: Dictionary = {}
 var shop_upgrade_picks: Dictionary = {}
 var shops_unlimited := false
+var gold_unlimited := false
+var run_path := ""
+var quest_reveals: PackedStringArray = PackedStringArray()
 ## Set when GAME OVER pays global XP so a rebuilt death screen cannot pay twice.
 var settled_global := false
 var _offer_rng: RandomNumberGenerator = null
@@ -319,10 +346,7 @@ static func kill_gold(mob_level: int) -> int:
 	return GOLD_BASE + GOLD_PER_LEVEL * maxi(mob_level, 1)
 
 
-static func kill_xp(mob_level: int, kind := "") -> int:
-	var listed := int(CrawlerMobs.number(kind, mob_level, "xp", 0.0))
-	if listed > 0:
-		return listed
+static func kill_xp(mob_level: int, _kind := "") -> int:
 	return XP_KILL_BASE + XP_PER_LEVEL * maxi(mob_level, 1)
 
 
@@ -414,11 +438,31 @@ func restore_or_seed() -> void:
 	changed.emit()
 
 
-func award_kill(mob_level: int, kind := "") -> void:
+func award_kill(mob_level: int, kind := "", gem_roll := -1.0) -> void:
 	kills += 1
-	gems_earned += scaled_kill_gems(mob_level)
+	gems_earned += scaled_kill_gems(mob_level, gem_roll)
 	gold += scaled_kill_gold(mob_level)
 	xp += scaled_kill_xp(mob_level, kind)
+	var gained := 0
+	while xp >= xp_needed(level):
+		xp -= xp_needed(level)
+		level += 1
+		unspent += 1
+		gained += 1
+	remember()
+	changed.emit()
+	if gained > 0:
+		last_levels_gained = gained
+		leveled_up.emit()
+
+
+func grant_spoils(gold_amount: int, gem_amount: int, xp_amount: int) -> void:
+	gold += maxi(gold_amount, 0)
+	var gems := maxi(gem_amount, 0)
+	if gems > 0:
+		gems_earned += gems
+		CrawlerMeta.add_gems(gems)
+	xp += maxi(xp_amount, 0)
 	var gained := 0
 	while xp >= xp_needed(level):
 		xp -= xp_needed(level)
@@ -485,9 +529,17 @@ func signed_shops_for(city := "") -> PackedStringArray:
 	return signed
 
 
+func shops_are_unlimited() -> bool:
+	return shops_unlimited or wearing_bazaar_hat()
+
+
 func open_shops_for(city := "") -> PackedStringArray:
-	if not CrawlerRules.crawler():
+	if shops_are_unlimited() or not CrawlerRules.crawler():
 		return SHOP_IDS
+	if CrawlerRun.active():
+		var listed := CrawlerRun.shops_for(city)
+		if not listed.is_empty():
+			return listed
 	var open := PackedStringArray()
 	for id: String in SHOP_ALWAYS:
 		open.append(id)
@@ -534,7 +586,7 @@ func _shop_hours_seed(city: String) -> int:
 
 
 func uses_limited_shop(city: String) -> bool:
-	return CrawlerRules.crawler() and not shops_unlimited \
+	return CrawlerRules.crawler() and not shops_are_unlimited() \
 			and not city.strip_edges().is_empty()
 
 
@@ -842,19 +894,43 @@ func mark_rested_ammo(city: String) -> void:
 
 
 func cap_merge_free(city: String) -> bool:
-	if shops_unlimited or not CrawlerRules.crawler():
+	if shops_are_unlimited() or not CrawlerRules.crawler():
 		return true
 	return city.is_empty() or not fused_hat_cities.has(city)
 
 
 func mark_cap_merged(city: String) -> void:
-	if shops_unlimited or not CrawlerRules.crawler():
-		return
 	if city.is_empty() or fused_hat_cities.has(city):
 		return
 	fused_hat_cities.append(city)
 	remember()
 	changed.emit()
+
+
+func mark_hat_bought(city: String) -> void:
+	if city.is_empty() or hat_buy_cities.has(city):
+		return
+	hat_buy_cities.append(city)
+	remember()
+	changed.emit()
+
+
+func hat_shop_price(city: String) -> int:
+	return _city_double_price(HAT_PRICE, hat_buy_cities, city)
+
+
+func cap_merge_price(city: String) -> int:
+	return _city_double_price(HAT_MERGE_PRICE, fused_hat_cities, city)
+
+
+static func _city_double_price(
+		base: int, cities: PackedStringArray, city: String) -> int:
+	if city.is_empty():
+		return base
+	var step := cities.size()
+	if cities.has(city):
+		step = maxi(step - 1, 0)
+	return base * (1 << step)
 
 
 func spend_offer(stat_id: String) -> bool:
@@ -865,21 +941,24 @@ func spend_offer(stat_id: String) -> bool:
 
 
 func auto_pick_offers(offers: Array = []) -> Array:
-	var pool: Array = offers if not offers.is_empty() else level_offers
+	var source: Array = offers if not offers.is_empty() else level_offers
 	var clean: Array = []
-	for raw: Variant in pool:
+	for raw: Variant in source:
 		if raw is Dictionary:
 			var offer := _sanitize_offer(raw)
 			if not offer.is_empty():
 				clean.append(offer)
 	if clean.is_empty():
 		return []
-	clean.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
+	var pool := CrawlerAutoSelect.filter_offers(clean, CrawlerMeta.auto_prefs())
+	if pool.is_empty():
+		pool = clean
+	pool.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
 		return int(left.get("rarity", 0)) > int(right.get("rarity", 0))
 	)
-	var picks: Array = [clean[0]]
-	if clean.size() > 1:
-		picks.append(clean[1])
+	var picks: Array = [pool[0]]
+	if pool.size() > 1:
+		picks.append(pool[1])
 	return picks
 
 
@@ -928,7 +1007,7 @@ static func rarity_color(rarity: int) -> Color:
 		RARITY_LEGENDARY:
 			return Color("ffb31a")
 		_:
-			return Color("9ad4ff")
+			return Color("b8b8b8")
 
 
 static func rarity_amount(rarity: int) -> float:
@@ -972,40 +1051,46 @@ static func roll_rarity(rng: RandomNumberGenerator, luck_rank: float) -> int:
 	return RARITY_COMMON
 
 
-static func offer_boost_text(stat_id: String, amount: float) -> String:
+static func offer_boost_text(stat_id: String, amount: float, current := 0.0) -> String:
+	var from_rank := maxf(current, 0.0)
+	var to_rank := from_rank + maxf(amount, 0.0)
+	var pct := int(round((CrawlerRules.upgrade_boost_f(to_rank)
+		- CrawlerRules.upgrade_boost_f(from_rank)) * 100.0))
 	match stat_id:
 		STAT_HEALTH:
 			return "+%d HP" % int(round(HEALTH_PER_RANK * amount))
 		STAT_DEXTERITY:
-			return "+%d%% walk" % int(round(DEX_PER_RANK * amount * 100.0))
+			return "+%d%% walk" % pct
 		STAT_FLIGHT:
-			return "+%.1fs flight" % (CrawlerRules.FLIGHT_SECONDS * FLIGHT_PER_RANK * amount)
+			return "+%.1fs flight" % (CrawlerRules.FLIGHT_SECONDS
+				* (CrawlerRules.upgrade_scale_f(to_rank)
+					- CrawlerRules.upgrade_scale_f(from_rank)))
 		STAT_DODGE:
-			return "+%d%% dodge" % int(round(DODGE_PER_RANK * amount * 100.0))
+			return "+%d%% dodge" % pct
 		STAT_DEFENSE:
-			return "+%d%% defense" % int(round(DEFENSE_PER_RANK * amount * 100.0))
+			return "+%d%% defense" % pct
 		STAT_JUKE:
 			return "-%.2fs juke" % (JUKE_COOLDOWN_PER_RANK * amount)
 		STAT_JUKE_DISTANCE:
 			return "+%.1fm dash" % (JUKE_DISTANCE_PER_RANK * amount)
 		STAT_DAMAGE:
-			return "+%d%% damage" % int(round(DAMAGE_PER_RANK * amount * 100.0))
+			return "+%d%% damage" % pct
 		STAT_KNOCKBACK:
-			return "+%d%% knockback" % int(round(KNOCKBACK_PER_RANK * amount * 100.0))
+			return "+%d%% knockback" % pct
 		STAT_RANGE:
-			return "+%d%% range" % int(round(RANGE_PER_RANK * amount * 100.0))
+			return "+%d%% range" % pct
 		STAT_CAST:
 			return "-%.2fs cast" % (CAST_PER_RANK * amount)
 		STAT_LUCK:
 			return "+%.2f luck" % amount
 		STAT_ELEMENTAL:
-			return "+%d%% elemental" % int(round(ELEMENTAL_PER_RANK * amount * 100.0))
+			return "+%d%% elemental" % pct
 		STAT_GOLD:
-			return "+%d%% gold" % int(round(GOLD_GAIN_PER_RANK * amount * 100.0))
+			return "+%d%% gold" % pct
 		STAT_XP:
-			return "+%d%% XP" % int(round(XP_GAIN_PER_RANK * amount * 100.0))
+			return "+%d%% XP" % pct
 		STAT_GEMS:
-			return "+%d%% gems" % int(round(GEM_GAIN_PER_RANK * amount * 100.0))
+			return "+%d%% gems" % pct
 		_:
 			return "+%.2f" % amount
 
@@ -1115,12 +1200,14 @@ func _sanitize_offer(raw: Dictionary) -> Dictionary:
 
 static func card_price(catalog_id: String) -> int:
 	if ABILITY_PRICES.has(catalog_id):
-		return int(ABILITY_PRICES[catalog_id])
-	return int(SHOP_PRICES.get(catalog_id, 0))
+		return STORE_ABILITY_PRICE
+	if SHOP_PRICES.has(catalog_id):
+		return STORE_MOD_PRICE
+	return 0
 
 
 static func ability_price(catalog_id: String) -> int:
-	return int(ABILITY_PRICES.get(catalog_id, 0))
+	return STORE_ABILITY_PRICE if ABILITY_PRICES.has(catalog_id) else 0
 
 
 static func ability_stock() -> PackedStringArray:
@@ -1138,11 +1225,8 @@ static func ability_stock() -> PackedStringArray:
 	return stock
 
 
-static func upgrade_price(rank: int, catalog_id := "") -> int:
-	if catalog_id == "big":
-		return maxi(int(round(float(BIG_UPGRADE_BASE)
-			* pow(BIG_UPGRADE_GROWTH, float(maxi(rank, 0))))), 1)
-	return UPGRADE_BASE + UPGRADE_GROWTH * maxi(rank, 0)
+static func upgrade_price(rank: int, _catalog_id := "") -> int:
+	return UPGRADE_BASE * (1 << maxi(rank, 0))
 
 
 static func shop_stock() -> PackedStringArray:
@@ -1154,14 +1238,28 @@ static func shop_stock() -> PackedStringArray:
 	return mods
 
 
+func gold_is_unlimited() -> bool:
+	return gold_unlimited or CrawlerRules.sandbox_infinite_gold()
+
+
+func gold_text() -> String:
+	return "INF" if gold_is_unlimited() else str(gold)
+
+
+## Shop tiles compare this against a price. Infinite gold has to look rich
+## enough to enable every button without writing a second affordance path.
+func purse_gold() -> int:
+	return CrawlerRules.SANDBOX_GOLD if gold_is_unlimited() else gold
+
+
 func has_gold(amount: int) -> bool:
-	return amount <= 0 or CrawlerRules.sandbox_infinite_gold() or gold >= amount
+	return amount <= 0 or gold_is_unlimited() or gold >= amount
 
 
 func spend_gold(amount: int) -> bool:
 	if amount <= 0:
 		return false
-	if CrawlerRules.sandbox_infinite_gold():
+	if gold_is_unlimited():
 		return true
 	if gold < amount:
 		return false
@@ -1169,6 +1267,14 @@ func spend_gold(amount: int) -> bool:
 	remember()
 	changed.emit()
 	return true
+
+
+func refund_gold(amount: int) -> void:
+	if amount <= 0 or gold_is_unlimited():
+		return
+	gold += amount
+	remember()
+	changed.emit()
 
 
 func grant_sandbox_gold() -> void:
@@ -1193,6 +1299,14 @@ func set_shops_unlimited(enabled: bool) -> void:
 	changed.emit()
 
 
+func set_gold_unlimited(enabled: bool) -> void:
+	if gold_unlimited == enabled:
+		return
+	gold_unlimited = enabled
+	remember()
+	changed.emit()
+
+
 static func is_city_hat(item_id: String) -> bool:
 	return not item_id.is_empty() and HAT_STOCK.has(item_id)
 
@@ -1202,7 +1316,7 @@ static func hat_stock() -> PackedStringArray:
 
 
 static func hat_price(item_id: String) -> int:
-	return int(HAT_PRICES.get(item_id, 0))
+	return HAT_PRICE if is_city_hat(item_id) else 0
 
 
 static func hat_blurb(item_id: String, owned := false) -> String:
@@ -1279,17 +1393,42 @@ static func hat_blurb(item_id: String, owned := false) -> String:
 				if owned
 				else "A city-made ball cap. Putting it on hurts foes you juke through."
 			)
+		HAT_REPEATER:
+			return (
+				"City headphones. They fire every equipped ability once a second."
+				if owned
+				else "City headphones. Putting them on fires every equipped ability once a second."
+			)
+		HAT_FOOL:
+			return (
+				"A city-made party hat. A hit throws you a short way, or rarely a very long way."
+				if owned
+				else "A city-made party hat. Putting it on makes every hit throw you somewhere else."
+			)
+		HAT_BAZAAR:
+			return (
+				"A city-made fedora. Every stall stays open while it is on."
+				if owned
+				else "A city-made fedora. Putting it on opens every city stall."
+			)
 		_:
 			return ItemDB.description(item_id)
 
 
-func buy_hat(item_id := HAT_ID) -> bool:
+func buy_hat(item_id := HAT_ID, city := "") -> bool:
 	if item_id.is_empty() or not is_city_hat(item_id):
 		return false
-	var price := hat_price(item_id)
+	var price := hat_shop_price(city)
 	if price <= 0 or not spend_gold(price):
 		return false
-	return not grant_hat(item_id, true).is_empty()
+	var uid := grant_hat(item_id, true)
+	if uid.is_empty():
+		gold += price
+		remember()
+		changed.emit()
+		return false
+	mark_hat_bought(city)
+	return true
 
 
 func grant_hat(item_id: String, wear := false) -> String:
@@ -1318,6 +1457,34 @@ func note_worn(item_id: String) -> void:
 	changed.emit()
 
 
+## Puts the home-screen creator hat onto this run so its mesh, tint, and city
+## effects survive Start Game / online. Saved runs that already wear a hat keep
+## that copy.
+func seed_look_hat(look: Dictionary) -> String:
+	var worn_raw: Variant = look.get("worn", {})
+	if not worn_raw is Dictionary:
+		return worn_hat
+	var hat_id := str((worn_raw as Dictionary).get("hat", ""))
+	if hat_id.is_empty() or not CrawlerMeta.owns_hat(hat_id):
+		return worn_hat
+	if is_city_hat(hat_id):
+		if hat_count(hat_id) <= 0:
+			return grant_hat(hat_id, true)
+		if worn_hat.is_empty() or hat_model(worn_hat) != hat_id:
+			for uid: String in owned_hats:
+				if hat_model(uid) == hat_id:
+					note_worn(uid)
+					return uid
+		return worn_hat
+	if not owned_hats.has(hat_id):
+		owned_hats.append(hat_id)
+	if worn_hat != hat_id:
+		worn_hat = hat_id
+		remember()
+		changed.emit()
+	return hat_id
+
+
 func owns_hat(item_id: String) -> bool:
 	return not item_id.is_empty() and owned_hats.has(item_id)
 
@@ -1342,11 +1509,11 @@ static func cape_blurb(item_id: String, owned := false) -> String:
 				if owned
 				else "A blank white cape. Buy it and it hangs on. Colour comes later."
 			)
-		CAPE_FOOL:
+		CAPE_GOLD:
 			return (
-				"A purple fool's cape with red splotches. A hit throws you a short way, or rarely a very long way."
+				"A city-made gold cape. Q makes you sparkle and bounce every hit back for a few seconds."
 				if owned
-				else "A purple fool's cape with red splotches. Putting it on makes every hit throw you somewhere else."
+				else "A city-made gold cape. Putting it on lets Q bounce every hit back for a few seconds."
 			)
 		_:
 			return ItemDB.description(item_id)
@@ -1386,8 +1553,35 @@ func owns_cape(item_id: String) -> bool:
 	return not item_id.is_empty() and owned_capes.has(item_id)
 
 
-func wearing_fool_cape() -> bool:
-	return worn_cape == CAPE_FOOL and owns_cape(CAPE_FOOL)
+func wearing_gold_cape() -> bool:
+	return worn_cape == CAPE_GOLD
+
+
+func cape_has_ability(item_id := worn_cape) -> bool:
+	return item_id == CAPE_GOLD
+
+
+func seed_look_cape(look: Dictionary) -> String:
+	var worn_raw: Variant = look.get("worn", {})
+	if not worn_raw is Dictionary:
+		return worn_cape
+	var cape_id := str((worn_raw as Dictionary).get("cape", ""))
+	if cape_id.is_empty() or not CrawlerMeta.owns_cape(cape_id):
+		return worn_cape
+	if is_city_cape(cape_id):
+		if not owns_cape(cape_id):
+			grant_cape(cape_id, true)
+			return worn_cape
+		if worn_cape != cape_id:
+			note_worn_cape(cape_id)
+		return worn_cape
+	if not owned_capes.has(cape_id):
+		owned_capes.append(cape_id)
+	if worn_cape != cape_id:
+		worn_cape = cape_id
+		remember()
+		changed.emit()
+	return cape_id
 
 
 static func quest_stock() -> PackedStringArray:
@@ -1398,24 +1592,51 @@ static func quest_price(quest_id: String) -> int:
 	return int(QUEST_PRICES.get(quest_id, 0))
 
 
-static func quest_title(quest_id: String) -> String:
+static func quest_title(quest_id: String, encounter := "") -> String:
 	match quest_id:
 		QUEST_TOWER:
 			return "Meridian Tower"
 		QUEST_CASTLE:
 			return "Stormwatch Castle"
+		QUEST_BOSS:
+			if encounter == CrawlerRules.BOSS_ENCOUNTER_TREE:
+				return QUEST_TREE_TITLE
+			return "Boss Site"
 		_:
 			return quest_id
 
 
-static func quest_blurb(quest_id: String) -> String:
+static func quest_blurb(quest_id: String, encounter := "") -> String:
 	match quest_id:
 		QUEST_TOWER:
-			return "Marks Meridian Tower on Far Beacon 4. Tilde points there once you buy it or walk there."
+			return "Marks the nearest unmarked office. Tilde points there once you buy it or walk there."
 		QUEST_CASTLE:
-			return "Marks Stormwatch Castle on Long Shore 4. Tilde points there once you buy it or walk there."
+			return "Marks the nearest unmarked castle. Tilde points there once you buy it or walk there."
+		QUEST_BOSS:
+			if encounter == CrawlerRules.BOSS_ENCOUNTER_TREE:
+				return "Marks the giant tree battle. Tilde points there once you buy it."
+			return "Marks the nearest unmarked boss site. Tilde points there once you buy it."
 		_:
 			return ""
+
+
+static func quest_matches_site(quest_id: String, site_id: String) -> bool:
+	if quest_id.is_empty() or site_id.is_empty():
+		return false
+	if CrawlerRules.is_boss_id(quest_id):
+		return CrawlerRules.is_boss_id(site_id)
+	if CrawlerRules.is_castle_id(quest_id):
+		return CrawlerRules.is_castle_id(site_id)
+	if CrawlerRules.is_office_id(quest_id):
+		return CrawlerRules.is_office_id(site_id)
+	return quest_id == site_id
+
+
+func quest_reveal_for(quest_id: String) -> String:
+	for site_id: String in quest_reveals:
+		if quest_matches_site(quest_id, site_id):
+			return site_id
+	return ""
 
 
 func owns_quest(quest_id: String) -> bool:
@@ -1508,6 +1729,12 @@ static func site_title(site_id: String) -> String:
 		CrawlerRules.CITY_LEE_SITE_ID:
 			return CrawlerRules.CITY_LEE_TITLE
 		_:
+			if CrawlerRules.is_boss_id(site_id):
+				return quest_title(QUEST_BOSS, CrawlerRun.boss_encounter(site_id))
+			if CrawlerRules.is_castle_id(site_id):
+				return quest_title(QUEST_CASTLE)
+			if CrawlerRules.is_office_id(site_id):
+				return quest_title(QUEST_TOWER)
 			var titled := quest_title(site_id)
 			return titled if titled != site_id else site_id
 
@@ -1529,6 +1756,10 @@ func enter_site(site_id: String) -> bool:
 
 func wearing_shop_hat() -> bool:
 	return hat_effect_rank(FX_DEX) > 0 or hat_effect_rank(FX_FLIGHT) > 0
+
+
+func wearing_bazaar_hat() -> bool:
+	return hat_effect_rank(FX_BAZAAR) > 0
 
 
 func wearing_ward_hat() -> bool:
@@ -1573,6 +1804,26 @@ func wearing_learned_hat() -> bool:
 
 func wearing_juke_hat() -> bool:
 	return hat_effect_rank(FX_JUKE) > 0
+
+
+func wearing_repeater_hat() -> bool:
+	return hat_effect_rank(FX_REPEATER) > 0
+
+
+func wearing_fool_hat() -> bool:
+	return hat_effect_rank(FX_FOOL) > 0
+
+
+func repeater_rank() -> int:
+	return hat_effect_rank(FX_REPEATER)
+
+
+func repeater_interval() -> float:
+	var ranks := repeater_rank()
+	if ranks <= 0:
+		return CrawlerRules.REPEATER_HAT_INTERVAL
+	return CrawlerRules.REPEATER_HAT_INTERVAL / (
+		1.0 + CrawlerRules.REPEATER_HAT_INTERVAL_SHRINK * float(ranks - 1))
 
 
 func ability_bar_slots() -> int:
@@ -1674,7 +1925,9 @@ func juke_hat_damage() -> float:
 func hat_model(uid: String) -> String:
 	if hat_ledger.has(uid):
 		return str((hat_ledger[uid] as Dictionary).get("model", ""))
-	return uid if is_city_hat(uid) else ""
+	if is_city_hat(uid) or ItemDB.slot_of(uid) == "hat":
+		return uid
+	return ""
 
 
 func hat_title(uid: String) -> String:
@@ -1733,9 +1986,10 @@ func preview_hat_merge(keep_uid: String, other_uid: String) -> Dictionary:
 	}
 
 
-func merge_hats(keep_uid: String, other_uid: String) -> bool:
+func merge_hats(keep_uid: String, other_uid: String, city := "") -> bool:
 	var preview := preview_hat_merge(keep_uid, other_uid)
-	if preview.is_empty() or not spend_gold(HAT_MERGE_PRICE):
+	var price := cap_merge_price(city)
+	if preview.is_empty() or price <= 0 or not spend_gold(price):
 		return false
 	var uid := _mint_hat_uid()
 	_store_hat_record(
@@ -1802,6 +2056,15 @@ static func compose_hat_title(model: String, effects: Dictionary) -> String:
 	var juke := int(effects.get(FX_JUKE, 0))
 	if juke > 0:
 		parts.append(_hat_count_label(juke, "Juke"))
+	var repeater := int(effects.get(FX_REPEATER, 0))
+	if repeater > 0:
+		parts.append(_hat_count_label(repeater, "Repeater"))
+	var fool := int(effects.get(FX_FOOL, 0))
+	if fool > 0:
+		parts.append(_hat_count_label(fool, "Fool"))
+	var bazaar := int(effects.get(FX_BAZAAR, 0))
+	if bazaar > 0:
+		parts.append(_hat_count_label(bazaar, "Bazaar"))
 	var noun := str(HAT_NOUNS.get(model, "Cap"))
 	if parts.is_empty():
 		return ItemDB.title(model)
@@ -1850,6 +2113,16 @@ static func compose_hat_description(effects: Dictionary) -> String:
 	var juke := int(effects.get(FX_JUKE, 0))
 	if juke > 0:
 		bits.append("Juking through a foe hurts them%s." % _hat_stack_phrase(juke))
+	var repeater := int(effects.get(FX_REPEATER, 0))
+	if repeater > 0:
+		if repeater == 1:
+			bits.append("It fires every equipped ability once a second.")
+		else:
+			bits.append("It fires every equipped ability more often.")
+	if int(effects.get(FX_FOOL, 0)) > 0:
+		bits.append("A hit throws you somewhere else.")
+	if int(effects.get(FX_BAZAAR, 0)) > 0:
+		bits.append("Every city stall stays open.")
 	return " ".join(bits)
 
 
@@ -1952,8 +2225,12 @@ func health_maximum() -> float:
 	return HEALTH_BASE + HEALTH_PER_RANK * float(combined_rank(STAT_HEALTH))
 
 
+func boost_scale(stat_id: String) -> float:
+	return CrawlerRules.upgrade_scale_f(combined_rank(stat_id))
+
+
 func dex_scale() -> float:
-	var scale := 1.0 + DEX_PER_RANK * float(combined_rank(STAT_DEXTERITY))
+	var scale := boost_scale(STAT_DEXTERITY)
 	var ranks := hat_effect_rank(FX_DEX)
 	if ranks > 0:
 		scale *= pow(HAT_DEX, float(ranks))
@@ -1961,40 +2238,52 @@ func dex_scale() -> float:
 
 
 func flight_seconds() -> float:
-	var seconds := CrawlerRules.FLIGHT_SECONDS \
-		* (1.0 + FLIGHT_PER_RANK * float(combined_rank(STAT_FLIGHT)))
+	var seconds := CrawlerRules.FLIGHT_SECONDS * boost_scale(STAT_FLIGHT)
 	var ranks := hat_effect_rank(FX_FLIGHT)
 	if ranks > 0:
 		seconds *= pow(HAT_FLIGHT, float(ranks))
 	return seconds
 
 
+func hero_body_id(owner: OnlinePlayer = null) -> String:
+	var who := owner if owner != null else player
+	if who != null and is_instance_valid(who):
+		return who.body_id()
+	return TRAIT_BODY
+
+
+func character_damage_bonus(owner: OnlinePlayer = null) -> float:
+	if hero_body_id(owner) != TRAIT_BODY:
+		return 0.0
+	return TRAIT_DAMAGE_PER_LEVEL * float(maxi(level, 0))
+
+
 func damage_scale() -> float:
-	return 1.0 + DAMAGE_PER_RANK * float(combined_rank(STAT_DAMAGE))
+	return boost_scale(STAT_DAMAGE) * (1.0 + character_damage_bonus())
 
 
 func knockback_scale() -> float:
-	return 1.0 + KNOCKBACK_PER_RANK * float(combined_rank(STAT_KNOCKBACK))
+	return boost_scale(STAT_KNOCKBACK)
 
 
 func range_scale() -> float:
-	return 1.0 + RANGE_PER_RANK * float(combined_rank(STAT_RANGE))
+	return boost_scale(STAT_RANGE)
 
 
 func elemental_scale() -> float:
-	return 1.0 + ELEMENTAL_PER_RANK * float(combined_rank(STAT_ELEMENTAL))
+	return boost_scale(STAT_ELEMENTAL)
 
 
 func gold_scale() -> float:
-	return 1.0 + GOLD_GAIN_PER_RANK * float(combined_rank(STAT_GOLD))
+	return boost_scale(STAT_GOLD)
 
 
 func xp_scale() -> float:
-	return 1.0 + XP_GAIN_PER_RANK * float(combined_rank(STAT_XP))
+	return boost_scale(STAT_XP)
 
 
 func gem_scale() -> float:
-	return 1.0 + GEM_GAIN_PER_RANK * float(combined_rank(STAT_GEMS))
+	return boost_scale(STAT_GEMS)
 
 
 static func apply_gain(base: int, scale: float) -> int:
@@ -2009,7 +2298,12 @@ func scaled_kill_xp(mob_level: int, kind := "") -> int:
 	return apply_gain(kill_xp(mob_level, kind), xp_scale())
 
 
-func scaled_kill_gems(mob_level: int) -> int:
+func scaled_kill_gems(mob_level: int, roll := -1.0) -> int:
+	var sample := roll
+	if sample < 0.0:
+		sample = offer_rng().randf()
+	if sample >= CrawlerMeta.gem_drop_chance(luck_rank()):
+		return 0
 	return apply_gain(CrawlerMeta.kill_gems(mob_level), gem_scale())
 
 
@@ -2018,11 +2312,11 @@ func scaled_site_gems() -> int:
 
 
 func dodge_chance() -> float:
-	return minf(DODGE_MAX, DODGE_PER_RANK * float(combined_rank(STAT_DODGE)))
+	return minf(DODGE_MAX, CrawlerRules.upgrade_boost_f(combined_rank(STAT_DODGE)))
 
 
 func defense_share() -> float:
-	return minf(DEFENSE_MAX, DEFENSE_PER_RANK * float(combined_rank(STAT_DEFENSE)))
+	return minf(DEFENSE_MAX, CrawlerRules.upgrade_boost_f(combined_rank(STAT_DEFENSE)))
 
 
 func juke_cooldown() -> float:
@@ -2042,6 +2336,14 @@ func cast_trim() -> float:
 func hero_stat_rows(owner: OnlinePlayer = null) -> Array:
 	var who := owner if owner != null else player
 	var rows: Array = []
+	if hero_body_id(who) == TRAIT_BODY:
+		rows.append({
+			"id": TRAIT_LEVEL_DAMAGE,
+			"title": "Noct",
+			"description": "Gain 2% damage with every level.",
+			"text": "+2% DMG / LV",
+			"kind": "trait",
+		})
 	for stat_id: String in STAT_ORDER:
 		rows.append({
 			"id": stat_id,
@@ -2150,9 +2452,13 @@ func to_dict() -> Dictionary:
 		"rest_hp": Array(rested_health_cities),
 		"rest_ammo": Array(rested_ammo_cities),
 		"cap_merge": Array(fused_hat_cities),
+		"hat_buy": Array(hat_buy_cities),
 		"shop_slots": _clone_shop_table(shop_stock_slots),
 		"shop_upgrades": _clone_shop_table(shop_upgrade_picks),
 		"shops_unlimited": shops_unlimited,
+		"gold_unlimited": gold_unlimited,
+		"run_path": run_path,
+		"quest_reveals": Array(quest_reveals),
 	}
 
 
@@ -2204,15 +2510,26 @@ func from_dict(payload: Dictionary) -> void:
 		worn_hat = ""
 	_restore_hat_overlays()
 	owned_capes = PackedStringArray()
+	var had_fool_cape := false
 	var capes: Variant = payload.get("capes", [])
 	if capes is Array:
 		for raw: Variant in capes:
 			var cape_id := str(raw)
+			if cape_id == "crawler_fool_cape":
+				had_fool_cape = true
+				continue
 			if not cape_id.is_empty() and not owned_capes.has(cape_id):
 				owned_capes.append(cape_id)
 	worn_cape = str(payload.get("worn_cape", ""))
+	if worn_cape == "crawler_fool_cape":
+		had_fool_cape = true
+		worn_cape = ""
 	if not worn_cape.is_empty() and not owns_cape(worn_cape):
 		worn_cape = ""
+	if had_fool_cape and not owns_hat(HAT_FOOL):
+		owned_hats.append(HAT_FOOL)
+		if worn_hat.is_empty():
+			worn_hat = HAT_FOOL
 	owned_quests = PackedStringArray()
 	var quests: Variant = payload.get("quests", [])
 	if quests is Array:
@@ -2260,9 +2577,27 @@ func from_dict(payload: Dictionary) -> void:
 			var city := str(raw)
 			if not city.is_empty() and not fused_hat_cities.has(city):
 				fused_hat_cities.append(city)
+	hat_buy_cities = PackedStringArray()
+	var hat_buy: Variant = payload.get("hat_buy", [])
+	if hat_buy is Array:
+		for raw: Variant in hat_buy:
+			var city := str(raw)
+			if not city.is_empty() and not hat_buy_cities.has(city):
+				hat_buy_cities.append(city)
 	shop_stock_slots = _clone_shop_table(payload.get("shop_slots", {}))
 	shop_upgrade_picks = _clone_shop_table(payload.get("shop_upgrades", {}))
 	shops_unlimited = bool(payload.get("shops_unlimited", false))
+	gold_unlimited = bool(payload.get("gold_unlimited", false))
+	run_path = str(payload.get("run_path", ""))
+	quest_reveals = PackedStringArray()
+	var reveals: Variant = payload.get("quest_reveals", [])
+	if reveals is Array:
+		for raw: Variant in reveals:
+			var site_id := str(raw)
+			if not site_id.is_empty() and not quest_reveals.has(site_id):
+				quest_reveals.append(site_id)
+	if not run_path.is_empty() and not CrawlerRun.active():
+		CrawlerRun.load_path(run_path)
 
 
 func remember() -> void:

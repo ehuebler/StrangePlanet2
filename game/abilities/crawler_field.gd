@@ -2,7 +2,8 @@ class_name CrawlerField
 extends Ability
 
 ## Shared expanding field. The three shop ids pick shock, poison, or slow.
-## Planting takes a stand-still cast; moving far or breaking the pose cancels it.
+## The sphere starts as soon as the stand begins; the caster stays rooted
+## until that pose finishes. Moving far or breaking the pose retracts it.
 
 var _elapsed := 0.0
 var _echoes_left := 0
@@ -10,6 +11,7 @@ var _echo_wait := 0.0
 var _casting := false
 var _planted := false
 var _cast_from := Vector3.ZERO
+var _volumes: Array = []
 
 
 func _press() -> bool:
@@ -19,11 +21,16 @@ func _press() -> bool:
 	_echo_wait = 0.0
 	_echoes_left = CrawlerMulti.extras(stats)
 	_planted = false
+	_volumes.clear()
+	_cast_from = player.global_position
 	if _cast_time() <= 0.001:
 		return _plant()
 	_casting = true
-	_cast_from = player.global_position
 	_hold_cast(true)
+	if not _plant():
+		_hold_cast(false)
+		_casting = false
+		return false
 	return true
 
 
@@ -34,8 +41,8 @@ func _tick(delta: float) -> void:
 			return
 		_elapsed += delta
 		_hold_cast(true)
-		if _elapsed >= _cast_time() and not _plant():
-			cancel()
+		if _elapsed >= _cast_time():
+			_commit()
 		return
 	if _echo_wait > 0.0:
 		_echo_wait = maxf(_echo_wait - delta, 0.0)
@@ -63,14 +70,16 @@ func release() -> void:
 
 
 func _release() -> void:
-	_hold_cast(false)
-	if _casting and not _planted:
+	if _casting:
+		_retract()
 		refund_shot()
 	_casting = false
+	_hold_cast(false)
+	_volumes.clear()
 
 
 func _can_continue_when_attack_blocked() -> bool:
-	return _planted or _echoes_left > 0 or _echo_wait > 0.0
+	return (not _casting and _planted) or _echoes_left > 0 or _echo_wait > 0.0
 
 
 func _cast_time() -> float:
@@ -82,13 +91,48 @@ func _cast_time() -> float:
 
 
 func _plant() -> bool:
-	_casting = false
-	_hold_cast(false)
 	if player == null or not player.spawn_ability_field(ability_id):
 		return false
 	_planted = true
-	_elapsed = 0.0
+	_remember_volume()
 	return true
+
+
+func _commit() -> void:
+	_casting = false
+	_hold_cast(false)
+	_elapsed = 0.0
+
+
+func _remember_volume() -> void:
+	if player == null or not player.is_inside_tree():
+		return
+	var newest: CrawlerFieldVolume = null
+	for node_variant: Variant in player.get_tree().get_nodes_in_group(
+			CrawlerFieldVolume.GROUP):
+		var field := node_variant as CrawlerFieldVolume
+		if field == null or field.ability_id != ability_id:
+			continue
+		if field.owner_peer != 0 and field.owner_peer != player.peer_id:
+			continue
+		if _volumes.has(field):
+			continue
+		if newest == null or field.remaining() > newest.remaining():
+			newest = field
+	if newest != null:
+		_volumes.append(newest)
+
+
+func _retract() -> void:
+	for item: Variant in _volumes:
+		if not is_instance_valid(item):
+			continue
+		var node := item as Node
+		if node.is_inside_tree():
+			node.remove_from_group(CrawlerFieldVolume.GROUP)
+		node.free()
+	_volumes.clear()
+	_planted = false
 
 
 func _broke_stance() -> bool:

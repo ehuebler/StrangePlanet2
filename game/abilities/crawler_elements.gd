@@ -86,6 +86,10 @@ static func apply_to_combatant(combatant: Node, hit: DamageHit) -> bool:
 			continue
 		var strength := maxf(float(entry.get("strength", 0.0)), 0.0)
 		if bool(entry.get("stack", false)):
+			if id == CombatStatuses.SLOW:
+				if statuses.apply_status(id, hold, strength, true):
+					applied = true
+				continue
 			strength = statuses.strength(id) + strength
 		if statuses.apply_status(id, hold, strength):
 			applied = true
@@ -146,7 +150,7 @@ static func _native_of(ability_id: String, stats: Dictionary) -> Array[Dictionar
 				maxf(float(stats.get("duration", CrawlerRules.ROAR_DURATION)), 0.0),
 				maxf(float(stats.get("damage", 0.0)), 0.0), false)
 		"icicle":
-			_append(out, CombatStatuses.FREEZE,
+			_append(out, CombatStatuses.SLOW,
 				maxf(float(stats.get("cold", CrawlerRules.ICICLE_COLD)), 0.0),
 				maxf(float(stats.get("cold_damage",
 					CrawlerRules.ICICLE_COLD_DAMAGE)), 0.0), false)
@@ -170,28 +174,23 @@ static func _card_of(card: CrawlerCard) -> Array[Dictionary]:
 			var rank := maxi(card.upgrade_rank("toxic"), 0)
 			var hold_rank := maxi(card.upgrade_rank("duration"), 0)
 			_append(out, CombatStatuses.POISON,
-				CrawlerRules.ELEM_TOXIC_HOLD
-					+ CrawlerRules.ELEM_TOXIC_HOLD_PER_RANK * float(hold_rank),
-				CrawlerRules.ELEM_TOXIC_DPS
-					+ CrawlerRules.ELEM_TOXIC_DPS_PER_RANK * float(rank),
+				CrawlerRules.scaled_stat(CrawlerRules.ELEM_TOXIC_HOLD, hold_rank),
+				CrawlerRules.scaled_stat(CrawlerRules.ELEM_TOXIC_DPS, rank),
 				false)
 		"shock":
 			var rank := maxi(card.upgrade_rank("shock"), 0)
 			_append(out, CombatStatuses.SHOCK,
-				CrawlerRules.ELEM_SHOCK_HOLD
-					+ CrawlerRules.ELEM_SHOCK_HOLD_PER_RANK * float(rank),
+				CrawlerRules.scaled_stat(CrawlerRules.ELEM_SHOCK_HOLD, rank),
 				0.0, false)
 		"charm":
 			var rank := maxi(card.upgrade_rank("charm"), 0)
 			_append(out, CombatStatuses.CHARM,
-				CrawlerRules.ELEM_CHARM_HOLD
-					+ CrawlerRules.ELEM_CHARM_HOLD_PER_RANK * float(rank),
+				CrawlerRules.scaled_stat(CrawlerRules.ELEM_CHARM_HOLD, rank),
 				0.0, false)
 		"ice":
 			var rank := maxi(card.upgrade_rank("freeze"), 0)
-			_append(out, CombatStatuses.FREEZE,
-				CrawlerRules.ELEM_ICE_HOLD
-					+ CrawlerRules.ELEM_ICE_HOLD_PER_RANK * float(rank),
+			_append(out, CombatStatuses.SLOW,
+				CrawlerRules.scaled_stat(CrawlerRules.ELEM_ICE_HOLD, rank),
 				0.0, false)
 	return out
 
@@ -240,7 +239,7 @@ static func tint_of(base: Color, entries: Array) -> Color:
 				wash = Color(0.95, 0.38, 0.72)
 			CombatStatuses.SHOCK:
 				wash = Color(0.95, 0.85, 0.25)
-			CombatStatuses.FREEZE:
+			CombatStatuses.FREEZE, CombatStatuses.SLOW:
 				wash = Color(0.45, 0.82, 1.0)
 		if wash.a > 0.0:
 			tint = tint.lerp(wash, 0.62)

@@ -25,7 +25,6 @@ static func ensure() -> void:
 	_assets.clear()
 	_by_arch.clear()
 	if not FileAccess.file_exists(MANIFEST_PATH):
-		print("yard_kit: no manifest at %s" % MANIFEST_PATH)
 		return
 	var file := FileAccess.open(MANIFEST_PATH, FileAccess.READ)
 	if file == null:
@@ -47,8 +46,6 @@ static func ensure() -> void:
 		if not list.has(id):
 			list.append(id)
 		_by_arch[arch] = list
-	print("yard_kit: %d buildings (%s)"
-		% [_assets.size(), ", ".join(_arch_counts())])
 
 
 static func _files_ready(row: Dictionary) -> bool:
@@ -60,13 +57,6 @@ static func _files_ready(row: Dictionary) -> bool:
 				and not FileAccess.file_exists(ProjectSettings.globalize_path(KIT_DIR + rel)):
 			return false
 	return true
-
-
-static func _arch_counts() -> PackedStringArray:
-	var out := PackedStringArray()
-	for arch in _by_arch:
-		out.append("%s %d" % [String(arch), (_by_arch[arch] as PackedStringArray).size()])
-	return out
 
 
 static func has_design(name: String) -> bool:

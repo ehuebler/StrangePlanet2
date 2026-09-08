@@ -710,12 +710,26 @@ func _glow_frame(content: Control, padding: float) -> PanelContainer:
 		&"panel",
 		_style(BLACK_40, Color(RED, 0.30), 3, 3.0, Color(RED, 0.16), 5)
 	)
+	var outer_rim := RedGlowPanel.add_to(outer)
+	outer_rim.fill_color = Color.TRANSPARENT
+	outer_rim.border_color = Color(RED, 0.72)
+	outer_rim.border_width = 3.0
+	outer_rim.glow_intensity = 1.2
+	outer_rim.glow_spread = 8.0
+	outer_rim.glow_layers = 4
 
 	var inner := PanelContainer.new()
 	inner.add_theme_stylebox_override(
 		&"panel",
 		_style(BLACK_68, Color(RED_BRIGHT, 0.84), 1, padding)
 	)
+	var inner_rim := RedGlowPanel.add_to(inner)
+	inner_rim.fill_color = Color.TRANSPARENT
+	inner_rim.border_color = Color(RED_BRIGHT, 0.84)
+	inner_rim.border_width = 1.5
+	inner_rim.glow_intensity = 1.1
+	inner_rim.glow_spread = 6.0
+	inner_rim.glow_layers = 3
 	outer.add_child(inner)
 	inner.add_child(content)
 	return outer

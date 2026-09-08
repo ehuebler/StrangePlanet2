@@ -125,7 +125,7 @@ func claim(id: String) -> bool:
 	return true
 
 
-## Clears one entry or, with no id, all of them. The admin tab's undo.
+## Clears one entry or, with no id, all of them.
 ## A full reset also clears the lifetime kill count so combat achievements
 ## can fire again. Claimed rewards are cleared too; gems already paid stay.
 func reset(id := "") -> void:

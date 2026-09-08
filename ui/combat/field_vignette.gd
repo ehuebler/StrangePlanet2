@@ -31,6 +31,14 @@ func refresh(player: Node, menu_open: bool, delta: float) -> void:
 	var linger := CrawlerLingerCloud.wash_at(player, at)
 	if linger.a > wash.a:
 		wash = linger
+	if player.has_method(&"has_status") \
+			and bool(player.call(&"has_status", CombatStatuses.POISON)):
+		var toxic := Color(0.10, 0.72, 0.16, 0.40)
+		if wash.a > 0.01:
+			wash = wash.lerp(toxic, 0.72)
+			wash.a = maxf(wash.a, toxic.a)
+		else:
+			wash = toxic
 	var on := wash.a > 0.01
 	visible = on
 	if not on or _material == null:

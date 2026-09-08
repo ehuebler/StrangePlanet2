@@ -41,6 +41,10 @@ const RANGE_HEIGHT_FULL := 6.0
 ## readable silhouette. Below this density a species is cheap enough to keep
 ## whole.
 const FAR_DENSITY_FLOOR := 0.0006
+## Metres at which a plant is a silhouette worth streaming ahead of the viewer.
+## Shorter, denser cover waits until the eye is near; trees and sparse geology
+## keep the horizon readable during a fast run.
+const SKYLINE_HEIGHT := 3.0
 
 ## Global feel calibration for impact destruction. Authored values still rank
 ## species and instance sizes against one another, but only 65% of the former
@@ -677,6 +681,13 @@ func draw_reach() -> float:
 	if _curve_for != view_range:
 		_resolve_curve()
 	return _curve_reach
+
+
+## True for trees, monoliths and other sparse objects that still read at range.
+## GroundCover streams these along the travel corridor first; grass and shrubs
+## catch up closer to the viewer.
+func is_skyline() -> bool:
+	return height >= SKYLINE_HEIGHT or per_square_metre <= FAR_DENSITY_FLOOR
 
 
 ## Where thinning starts. Deliberately not scaled up: extending the range should

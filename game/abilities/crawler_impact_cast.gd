@@ -6,12 +6,15 @@ extends RefCounted
 
 const SKIP := [
 	"overdrive",
-	"grapple",
-	"lasso",
 	"teleport",
 	"wall",
 ]
 const MIN_GAP := 0.28
+## Held beams tick faster than this. Distinct split landings must not share
+## one lock, so the gap is per site. A metre is coarse enough that a dwell
+## on the same rock stays one site, and fine enough that a multi-shot fan
+## does not collapse.
+const SITE_CELL := 1.0
 
 static var _echoing := 0
 static var _last_msec: Dictionary = {}
@@ -95,7 +98,7 @@ static func emit(shooter: OnlinePlayer, host_id: String, at: Vector3,
 	var up := CrawlerMulti.up_of(shooter)
 	var face := normal if normal.length_squared() > 0.000001 else up
 	for guest_id: String in listed:
-		if not _ready(shooter, host_id, guest_id):
+		if not _ready(shooter, host_id, guest_id, at):
 			continue
 		var along := random_along(face, up)
 		var from := at + face.normalized() * 0.28 + along * 0.12
@@ -150,14 +153,29 @@ static func play(shooter: OnlinePlayer, guest_id: String, from: Vector3,
 	_echoing = maxi(_echoing - 1, 0)
 
 
-static func _ready(shooter: OnlinePlayer, host_id: String, guest_id: String) -> bool:
-	var key := "%s:%s:%s" % [shooter.get_instance_id(), host_id, guest_id]
+static func _ready(shooter: OnlinePlayer, host_id: String, guest_id: String,
+		at: Vector3) -> bool:
+	var key := "%s:%s:%s:%s" % [
+		shooter.get_instance_id(), host_id, guest_id, _site_cell(at)]
 	var now := Time.get_ticks_msec()
+	var last := int(_last_msec.get(key, 0))
 	var wait := int(round(_gap(shooter, guest_id) * 1000.0))
-	if now - int(_last_msec.get(key, 0)) < wait:
-		return false
+	if last > 0 and now - last < wait:
+		# Same pulse: the other split landings may still fire.
+		return now == last
 	_last_msec[key] = now
 	return true
+
+
+static func _site_cell(at: Vector3) -> String:
+	if not at.is_finite():
+		return "0:0:0"
+	var scale := 1.0 / SITE_CELL
+	return "%d:%d:%d" % [
+		int(round(at.x * scale)),
+		int(round(at.y * scale)),
+		int(round(at.z * scale)),
+	]
 
 
 static func _gap(shooter: OnlinePlayer, guest_id: String) -> float:
@@ -192,7 +210,9 @@ static func _play_beam(shooter: OnlinePlayer, id: String, from: Vector3,
 	var pulse := minf(maxf(float(stats.get("duration", 0.4)), 0.1), 0.4)
 	var knockback := maxf(float(stats.get("knockback", 0.0)), 0.0)
 	var impact_radius := LaserEyes.IMPACT_RADIUS
-	if stats.has("impact_radius"):
+	if id == "kame":
+		impact_radius = radius
+	elif stats.has("impact_radius"):
 		impact_radius = float(stats.get("impact_radius", impact_radius))
 	elif width > 1.0:
 		impact_radius *= width
@@ -236,18 +256,17 @@ static func _play_nausicaa(shooter: OnlinePlayer, from: Vector3,
 	var definition := ItemDB.ability_definition("nausicaa")
 	if definition == null:
 		return
-	var reach := maxf(float(stats.get("range", 14.0)), 2.0)
-	var hit := LaserEyes.terrain_surface(shooter, from, from + along * reach)
-	if hit.is_empty():
-		return
-	var at: Vector3 = hit.get("position", from)
-	var normal: Vector3 = hit.get("normal", along)
+	var reach := maxf(float(stats.get("range", CrawlerRules.NAUSICAA_RANGE)), 1.0)
+	var plan := Nausicaa.plan_landing(shooter, from, along, reach, stats)
+	var at: Vector3 = plan.get("position", from + along * reach)
+	var normal: Vector3 = plan.get("normal", -along)
 	var world: Node = DamageHit.game_world_of(shooter)
 	if world == null:
 		world = shooter.get_parent()
 	var warning := maxf(float(stats.get("delay", 1.0)), 0.1)
 	AbilityDelayedBlast.create(
-		world, shooter, definition, from, at, normal, warning, owns, stats)
+		world, shooter, definition, from, at, normal, warning, owns, stats,
+		plan.get("follow") as Node)
 
 
 static func _play_hero(shooter: OnlinePlayer, from: Vector3, along: Vector3,

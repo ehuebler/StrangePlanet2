@@ -137,19 +137,32 @@ uniform float nebula_hue_spread : hint_range(0.0, 1.0) = 0.45;
 group_uniforms;
 
 
+// Express a sky direction in a lattice that is not the world cube. A unit
+// sphere cut by an axis-aligned grid is a stack of rings around X, Y and Z;
+// four layers on that same grid just draw the same rings four times. Each
+// layer gets its own orthonormal frame so the bands miss each other and the
+// field reads as isotropic.
+vec3 star_frame(vec3 direction, vec3 seed) {
+	vec3 w = normalize(seed);
+	vec3 u = normalize(cross(w, abs(w.x) > 0.2 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 v = cross(w, u);
+	return vec3(dot(direction, u), dot(direction, v), dot(direction, w));
+}
+
+
 // One layer of stars, from a lattice of cells in space rather than a grid on the
 // sphere: a lat/long grid piles every one of its stars onto the poles.
 //
 // Only the cell the direction falls in is tested, so a star is jittered by less
 // than it would take to cross an edge and get clipped.
-vec3 star_layer(vec3 direction, float density, float size, float fill) {
-	vec3 point = direction * density;
+vec3 star_layer(vec3 direction, float density, float size, float fill, vec3 seed) {
+	vec3 point = star_frame(direction, seed) * density;
 	vec3 cell = floor(point);
 	vec3 random = vivid_hash33(cell);
 	if (random.z > fill) {
 		return vec3(0.0);
 	}
-	vec3 center = cell + 0.5 + (random - 0.5) * 0.55;
+	vec3 center = cell + 0.5 + (random - 0.5) * 0.72;
 	float radius = size * mix(0.4, 1.0, random.x);
 	float core = smoothstep(radius, 0.0, length(point - center));
 	// Blue-white through to amber, the way a real field of stars sorts itself.
@@ -184,10 +197,13 @@ vec3 deep_space(vec3 direction, float band) {
 		* smoothstep(0.48, 0.95, vivid_fbm3(direction * star_haze_scale, 3));
 
 	vec3 stars = star_layer(direction, star_densities.x * 0.42, star_size * 1.15,
-			star_beacons) * 1.6
-		+ star_layer(direction, star_densities.x, star_size, star_fill)
-		+ star_layer(direction, star_densities.y, star_size * 0.8, star_fill) * 0.7
-		+ star_layer(direction, star_densities.z, star_size * 0.62, star_fill) * 0.45;
+			star_beacons, vec3(1.00, 0.31, 0.72)) * 1.6
+		+ star_layer(direction, star_densities.x, star_size, star_fill,
+			vec3(0.22, 1.00, 0.48))
+		+ star_layer(direction, star_densities.y, star_size * 0.8, star_fill,
+			vec3(0.63, 0.18, 1.00)) * 0.7
+		+ star_layer(direction, star_densities.z, star_size * 0.62, star_fill,
+			vec3(0.41, 0.87, 0.23)) * 0.45;
 	// The band is where the sky is crowded; away from it stars thin out — but
 	// only thin out. The floor was low enough that three quarters of the sky was
 	// effectively empty, and since the galactic pole is wherever galaxy_axis

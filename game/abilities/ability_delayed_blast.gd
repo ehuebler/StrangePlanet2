@@ -3,7 +3,8 @@ extends Node3D
 
 ## One replicated patch in Nausicaä's painted trail. Only the host copy turns
 ## the one-second fuse into AbilityImpact; every copy draws the same blue glow
-## and removes it on the authored deadline.
+## and removes it on the authored deadline. A living follow target carries the
+## mark until the fuse ends or the body is freed.
 
 var source: OnlinePlayer
 var definition: AbilityDefinition
@@ -13,6 +14,7 @@ var normal := Vector3.UP
 var delay := 1.0
 var simulates := false
 var overlay: Dictionary = {}
+var follow: Node
 
 var _age := 0.0
 var _detonated := false
@@ -24,7 +26,8 @@ var _lamp: OmniLight3D
 static func create(world: Node, caster: OnlinePlayer,
 		record: AbilityDefinition, beam_from: Vector3, landed_at: Vector3,
 		surface_normal: Vector3, warning: float,
-		host_simulates: bool, stats_overlay: Dictionary = {}) -> AbilityDelayedBlast:
+		host_simulates: bool, stats_overlay: Dictionary = {},
+		follow_target: Node = null) -> AbilityDelayedBlast:
 	if world == null or caster == null or record == null \
 			or not beam_from.is_finite() or not landed_at.is_finite():
 		return null
@@ -37,10 +40,12 @@ static func create(world: Node, caster: OnlinePlayer,
 		if surface_normal.length_squared() > 0.001 else caster.global_basis.y
 	effect.delay = clampf(warning, 0.1, 5.0)
 	effect.simulates = host_simulates
+	effect.follow = follow_target if is_instance_valid(follow_target) else null
 	if stats_overlay.is_empty() and caster.has_method(&"crawler_ability_overlay"):
 		effect.overlay = caster.crawler_ability_overlay(record.ability_id)
 	else:
 		effect.overlay = stats_overlay.duplicate(true)
+	effect._sync_follow()
 	world.add_child(effect)
 	return effect
 
@@ -61,23 +66,18 @@ func _ready() -> void:
 	_marker.mesh = marker_mesh
 	_marker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_marker)
-	var up := normal.normalized()
-	var side := up.cross(
-		Vector3.FORWARD if absf(up.dot(Vector3.FORWARD)) < 0.9
-		else Vector3.RIGHT).normalized()
-	_marker.global_transform = Transform3D(
-		Basis(side, up, side.cross(up)).orthonormalized(),
-		at + up * 0.035)
 
 	_lamp = OmniLight3D.new()
 	_lamp.light_color = definition.tint
 	_lamp.light_energy = 2.2
 	_lamp.omni_range = maxf(paint_radius * 3.2, 2.0)
 	add_child(_lamp)
-	_lamp.global_position = at + up * 0.18
+	_place_marker()
 
 
 func _process(delta: float) -> void:
+	_sync_follow()
+	_place_marker()
 	_age += delta
 	var warning_share := clampf(_age / delay, 0.0, 1.0)
 	var pulse := 0.4 + 0.6 * absf(sin(_age * lerpf(10.0, 30.0, warning_share)))
@@ -92,11 +92,40 @@ func _process(delta: float) -> void:
 	if _age < delay or _detonated:
 		return
 	_detonated = true
+	_sync_follow()
 	if simulates and is_instance_valid(source):
 		AbilityImpact.apply(source, definition, at, normal, overlay)
 		CrawlerImpactCast.emit(
 			source, definition.ability_id, at, normal, overlay)
 	queue_free()
+
+
+func _sync_follow() -> void:
+	if follow == null:
+		return
+	if not is_instance_valid(follow):
+		follow = null
+		return
+	var dest := CrawlerHoming.combat_at(follow)
+	if dest.is_finite():
+		at = dest
+
+
+func _place_marker() -> void:
+	if _marker == null:
+		return
+	var up := normal.normalized() if normal.length_squared() > 0.001 \
+		else Vector3.UP
+	var side := up.cross(
+		Vector3.FORWARD if absf(up.dot(Vector3.FORWARD)) < 0.9
+		else Vector3.RIGHT).normalized()
+	if side.length_squared() < 0.0001:
+		side = Vector3.RIGHT
+	_marker.global_transform = Transform3D(
+		Basis(side, up, side.cross(up)).orthonormalized(),
+		at + up * 0.035)
+	if _lamp != null:
+		_lamp.global_position = at + up * 0.18
 
 
 func _stats() -> Dictionary:

@@ -3,6 +3,7 @@ extends Node3D
 
 ## Tide Margin spawn. The Relay 07 teleporter sits at the authored
 ## coordinate-plate reading; the player arrives on its receiver pad.
+## Standing on this deck keeps field packs from agroing.
 
 const GROUP := &"crawler_spawn_pads"
 const MODEL := "res://assets/runtime/environment/relay_07_spawn.glb"
@@ -108,6 +109,19 @@ func control_panel_point() -> Vector3:
 	return panel.global_position
 
 
+func holds_standing(point: Vector3) -> bool:
+	if not point.is_finite() or not is_inside_tree():
+		return false
+	var local := to_local(point)
+	var marker := _marker()
+	if marker != null:
+		var mark := to_local(marker.global_position)
+		local -= Vector3(mark.x, 0.0, mark.z)
+	var radial := Vector2(local.x, local.z).length()
+	return radial <= DECK_RADIUS \
+		and local.y >= -12.0 and local.y <= 28.0
+
+
 func blocks_near(point: Vector3) -> bool:
 	var local := to_local(point) if is_inside_tree() else point
 	var radial := Vector2(local.x, local.z).length()
@@ -186,11 +200,12 @@ func _register_flora() -> void:
 			planet_radius = planet.shape.radius
 	if direction.length_squared() < 0.25:
 		direction = world_up()
-	var reach := DECK_RADIUS
-	if _model != null:
-		reach = maxf(reach, BuildingFloraClear.mesh_radius(_model))
 	BuildingFloraClear.register(
-		str(get_instance_id()), direction, reach, planet_radius)
+		str(get_instance_id()),
+		direction,
+		CrawlerRules.START_FLORA_RADIUS,
+		planet_radius,
+		0.0)
 
 
 func _planet_host() -> Planet:

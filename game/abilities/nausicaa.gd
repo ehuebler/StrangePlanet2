@@ -1,12 +1,13 @@
 class_name Nausicaa
 extends Ability
 
-## A short blue eye beam that paints only real planet terrain.
+## A short blue eye beam that plants its fuse at the beam tip.
 ##
-## Each sufficiently separated landing point becomes its own replicated glow.
-## Because the points are submitted in draw order and every one keeps the same
-## one-second fuse, they erupt in that same order instead of turning the whole
-## trail into one simultaneous blast.
+## A mob standing in front of the beam takes the mark with it. Terrain is no
+## longer the target: bounce only folds the remaining range. Each sufficiently
+## separated landing becomes its own replicated glow, and because the points
+## are submitted in draw order with the same one-second fuse, they erupt in
+## that same order.
 
 var _request_sequence := 0
 var _left := 0.0
@@ -63,7 +64,7 @@ func _tick(delta: float) -> void:
 			paths.append(path)
 	_last_paths = paths
 	player.laser_beams().aim_many(
-		eyes[0], eyes[1], targets, definition.tint, _beam_width(),
+		eyes[0], eyes[1], targets, EnergyVfx.TINT_PURPLE, _beam_width(),
 		_wobble_amount(), LaserBeams.FOLLOW_EYES, CrawlerReach.far_cast(stats),
 		paths)
 	_since_bubble += delta
@@ -140,42 +141,120 @@ func _cast_eyes() -> Array[Vector3]:
 
 
 func _fan_landings(from: Vector3) -> Array[Dictionary]:
-	var reach := maxf(stat("range", 14.0), 1.0)
+	var reach := maxf(stat("range", CrawlerRules.NAUSICAA_RANGE), 1.0)
 	var center := player.aim_direction(from)
 	var dirs := CrawlerMulti.fan_dirs(
 		center, CrawlerMulti.shots(stats), CrawlerMulti.up_of(player))
-	var bounces := CrawlerBounce.count(stats)
 	var out: Array[Dictionary] = []
 	for along: Vector3 in dirs:
-		if CrawlerHoming.enabled(stats):
-			along = CrawlerHoming.aim(from, along, stats, player, 0.4)
-		if bounces > 0:
-			var traced := CrawlerBounce.trace(
-				player, from, along, reach, bounces, stats)
-			var points: PackedVector3Array = traced.get(
-				"points", PackedVector3Array())
-			if points.size() < 2:
-				continue
-			var hits: PackedVector3Array = traced.get(
-				"hits", PackedVector3Array())
-			var at: Vector3 = hits[hits.size() - 1] if not hits.is_empty() \
-				else points[points.size() - 1]
-			out.append({
-				"position": at,
-				"along": along,
-				"path": points,
-			})
-			continue
-		var hit := LaserEyes.terrain_surface(
-			player, from, from + along * reach)
-		if hit.is_empty():
-			continue
-		hit["along"] = along
-		if CrawlerHoming.enabled(stats):
-			var dest := hit.get("position", from + along * reach) as Vector3
-			hit["path"] = CrawlerHoming.arc(from, dest, along, stats)
-		out.append(hit)
+		out.append(plan_landing(player, from, along, reach, stats))
 	return out
+
+
+## Beam tip, or the first living mob the capsule reaches. Bounce folds leftover
+## range off a wall instead of planting on it.
+static func plan_landing(shooter: Node, from: Vector3, along: Vector3,
+		reach: float, stats: Dictionary) -> Dictionary:
+	var dir := along.normalized() if along.length_squared() > 0.000001 \
+		else Vector3.FORWARD
+	var span := maxf(reach, 1.0)
+	if CrawlerHoming.enabled(stats):
+		dir = CrawlerHoming.aim(from, dir, stats, shooter, 0.4)
+	var width := _beam_hit_radius(stats)
+	var cursor := from
+	var left := span
+	var remaining := CrawlerBounce.count(stats)
+	var path := PackedVector3Array()
+	path.append(from)
+	while left > 0.02:
+		var tip := cursor + dir * left
+		var prey := first_beam_prey(shooter, cursor, tip, width)
+		if prey != null:
+			var dest := CrawlerHoming.combat_at(prey)
+			_append_plan_hop(path, cursor, dest, dir, stats)
+			return _landing(dest, dir, prey, path)
+		if remaining > 0 and shooter is OnlinePlayer:
+			var wall := LaserEyes._surface(
+				shooter as OnlinePlayer, cursor, tip)
+			if not wall.is_empty():
+				var at: Vector3 = wall.get("position", tip)
+				var normal: Vector3 = wall.get("normal", -dir)
+				var wall_span := cursor.distance_to(at)
+				if at.is_finite() and wall_span < left - 0.02:
+					_append_plan_hop(path, cursor, at, dir, stats)
+					var outgoing := CrawlerBounce.reflect(dir, normal)
+					if outgoing.length_squared() < 0.000001:
+						return _landing(at, dir, null, path)
+					cursor = CrawlerBounce.nudge(at, normal, outgoing)
+					dir = outgoing
+					if CrawlerHoming.enabled(stats):
+						dir = CrawlerHoming.aim(cursor, dir, stats, shooter)
+					left -= maxf(wall_span, 0.02)
+					remaining -= 1
+					continue
+		_append_plan_hop(path, cursor, tip, dir, stats)
+		return _landing(tip, dir, null, path)
+	var fallback := from + dir * span
+	return _landing(fallback, dir, null, PackedVector3Array([from, fallback]))
+
+
+static func first_beam_prey(shooter: Node, from: Vector3, to: Vector3,
+		width: float) -> Node:
+	if shooter == null or not shooter.is_inside_tree() \
+			or not from.is_finite() or not to.is_finite():
+		return null
+	var sweep := DamageHit.beam(from, to, maxf(width, 0.2), 0.0)
+	var along := to - from
+	var span2 := along.length_squared()
+	if span2 < 0.000001:
+		return null
+	var best: Node = null
+	var best_along := INF
+	for node in CrawlerHoming.foes(shooter):
+		var at := CrawlerHoming.combat_at(node)
+		var bounds := 0.4
+		if node.has_method(&"combat_radius"):
+			bounds = maxf(float(node.call(&"combat_radius")), 0.15)
+		if not sweep.reaches(at, bounds):
+			continue
+		var along_span := (at - from).dot(along)
+		if along_span < 0.0 or along_span > span2 + 0.05:
+			continue
+		if along_span < best_along:
+			best = node
+			best_along = along_span
+	return best
+
+
+static func _beam_hit_radius(stats: Dictionary) -> float:
+	return maxf(float(stats.get("beam_width", CrawlerRules.NAUSICAA_BEAM_WIDTH))
+			* 0.5, 0.35)
+
+
+static func _landing(at: Vector3, along: Vector3, follow: Node,
+		path: PackedVector3Array) -> Dictionary:
+	var dir := along.normalized() if along.length_squared() > 0.000001 \
+		else Vector3.FORWARD
+	return {
+		"position": at,
+		"along": dir,
+		"normal": -dir,
+		"follow": follow,
+		"path": path,
+	}
+
+
+static func _append_plan_hop(path: PackedVector3Array, from: Vector3,
+		dest: Vector3, along: Vector3, stats: Dictionary) -> void:
+	if CrawlerHoming.enabled(stats):
+		var curved := CrawlerHoming.arc(from, dest, along, stats)
+		var start := 1 if not path.is_empty() else 0
+		for index in range(start, curved.size()):
+			path.append(curved[index])
+		if curved.size() <= start:
+			path.append(dest)
+		return
+	path.append(dest)
 
 
 func _beam_width() -> float:

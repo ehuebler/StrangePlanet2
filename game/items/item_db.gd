@@ -156,6 +156,30 @@ const ITEMS := {
 		"scene": "res://assets/runtime/apparel/apparel_c3_baseball_cap.glb",
 		"tint": Color(0.22, 0.72, 0.38),
 	},
+	"crawler_repeater_hat": {
+		"title": "Repeater Cap",
+		"description": "City headphones. They fire every equipped ability once a second.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_headphones.glb",
+		"tint": Color(0.18, 0.86, 0.92),
+	},
+	"crawler_fool_hat": {
+		"title": "Fool Cap",
+		"description": "A city-made party hat. A hit throws you somewhere else, usually a few metres, rarely a very long way.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_party_hat.glb",
+		"tint": Color(0.42, 0.16, 0.62),
+	},
+	"crawler_bazaar_hat": {
+		"title": "Bazaar Fedora",
+		"description": "A city-made fedora. Putting it on opens every city stall.",
+		"kind": KIND_APPAREL,
+		"slot": "hat",
+		"scene": "res://assets/runtime/apparel/apparel_c3_fedora.glb",
+		"tint": Color(0.78, 0.52, 0.16),
+	},
 	"crawler_plain_cape": {
 		"title": "Plain Cape",
 		"description": "A blank white cape. It hangs from the shoulders and follows the wind. Colour comes later.",
@@ -164,14 +188,13 @@ const ITEMS := {
 		"scene": "res://game/player/cape_cloth.tscn",
 		"tint": Color(1.0, 1.0, 1.0),
 	},
-	"crawler_fool_cape": {
-		"title": "Fool's Teleport Cape",
-		"description": "Purple cloth with red splotches. A hit throws you somewhere else, usually a few metres, rarely a very long way.",
+	"crawler_gold_cape": {
+		"title": "Gold Cape",
+		"description": "A city-made gold cape. Q makes you sparkle and bounce every hit back for a few seconds. Then it rests a long while.",
 		"kind": KIND_APPAREL,
 		"slot": "cape",
 		"scene": "res://game/player/cape_cloth.tscn",
-		"tint": Color(0.42, 0.16, 0.62),
-		"paint": "res://assets/runtime/apparel/cape_fool_paint.png",
+		"tint": Color(0.86, 0.64, 0.14),
 	},
 	"crawler_respawn_ticket": {
 		"title": "Respawn Ticket",
@@ -737,6 +760,8 @@ static func has_item(id: String) -> bool:
 
 
 static func title(id: String) -> String:
+	if CrawlerCatalog.catalog_id(id) == CrawlerProgress.STAT_JUKE:
+		return "Juke"
 	if CrawlerCatalog.has(id):
 		var labeled := CrawlerCatalog.title_of(id)
 		if not labeled.is_empty():
@@ -748,6 +773,8 @@ static func title(id: String) -> String:
 
 
 static func description(id: String, host_id := "", size_rank := -1) -> String:
+	if CrawlerCatalog.catalog_id(id) == CrawlerProgress.STAT_JUKE:
+		return "A short invulnerable dash. Press F to slip aside."
 	if CrawlerCatalog.has(id) and (
 			CrawlerCatalog.is_modifier(id) or CrawlerCatalog.is_modifier_token(id)):
 		return CrawlerCatalog.description_of(id, host_id, size_rank)
@@ -995,6 +1022,8 @@ static func cell_size(id: String) -> int:
 
 
 static func tint(id: String) -> Color:
+	if CrawlerCatalog.catalog_id(id) == CrawlerProgress.STAT_JUKE:
+		return Color("ff7a18")
 	var definition := ability_definition(id)
 	if definition != null:
 		return definition.tint

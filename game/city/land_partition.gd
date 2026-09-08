@@ -747,6 +747,30 @@ func directions_of(patch_id: int) -> PackedVector3Array:
 	return dirs
 
 
+func cell_directions_of(patch_id: int) -> PackedVector3Array:
+	var dirs := PackedVector3Array()
+	for index in vertices.size():
+		if owners[index] == patch_id:
+			dirs.append(vertices[index])
+	return dirs
+
+
+func neighbors_of(patch_id: int) -> PackedInt32Array:
+	var seen: Dictionary = {}
+	for chain in border_chains:
+		var other := -1
+		if chain.patch_a == patch_id:
+			other = chain.patch_b
+		elif chain.patch_b == patch_id:
+			other = chain.patch_a
+		if other >= 0:
+			seen[other] = true
+	var out := PackedInt32Array()
+	for key: Variant in seen.keys():
+		out.append(int(key))
+	return out
+
+
 func owner_at(direction: Vector3) -> int:
 	var toward := direction.normalized()
 	var best := -1
