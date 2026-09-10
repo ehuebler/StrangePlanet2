@@ -6,6 +6,7 @@ extends CrawlerAlien
 
 const HEIGHT := 1.68
 const WIDTH := 0.92
+const ROAM_RETARGET := 0.55
 
 
 var _bite_left := 0.0
@@ -35,7 +36,33 @@ func body_width() -> float:
 
 
 func flies() -> bool:
-	return false
+	return _hunt_airborne
+
+
+func _physics_process(delta: float) -> void:
+	super._physics_process(delta)
+	if _movement_locked():
+		return
+	if chase:
+		_face_prey()
+	elif _faces_motion:
+		_face_motion(delta)
+
+
+func director_cold_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and chase:
+		steer = true
+		step = maxf(step, delta)
+	super.director_cold_tick(delta, step, steer, player, in_city)
+
+
+func director_warm_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and chase:
+		steer = true
+		step = maxf(step, delta)
+	super.director_warm_tick(delta, step, steer, player, in_city)
 
 
 func _tick_idle(delta: float) -> void:
@@ -66,35 +93,54 @@ func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
 		return
 	var step := maxf(delta, 0.0)
 	_bite_left = maxf(_bite_left - step, 0.0)
-	if player != null and _apply_agro(player, step, in_city):
+	if player != null and tick_agro(player, step):
 		_chase(player, step, false)
 	else:
 		_tick_idle(step)
 
 
 func _roam(delta: float) -> void:
-	snap_to_ground()
-	_match_speed(move_speed() * 0.42, delta, 1.1, 6.0)
+	_faces_motion = true
+	if _director_lod == CrawlerRules.MOB_LOD_HOT:
+		snap_to_ground()
+	_match_speed(move_speed(), delta, 0.35, 28.0)
 	_patrol_left -= delta
-	if _patrol_left <= 0.0 or global_position.distance_to(_patrol_goal) < 2.4:
-		_patrol_left = PATROL_RETARGET + float(hash(mob_id) % 9) * 0.12
-		_patrol_goal = _flock_wander()
 	var along := _flat_toward(_patrol_goal)
+	if _patrol_left <= 0.0 or along.length() < 2.4:
+		_retarget_roam()
+		along = _flat_toward(_patrol_goal)
 	if along.length_squared() < 0.12:
-		velocity = velocity.move_toward(Vector3.ZERO, 8.0 * delta)
+		_retarget_roam()
+		along = _flat_toward(_patrol_goal)
+	if along.length_squared() < 0.12:
 		return
-	_steer_toward(along.normalized() * _cruise, delta, 9.0)
+	_steer_toward(along.normalized() * _cruise, delta, 16.0)
+
+
+func _retarget_roam() -> void:
+	_patrol_serial += 1
+	_patrol_left = ROAM_RETARGET + float(_patrol_serial % 5) * 0.11
+	_patrol_goal = _flock_wander()
+
+
+func _face_prey() -> void:
+	var player := _nearest_player()
+	if player == null:
+		return
+	var look := _flat_toward(_combat_position_of(player))
+	if look.length_squared() < 0.0001:
+		return
+	global_transform.basis = _look_basis(look.normalized(), _up())
 
 
 func _chase(player: Node, delta: float, think: bool) -> void:
-	if think:
+	_tick_hunt_motion(player, delta)
+	if hunt_stance == CrawlerHunt.Stance.PURSUE:
+		return
+	if think and not flies():
 		snap_to_ground()
 	var at := _combat_position_of(player)
-	var along := _flat_toward(at)
 	var gap := global_position.distance_to(at)
-	_match_speed(move_speed(), delta, 0.55, 8.0)
-	if along.length_squared() > 0.0001:
-		_steer_toward(along.normalized() * _cruise, delta, 11.0)
 	var reach := CrawlerRules.TANGLEMAW_BITE_REACH + _reach_of(player)
 	if gap <= reach and _bite_left <= 0.0:
 		_bite(player, reach)
@@ -133,7 +179,7 @@ func _flock_wander() -> Vector3:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int((hash(mob_id) * 29 + _patrol_serial * 67) & 0x7fffffff)
 	var yaw := rng.randf() * TAU
-	var reach := rng.randf_range(5.0, 16.0)
+	var reach := rng.randf_range(12.0, 28.0)
 	var at := hang_origin + (east * cos(yaw) + north * sin(yaw)) * reach
 	var surface := ground_surface(at)
 	if surface.is_finite():

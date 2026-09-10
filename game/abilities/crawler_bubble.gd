@@ -35,7 +35,6 @@ var authoritative := false
 var bounces_left := 0
 
 var _age := 0.0
-var _core: EnergyVfx
 var _spent := false
 var _shooter_rid := RID()
 var _grazed: Dictionary = {}
@@ -91,23 +90,21 @@ static func spawn(world: Node, source: OnlinePlayer, recipe: Dictionary,
 func _ready() -> void:
 	name = "CrawlerBubble"
 	add_to_group(GROUP)
-	_core = EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, GLOW_COLOR)
-	add_child(_core)
-	_core.set_ball_radius(size)
-	var lamp := OmniLight3D.new()
-	lamp.light_color = GLOW_COLOR
-	lamp.light_energy = 3.8
-	lamp.omni_range = maxf(size * 8.0, 2.4)
-	lamp.shadow_enabled = false
-	add_child(lamp)
+	CrawlerShotSense.watch(self)
+
+
+func _exit_tree() -> void:
+	CrawlerShotSense.drop(self)
 
 
 func _physics_process(delta: float) -> void:
+	shot_tick(delta)
+
+
+func shot_tick(delta: float) -> void:
 	if _spent:
 		return
 	_age += delta
-	var pulse := 1.0 + sin(_age * TAU * PULSE_HZ) * PULSE_SPAN
-	scale = Vector3.ONE * pulse
 	_steer(delta)
 	var from := global_position
 	var to := from + velocity * delta
@@ -124,11 +121,8 @@ func _physics_process(delta: float) -> void:
 		global_position = _nearest_on(from, to, _combat_position(struck))
 		if bounces_left > 0:
 			_grazed[struck.get_instance_id()] = true
-			if authoritative and pop_radius <= 0.001 \
-					and struck.has_method(&"apply_damage"):
-				struck.call(
-					&"apply_damage",
-					_make_hit(global_position, size).resolved_for(struck))
+			if authoritative and pop_radius <= 0.001:
+				_hurt(struck, global_position, size)
 			var away := global_position - _combat_position(struck)
 			_ricochet(away if away.length_squared() > 0.000001 else -velocity,
 				pop_radius > 0.001)
@@ -158,30 +152,46 @@ func pop(struck: Node = null) -> void:
 	queue_free()
 
 
+func shot_retire() -> void:
+	if _spent:
+		return
+	_spent = true
+	queue_free()
+
+
+func shot_batch_radius() -> float:
+	return 0.0 if _spent else size
+
+
+func shot_batch_pulse() -> float:
+	return 1.0 + sin(_age * TAU * PULSE_HZ) * PULSE_SPAN
+
+
+func shot_glow_color() -> Color:
+	return GLOW_COLOR
+
+
+func shot_glow_energy() -> float:
+	return 0.0 if _spent else 3.8
+
+
+func shot_glow_range() -> float:
+	return maxf(size * 8.0, 2.4)
+
+
 func _steer(delta: float) -> void:
 	if homing <= 0.001 or not is_inside_tree():
 		return
-	var prey := _nearest_enemy()
+	var prey := CrawlerShotSense.prey(
+		self, global_position, homing, shooter)
 	if prey == null:
 		return
-	var toward := _combat_position(prey) - global_position
+	var toward := CombatantSense.point_of(prey) - global_position
 	if toward.length_squared() < 0.0001:
 		return
 	var wanted := toward.normalized() * maxf(velocity.length(), travel_speed)
 	var blend := 1.0 - exp(-delta * steer_rate)
 	velocity = velocity.lerp(wanted, blend)
-
-
-func _nearest_enemy() -> Node:
-	var best: Node = null
-	var best_span := homing
-	for node in _hurt_targets():
-		var span := global_position.distance_to(_combat_position(node))
-		if span > best_span:
-			continue
-		best = node
-		best_span = span
-	return best
 
 
 func _ricochet(normal: Vector3, explode: bool) -> void:
@@ -208,38 +218,16 @@ func _world_along(from: Vector3, to: Vector3) -> Dictionary:
 
 
 func _victim_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, maxf(size, 0.12), 0.0)
 	if not is_inside_tree():
 		return null
-	for node in _hurt_targets():
-		if _grazed.has(node.get_instance_id()):
-			continue
-		var bounds := 0.4
-		if node.has_method(&"combat_radius"):
-			bounds = float(node.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(node), bounds):
-			return node
-	return null
+	var skip: Node = shooter if is_instance_valid(shooter) else null
+	return CombatantSense.first_along(
+		self, from, to, maxf(size, 0.12), skip, _grazed)
 
 
 func _hurt_targets() -> Array[Node]:
-	var found: Array[Node] = []
-	if not is_inside_tree():
-		return found
-	for node_variant: Variant in get_tree().get_nodes_in_group(
-			DamageHit.COMBATANT_GROUP):
-		var node := node_variant as Node
-		if node == null or node == shooter:
-			continue
-		if not node.has_method(&"combat_faction") \
-				or int(node.call(&"combat_faction")) != DamageHit.Faction.ENEMY:
-			continue
-		if node.has_method(&"is_alive") and not bool(node.call(&"is_alive")):
-			continue
-		if node.has_method(&"is_dead") and bool(node.call(&"is_dead")):
-			continue
-		found.append(node)
-	return found
+	var skip: Node = shooter if is_instance_valid(shooter) else null
+	return CombatantSense.collect(self, skip)
 
 
 func _deal(at: Vector3, struck: Node) -> void:
@@ -248,9 +236,20 @@ func _deal(at: Vector3, struck: Node) -> void:
 	if pop_radius > 0.001:
 		_deal_pop(at)
 		return
-	if struck == null or not struck.has_method(&"apply_damage"):
+	_hurt(struck, at, size)
+
+
+func _hurt(target: Node, at: Vector3, radius: float) -> void:
+	if target == null or not target.has_method(&"apply_damage"):
 		return
-	struck.call(&"apply_damage", _make_hit(at, size).resolved_for(struck))
+	# Confirmed touch: skip capsule falloff so a surface graze still hurts.
+	var hit := _make_hit(at, radius)
+	hit.falloff = 0.0
+	var result: Variant = target.call(&"apply_damage", hit)
+	var dealt := float(result) if result is float or result is int else 0.0
+	if dealt > 0.0 and is_instance_valid(shooter) \
+			and shooter.has_method(&"combat_damage_dealt"):
+		shooter.call(&"combat_damage_dealt", target, dealt, hit)
 
 
 func _deal_pop(at: Vector3) -> void:
@@ -297,8 +296,11 @@ func _scar(at: Vector3) -> void:
 
 
 func _play_burst(at: Vector3) -> void:
-	var world := get_parent()
 	var reach := pop_radius if pop_radius > 0.001 else maxf(size * 1.8, 0.45)
+	if pop_radius <= 0.001:
+		CrawlerShotSense.pop(self, at, reach, GLOW_COLOR)
+		return
+	var world := get_parent()
 	EnergyExplosion.burst(world, at, reach, GLOW_COLOR, 0.22)
 	CrawlerBurst.play(world, at, _up(), maxf(reach * 0.7, 0.8), POP_COLORS)
 
@@ -312,9 +314,7 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(node: Node) -> Vector3:
-	if node.has_method(&"combat_position"):
-		return node.call(&"combat_position")
-	return (node as Node3D).global_position
+	return CombatantSense.point_of(node)
 
 
 func _up() -> Vector3:

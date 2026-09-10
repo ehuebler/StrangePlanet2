@@ -63,10 +63,14 @@ func combat_display_name() -> String:
 
 
 func combat_position() -> Vector3:
+	if _hit_ready:
+		return super.combat_position()
 	return global_position + _up() * (body_height() * 0.22)
 
 
 func combat_radius() -> float:
+	if _hit_ready:
+		return super.combat_radius()
 	return body_width() * 0.55
 
 

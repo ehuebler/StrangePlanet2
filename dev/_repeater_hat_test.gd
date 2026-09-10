@@ -67,10 +67,43 @@ func _ready() -> void:
 	_player._repeater_cooldown = 0.0
 	_player._tick_repeater_hat(0.02)
 	_expect(fired.size() >= 2, "one pulse taps every equipped ability")
+	var eyes := _player.ability_controller().ability_in(0)
+	_expect(eyes != null and eyes.is_held(),
+		"laser eyes keep the burst after the repeater tap")
+	_expect(_player.laser_beams().is_lit(),
+		"laser eyes stay drawn after the repeater tap")
 	_player._tick_repeater_hat(0.02)
 	_expect(fired.size() == 2, "the cap waits out its cadence before the next pulse")
+	if eyes != null:
+		eyes.tick(CrawlerRules.LASER_DURATION + 0.05)
 	_player._tick_repeater_hat(progress.repeater_interval())
 	_expect(fired.size() >= 4, "the next pulse fires after the shortened wait")
+
+	CrawlerKit.clear_session()
+	_player.crawler_kit.seed_starter()
+	_expect(_player.crawler_kit.shop_grant("laser_eyes"),
+		"a second laser eyes can sit next to the first")
+	_expect(_player.crawler_kit.shop_grant("icicle"),
+		"icicle can sit with two laser eyes")
+	await get_tree().process_frame
+	fired.clear()
+	_player._repeater_cooldown = 0.0
+	_player._tick_repeater_hat(0.02)
+	var named := PackedStringArray()
+	for raw: String in fired:
+		named.append(CrawlerCatalog.ability_id(raw))
+	_expect(named.has("laser_eyes") and named.has("icicle"),
+		"the cap taps both laser eyes and icicle")
+	_expect(named.count("laser_eyes") >= 2,
+		"both laser eyes fire on the same pulse")
+	var first := _player.ability_controller().ability_in(0)
+	var second := _player.ability_controller().ability_in(1)
+	_expect(first != null and first.is_held() and second != null and second.is_held(),
+		"both laser eyes keep their bursts after the tap")
+	_expect(_player.laser_beams().is_lit(),
+		"two laser eyes still draw after the tap")
+	_expect(_player.laser_beams().pair_count() >= 2,
+		"both laser eyes draw their own pair")
 
 	_player.queue_free()
 	await get_tree().process_frame

@@ -84,7 +84,7 @@ func _on_beam_dark() -> void:
 func _release() -> void:
 	if player != null:
 		player.lightning_bolts().stop()
-		player.laser_beams().stop()
+		player.laser_beams().stop(slot)
 	_forget_dwell()
 	_on_beam_dark()
 
@@ -118,10 +118,9 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 	shooter.lightning_bolts().aim_many(
 		from, chains, _tint_of(shooter, id), maxf(beam_width, 0.28),
 		CrawlerReach.far_cast(stats))
-	var per_tick := float(stats.get("damage", 0.0))
-	if CrawlerRules.active() and shooter.has_method(&"crawler_damage_scale"):
-		per_tick *= float(shooter.call(&"crawler_damage_scale"))
-	per_tick *= step
+	var per_tick := CrawlerRules.ability_hit_damage(
+		shooter, id, float(stats.get("damage", 0.0)), stats,
+		LaserEyes._damage_hz_for(id, stats))
 	if radius < 0.0:
 		radius = float(stats.get("radius", CrawlerRules.LIGHTNING_RADIUS))
 	var knockback := maxf(float(stats.get("knockback", 0.0)), 0.0)

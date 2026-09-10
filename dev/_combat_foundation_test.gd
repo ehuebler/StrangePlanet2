@@ -46,6 +46,16 @@ class TestEnemy extends Node3D:
 		reflected_by = source_peer
 
 
+class TestPillEnemy extends TestEnemy:
+	func combat_capsule() -> Dictionary:
+		var at := global_position
+		return {
+			"a": at + Vector3(2.2, 0.0, 0.0),
+			"b": at + Vector3(2.2, 0.0, 0.0),
+			"radius": 0.35,
+		}
+
+
 class TestFlora extends Node3D:
 	var hits := 0
 
@@ -76,6 +86,7 @@ func _ready() -> void:
 
 	_check_status_object()
 	_check_hit_geometry_and_wire()
+	_check_combatant_sense()
 
 	var world_a := _make_world("WorldA")
 	var flora_a := TestFlora.new()
@@ -210,6 +221,21 @@ func _check_hit_geometry_and_wire() -> void:
 	_expect(edge_damage > 20.0 and edge_damage < 30.0,
 		"dissipating combat area resolves falloff at target body bounds")
 	edge_target.free()
+	var lanky := TestPillEnemy.new()
+	add_child(lanky)
+	lanky.global_position = Vector3(12.0, 0.0, 0.0)
+	var graze := DamageHit.beam(
+		Vector3(14.2, 0.0, -4.0), Vector3(14.2, 0.0, 4.0), 0.2, 9.0)
+	graze.faction = DamageHit.Faction.PLAYER
+	_expect(graze.affects_combatant(lanky)
+			and not graze.reaches(lanky.global_position, lanky.combat_radius()),
+		"a laser that misses the origin still hits a mesh-shaped pill")
+	var along := DamageHit.first_combatant_along(
+		self, Vector3(0.0, 0.0, 0.0), Vector3(20.0, 0.0, 0.0), 0.2)
+	_expect(not along.is_empty() and along.get("combatant") == lanky
+			and lanky.global_position.distance_to(along.get("at", Vector3.ZERO)) < 3.0,
+		"an aim ray stops on the first combatant pill")
+	lanky.free()
 	var copy := DamageHit.from_wire(hit.to_wire())
 	_expect(copy.shape == DamageHit.Shape.CYLINDER
 		and copy.faction == DamageHit.Faction.ENEMY
@@ -231,6 +257,105 @@ func _check_hit_geometry_and_wire() -> void:
 		and forged.status.is_empty() and not forged.parryable
 		and is_zero_approx(forged.reflection),
 		"host sanitizer strips enemy consequences from hero packets")
+
+
+func _check_combatant_sense() -> void:
+	CombatantSense.invalidate()
+	CrawlerShotSense.invalidate()
+	var near := TestEnemy.new()
+	near.name = "SenseNear"
+	add_child(near)
+	near.global_position = Vector3(2.0, 0.0, 0.0)
+	var far := TestEnemy.new()
+	far.name = "SenseFar"
+	add_child(far)
+	far.global_position = Vector3(9.0, 0.0, 0.0)
+	var found := CombatantSense.nearest_enemy(self, Vector3.ZERO, 12.0)
+	_expect(found == near, "projectile sense locks the closest live enemy")
+	var along := CombatantSense.first_along(
+		self, Vector3(-1.0, 0.0, 0.0), Vector3(12.0, 0.0, 0.0), 0.2)
+	_expect(along == near, "a shot sweep hits the first body on its path")
+	var steered := CrawlerHoming.steer(
+		Vector3(0.0, 0.0, -8.0), Vector3.ZERO,
+		{"homing": 8.0, "homing_range": 12.0}, self, 0.2, 8.0)
+	_expect(steered.x > 0.2, "shared homing turns toward the cached enemy")
+	var bubble := CrawlerBubble.new()
+	add_child(bubble)
+	bubble.global_position = Vector3(-0.4, 0.0, 0.0)
+	bubble.size = 0.2
+	_expect(bubble._victim_along(bubble.global_position,
+			near.global_position) == near,
+		"bubbles use the shared board instead of walking the combatant group")
+	bubble.free()
+	var pill := TestPillEnemy.new()
+	pill.name = "SensePill"
+	add_child(pill)
+	pill.global_position = Vector3(4.0, 0.0, 0.0)
+	var graze := CrawlerBubble.new()
+	graze.authoritative = true
+	graze.damage = 12.0
+	graze.size = 0.2
+	add_child(graze)
+	var skin := pill.combat_radius() + graze.size
+	var at := pill.global_position + Vector3(-skin, 0.0, 0.0)
+	graze.global_position = at
+	graze._deal(at, pill)
+	_expect(is_equal_approx(pill.taken, 12.0),
+		"a bubble that touches a mob still deals its damage on a graze")
+	graze.free()
+	pill.free()
+	var flock: Array[CrawlerBubble] = []
+	for index in 6:
+		var orb := CrawlerBubble.new()
+		orb.authoritative = false
+		orb.size = 0.2
+		orb.velocity = Vector3(4.0, 0.0, 0.0)
+		add_child(orb)
+		orb.global_position = Vector3(-2.0, 0.2 * float(index), 0.0)
+		flock.append(orb)
+	_expect(not flock[0].is_physics_processing(),
+		"the shot board turns off per-bubble physics callbacks")
+	_expect(CrawlerShotSense.count() >= 6,
+		"live bubbles register on the shared shot board")
+	var before := flock[0].global_position
+	CrawlerShotSense.direct(0.1, flock[0])
+	_expect(flock[0].global_position.x > before.x + 0.2,
+		"one director tick moves the whole bubble flock")
+	var first_prey := CrawlerShotSense.prey(
+		self, near.global_position, 12.0, null)
+	var again := CrawlerShotSense.prey(
+		self, near.global_position + Vector3(0.4, 0.0, 0.0), 12.0, null)
+	_expect(first_prey == near and again == near,
+		"homing shots in one cell share the same prey lookup")
+	var orphan := CrawlerGrayShot.new()
+	add_child(orphan)
+	CrawlerShotSense.drop(orphan)
+	var gone := Node3D.new()
+	add_child(gone)
+	orphan.shooter = gone
+	gone.free()
+	orphan._victim_along(Vector3.ZERO, Vector3(1.0, 0.0, 0.0))
+	_expect(orphan._live_shooter() == null,
+		"a gray orb clears a freed shooter instead of crashing")
+	orphan.free()
+	for orb in flock:
+		orb.free()
+	CrawlerShotSense.invalidate()
+	near.free()
+	far.free()
+	var runner := TestEnemy.new()
+	runner.name = "SenseRunner"
+	add_child(runner)
+	runner.remove_from_group(DamageHit.COMBATANT_GROUP)
+	runner.add_to_group(&"network_players")
+	runner.global_position = Vector3(3.0, 0.0, 0.0)
+	CombatantSense.invalidate()
+	_expect(CombatantSense.first_shot_along(
+			self, Vector3.ZERO, Vector3(4.0, 0.0, 0.0), 0.3, null, false)
+			== runner,
+		"enemy shots still see network players that are not combatants")
+	runner.free()
+	CombatantSense.invalidate()
 
 
 func _check_scoped_factions(player: OnlinePlayer, enemy: TestEnemy,
@@ -489,8 +614,8 @@ func _check_juke(world: GameWorld, player: OnlinePlayer,
 	player._juke_cooldown_left = 0.0
 	var look := player.look_direction()
 	look.y = 0.0
-	_expect(player._juke_wish_direction().dot(look) < 0.0,
-		"juke goes backward unless a steer key is held")
+	_expect(player._juke_wish_direction().dot(look) > 0.0,
+		"juke goes forward unless a steer key is held")
 	Input.action_press("move_backward")
 	_expect(player._juke_wish_direction().dot(look) < 0.0,
 		"holding S still jukes backward")

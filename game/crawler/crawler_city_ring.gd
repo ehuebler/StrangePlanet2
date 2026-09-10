@@ -2,20 +2,15 @@ class_name CrawlerCityRing
 extends Node3D
 
 ## A crawler city ring. Gameplay is still the volume for shops, healing,
-## and mob keep-out. On a planet a Neon Whimsy village sits in that volume;
-## tests without a planet keep the old translucent walls. Neon Fjord is the
-## default; later towns pass their own site, title, and village.
+## and mob keep-out. On a planet the authored blob village sits in that
+## volume; tests without a planet keep the old translucent walls.
 
 const GROUP := &"crawler_city_rings"
-const VILLAGE_MODEL := "res://assets/runtime/environment/neon_fjord_village.glb"
-const NIGHT_LIGHTS := preload("res://game/city/building_night_lights.gd")
-const FOLK := preload("res://game/crawler/crawler_village_folk.gd")
-const SIGN := preload("res://game/crawler/crawler_stall_sign.gd")
+const NIGHT_WISPS := preload("res://game/city/city_night_wisps.gd")
+const VILLAGE_MODEL := CrawlerAdobeSite.VILLAGE_MODEL
 const WALL_ALPHA := 0.40
 const WALL_COLOUR := Color(0.07, 0.03, 0.04, WALL_ALPHA)
 const SEGMENTS := 36
-const SIGN_HEIGHT := 3.4
-const CRESCENT_HIDDEN := Vector3(-36.0, 0.0, 24.0)
 
 var patch_id := -1
 var site_id := CrawlerRules.CITY_SITE_ID
@@ -29,6 +24,7 @@ var _wall := CrawlerRules.CITY_RING_WALL
 var _opening := CrawlerRules.CITY_RING_OPENING
 var force_village := false
 var _village: Node3D
+var _flora_ids: PackedStringArray = PackedStringArray()
 
 
 func configure(
@@ -57,32 +53,41 @@ func _ready() -> void:
 		_build_walls()
 	_ensure_waypoint()
 	_register_flora()
+	_attach_night_wisps()
 
 
 func _exit_tree() -> void:
+	for flora_id: String in _flora_ids:
+		BuildingFloraClear.unregister(flora_id)
+	_flora_ids.clear()
 	BuildingFloraClear.unregister_node(self)
 
 
 func _register_flora() -> void:
-	var direction := global_position
+	for flora_id: String in _flora_ids:
+		BuildingFloraClear.unregister(flora_id)
+	_flora_ids.clear()
+	var planet := _planet_host()
+	if planet == null or _village == null:
+		return
 	var planet_radius := 8000.0
-	var walk: Node = get_parent()
-	while walk != null:
-		if walk is Planet:
-			var planet := walk as Planet
-			direction = planet.to_local(global_position)
-			if planet.shape != null:
-				planet_radius = planet.shape.radius
-			break
-		walk = walk.get_parent()
-	if direction.length_squared() < 0.25:
-		direction = world_up()
-	BuildingFloraClear.register(
-		str(get_instance_id()),
-		direction,
-		CrawlerRules.SITE_CLEAR_RADIUS,
-		planet_radius,
-		0.0)
+	if planet.shape != null:
+		planet_radius = planet.shape.radius
+	for child in _village.get_children():
+		var building := child as Node3D
+		if building == null or not str(building.name).begins_with("adobe_"):
+			continue
+		var direction := planet.to_local(building.global_position)
+		if direction.length_squared() < 0.25:
+			continue
+		var flora_id := "%s/%s" % [get_instance_id(), building.name]
+		BuildingFloraClear.register(
+			flora_id,
+			direction,
+			CrawlerAdobeSite.footprint_metres(building),
+			planet_radius,
+			CrawlerAdobeSite.FLORA_PAD)
+		_flora_ids.append(flora_id)
 
 
 func radius() -> float:
@@ -158,14 +163,25 @@ func in_site_clear(at: Vector3) -> bool:
 
 
 func clears_patch_mobs_at(at: Vector3, players: Array = []) -> bool:
-	if contains_point(at):
+	if contains_point(at) or blocks_near(at):
 		return true
-	if not in_site_clear(at):
-		return false
 	var crowd := players
 	if crowd.is_empty() and is_inside_tree():
 		crowd = living_players(get_tree())
-	return CrawlerRules.all_players_inside_city(crowd, self)
+	if not CrawlerRules.any_player_at_city(crowd, self):
+		return false
+	if in_site_clear(at) or global_position.distance_to(at) \
+			<= keepout_radius() + CrawlerRules.AGRO_RANGE:
+		return true
+	for item: Variant in crowd:
+		var player := item as Node3D
+		if player == null or not is_instance_valid(player):
+			continue
+		if not blocks_near(player.global_position):
+			continue
+		if player.global_position.distance_to(at) <= CrawlerRules.SITE_CLEAR_RADIUS:
+			return true
+	return false
 
 
 static func living_players(tree: SceneTree) -> Array:
@@ -297,54 +313,24 @@ func _wall_material() -> StandardMaterial3D:
 func _attach_village() -> bool:
 	if not force_village and _planet_host() == null:
 		return false
-	if not ResourceLoader.exists(village_model):
+	if not CrawlerAdobeSite.city_ready():
 		return false
 	var held := get_node_or_null("Village") as Node3D
 	if held != null:
 		_village = held
-		NIGHT_LIGHTS.bind(held, _planet_host())
-		_seed_folk()
 		refresh_stall_signs()
 		return true
-	var packed := load(village_model) as PackedScene
-	if packed == null:
-		return false
-	var body := packed.instantiate() as Node3D
-	if body == null:
-		return false
-	body.name = "Village"
-	add_child(body)
-	PatchMonuments.wire_interior_collision(body)
-	BuildingFoundation.seat(body, _planet_host())
-	NIGHT_LIGHTS.bind(body, _planet_host())
-	_village = body
-	_seed_folk()
+	var village := Node3D.new()
+	village.name = "Village"
+	add_child(village)
+	CrawlerAdobeSite.scatter_city(village, city_key(), _radius, _planet_host())
+	_village = village
 	refresh_stall_signs()
 	return true
 
 
-func _seed_folk() -> void:
-	if _village == null or _village.get_node_or_null("VillageFolk") != null:
-		return
-	var folk = FOLK.new()
-	_village.add_child(folk)
-	folk.populate(_village, 91031 + patch_id, _hidden_local())
-
-
-func _hidden_local() -> Vector3:
-	if village_model == CrawlerRules.CRESCENT_VILLAGE:
-		return CRESCENT_HIDDEN
-	return Vector3.ZERO
-
-
-func refresh_stall_signs(tries := 0) -> void:
-	if _village == null or not is_inside_tree():
-		if tries < 16:
-			call_deferred(&"refresh_stall_signs", tries + 1)
-		return
+func refresh_stall_signs(_tries := 0) -> void:
 	_clear_stall_signs()
-	for shop_id: String in _hours_ledger().signed_shops_for(city_key()):
-		_mount_stall_sign(shop_id)
 
 
 func _clear_stall_signs() -> void:
@@ -358,53 +344,6 @@ func _clear_stall_signs() -> void:
 				doomed.append(child)
 	for child: Node in doomed:
 		child.free()
-
-
-func _mount_stall_sign(shop_id: String) -> void:
-	var anchor := _stall_anchor(shop_id)
-	if anchor == null:
-		return
-	var tex := CrawlerShopIcons.texture_for(shop_id)
-	if tex == null:
-		return
-	var sign = SIGN.new()
-	sign.name = "StallSign_%s" % shop_id
-	sign.texture = tex
-	add_child(sign)
-	sign.global_position = anchor.global_position + world_up() * SIGN_HEIGHT
-
-
-func _stall_anchor(shop_id: String) -> Node3D:
-	var mark_name := CrawlerShopIcons.stall_mark(shop_id)
-	if not mark_name.is_empty():
-		var found := find_child(mark_name, true, false)
-		if found is Node3D:
-			return found as Node3D
-	var mesh_name := CrawlerShopIcons.stall_name(shop_id)
-	if not mesh_name.is_empty():
-		var found := find_child(mesh_name, true, false)
-		if found is Node3D:
-			return found as Node3D
-	if _village == null:
-		return null
-	var mark := CrawlerVillageFolk._named_contains(_village, mark_name) as Node3D
-	if mark != null:
-		return mark
-	return CrawlerVillageFolk._named_contains(_village, mesh_name) as Node3D
-
-
-func _hours_ledger() -> CrawlerProgress:
-	if is_inside_tree():
-		for node_variant: Variant in get_tree().get_nodes_in_group("network_players"):
-			var player := node_variant as OnlinePlayer
-			if player != null and player.crawler_progress != null:
-				return player.crawler_progress
-	var ledger := CrawlerProgress.new()
-	if not CrawlerProgress.session_payload.is_empty():
-		ledger.from_dict(CrawlerProgress.session_payload)
-	elif ledger.statue_seed == 0:
-		ledger.statue_seed = 1
-	return ledger
 
 
 func village() -> Node3D:
@@ -432,12 +371,20 @@ func _ensure_waypoint() -> Landmark:
 	if mark.get_parent() != self:
 		add_child(mark)
 	if CrawlerRules.starts_visible(site_id):
-		mark.unlock_waypoint()
+		mark.unlock_waypoint(not CrawlerRules.sandbox())
 	else:
 		CrawlerRules.apply_crawler_waypoint_tint(mark)
 	if mark.is_inside_tree() and planet != null:
 		mark.place()
 	return mark
+
+
+func _attach_night_wisps() -> void:
+	if get_node_or_null("NightWisps") != null:
+		return
+	var wisps := NIGHT_WISPS.new() as Node3D
+	wisps.name = "NightWisps"
+	add_child(wisps, false, Node.INTERNAL_MODE_BACK)
 
 
 func _planet_host() -> Planet:

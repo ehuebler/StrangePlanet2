@@ -6,6 +6,7 @@ extends Control
 signal finished
 
 const HOLD := 2.15
+const FALL := 0.42
 const RED := Color("ef151f")
 const GOLD := Color("ffd45a")
 const LEAF := Color("5dcf3a")
@@ -18,6 +19,7 @@ var _leaves := false
 var _title: Label
 var _sub: Label
 var _hint: Label
+var _column: VBoxContainer
 var _particles: Array[Dictionary] = []
 
 
@@ -27,6 +29,7 @@ func _init() -> void:
 	z_index = 80
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_meta(&"crt_skip", true)
 
 
 static func present(
@@ -41,11 +44,19 @@ static func present(
 	var existing := host.get_node_or_null("CrawlerBossTitle")
 	if existing != null:
 		existing.queue_free()
+	var layer := host.get_node_or_null("CrawlerBossTitleLayer") as CanvasLayer
+	if layer != null:
+		layer.queue_free()
+	layer = CanvasLayer.new()
+	layer.name = "CrawlerBossTitleLayer"
+	layer.layer = 80
+	layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	host.add_child(layer)
 	var card = load("res://ui/combat/crawler_boss_title.gd").new()
 	card._headline = headline
 	card._subtitle = subtitle
 	card._leaves = with_leaves
-	host.add_child(card)
+	layer.add_child(card)
 	if show_skip:
 		card.show_skip()
 	return card
@@ -62,31 +73,39 @@ func show_skip() -> void:
 
 
 func _ready() -> void:
+	_column = VBoxContainer.new()
+	_column.name = "TitleColumn"
+	_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_column.alignment = BoxContainer.ALIGNMENT_CENTER
+	_column.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_column.offset_left = 24.0
+	_column.offset_right = -24.0
+	_column.offset_top = -220.0
+	_column.offset_bottom = -80.0
+	add_child(_column)
 	_title = Label.new()
+	_title.name = "BossHeadline"
 	_title.text = _headline
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_title.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_title.offset_top = 0.0
-	_title.offset_bottom = 0.0
 	_title.add_theme_font_size_override(&"font_size", 56)
 	_title.add_theme_color_override(&"font_color", Color(1.0, 0.96, 0.88, 1.0))
 	_title.add_theme_color_override(&"font_outline_color", RED)
 	_title.add_theme_constant_override(&"outline_size", 12)
 	_title.visible = not _headline.is_empty()
-	add_child(_title)
+	_column.add_child(_title)
 	_sub = Label.new()
+	_sub.name = "BossSubtitle"
 	_sub.text = _subtitle
 	_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_sub.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_sub.add_theme_font_size_override(&"font_size", 28)
+	_sub.add_theme_font_size_override(&"font_size", 30)
 	_sub.add_theme_color_override(&"font_color", Color(0.82, 0.96, 0.62, 1.0))
 	_sub.add_theme_color_override(&"font_outline_color", Color(0.08, 0.18, 0.04, 1.0))
 	_sub.add_theme_constant_override(&"outline_size", 8)
 	_sub.visible = not _subtitle.is_empty()
-	add_child(_sub)
+	_column.add_child(_sub)
 	_hint = Label.new()
 	_hint.text = "HOLD SPACE TO SKIP"
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -101,10 +120,6 @@ func _ready() -> void:
 	_hint.add_theme_color_override(&"font_color", Color(1.0, 1.0, 1.0, 0.72))
 	_hint.visible = false
 	add_child(_hint)
-	if _title.visible:
-		CrtType.watch(_title, true)
-	if _sub.visible:
-		CrtType.watch(_sub, true)
 	if _leaves:
 		_seed_leaves()
 	_drive()
@@ -125,21 +140,24 @@ func _finish() -> void:
 		return
 	_done = true
 	finished.emit()
+	var layer := get_parent()
 	queue_free()
+	if layer is CanvasLayer:
+		layer.queue_free()
 
 
 func _drive() -> void:
-	var fall := 1.0 - pow(1.0 - clampf(_age / 0.28, 0.0, 1.0), 3.0)
+	var fall := 1.0 - pow(1.0 - clampf(_age / FALL, 0.0, 1.0), 3.0)
 	var fade := 1.0 - smoothstep(HOLD - 0.22, HOLD, _age)
-	var top := size.y * 0.18
+	var top := size.y * 0.16
+	if _column != null:
+		_column.offset_top = lerpf(-220.0, top, fall)
+		_column.offset_bottom = _column.offset_top + 140.0
+		_column.modulate.a = fade
 	if _title != null:
-		_title.offset_top = lerpf(-120.0, top, fall)
-		_title.offset_bottom = _title.offset_top + 86.0
 		_title.modulate.a = fade
 	if _sub != null:
-		var pop := smoothstep(0.22, 0.55, _age)
-		_sub.offset_top = top + 78.0
-		_sub.offset_bottom = _sub.offset_top + 40.0
+		var pop := smoothstep(0.18, 0.48, _age)
 		_sub.modulate.a = pop * fade
 
 
@@ -156,7 +174,7 @@ func _seed_leaves() -> void:
 func _draw() -> void:
 	if not _leaves or size.x < 8.0:
 		return
-	var centre := Vector2(size.x * 0.5, size.y * 0.18 + 96.0)
+	var centre := Vector2(size.x * 0.5, size.y * 0.16 + 108.0)
 	var fade := 1.0 - smoothstep(HOLD - 0.28, HOLD, _age)
 	var pop := smoothstep(0.18, 0.5, _age)
 	for row: Dictionary in _particles:

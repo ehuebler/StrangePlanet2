@@ -46,6 +46,39 @@ class TestBoss extends Node3D:
 		boundary_visible = shown
 
 
+class TestCrawlerBoss extends Node3D:
+	var engaged := true
+	var boss_health := 500.0
+	var maximum := 500.0
+	var radius := 200.0
+	var distance := 40.0
+	var boundary_visible := false
+
+	func _ready() -> void:
+		add_to_group(BossAdapter.CRAWLER_GROUP)
+
+	func combat_display_name() -> String:
+		return "The Giving Tree"
+
+	func is_engaged() -> bool:
+		return engaged
+
+	func health() -> float:
+		return boss_health
+
+	func maximum_health() -> float:
+		return maximum
+
+	func battle_radius() -> float:
+		return radius
+
+	func arena_distance_to(_body: Node3D) -> float:
+		return distance
+
+	func set_arena_boundary_visible(shown: bool) -> void:
+		boundary_visible = shown
+
+
 func _ready() -> void:
 	_snapshot_settings()
 	for item_id: String in ItemDB.ITEMS:
@@ -73,6 +106,7 @@ func _ready() -> void:
 	await _check_fps_overlay()
 	await _check_compact_player_hud()
 	await _check_boss_bar()
+	await _check_crawler_tree_bar()
 	await _check_flightless_chip()
 	await _check_hero_status_rows()
 	await _check_parry_indicator()
@@ -103,8 +137,11 @@ func _check_fps_overlay() -> void:
 		"the FPS chart sits in the upper-right")
 	await get_tree().process_frame
 	await get_tree().process_frame
+	var readout := meter.find_child("FpsReadout", true, false) as Label
 	_expect(int(meter.call(&"sample_count")) >= 2
 			and float(meter.call(&"current_fps")) > 0.0
+			and meter.has_method(&"current_speed")
+			and readout != null and readout.text.contains("m/s")
 			and meter.find_child("FpsChart", true, false) != null
 			and meter.find_child("FpsHitchNote", true, false) == null,
 		"the FPS line chart records frames as they land")
@@ -166,9 +203,9 @@ func _check_compact_player_hud() -> void:
 			themed = themed and (node as ItemSlot).hud_style
 		var juke_slot := weapon_bar.find_child("JukeSlot", true, false) as ItemSlot
 		_expect(themed, "all four ability squares use the red HUD style")
-		_expect(juke_slot != null and juke_slot.badge == "F" and juke_slot.visible
+		_expect(juke_slot != null and juke_slot.badge == "RMB" and juke_slot.visible
 				and juke_slot.forced_item_id == CrawlerProgress.STAT_JUKE,
-			"juke sits on the hotbar as an F tile")
+			"juke sits on the hotbar as an RMB tile")
 
 		_player.abilities.set_item(0, "nuke")
 		await get_tree().process_frame
@@ -264,6 +301,43 @@ func _check_boss_bar() -> void:
 	_hud.refresh(0.16)
 	_expect(bar.visible and _boss.boundary_visible,
 		"re-engagement shows the bar and ground boundary again")
+
+
+func _check_crawler_tree_bar() -> void:
+	_boss.engaged = false
+	_boss.distance = 5000.0
+	_hud._session_engaged = false
+	_hud._last_boss_health = -1.0
+	_hud._boss = _boss
+	var tree := TestCrawlerBoss.new()
+	tree.name = "GivingTree"
+	_world.add_child(tree)
+	await get_tree().process_frame
+	_expect(BossAdapter.find_in_tree(_player) == tree,
+		"an engaged giving tree wins the HUD over idle Bigfoot")
+	_hud.refresh(0.16)
+	var bar: BossBar = _hud.call("boss_bar")
+	var title := ""
+	if bar != null:
+		var label := bar.find_child("Label", true, false) as Label
+		if label == null:
+			for node: Node in bar.find_children("*", "Label", true, false):
+				title = (node as Label).text
+				if title == "The Giving Tree":
+					break
+		else:
+			title = label.text
+	_expect(bar != null and bar.visible and title == "The Giving Tree",
+		"the giving tree health bar appears while Bigfoot is idle")
+	_expect(tree.boundary_visible,
+		"the giving tree arena ring follows its own health bar")
+	tree.queue_free()
+	await get_tree().process_frame
+	_boss.distance = 50.0
+	_boss.engaged = false
+	_hud._session_engaged = false
+	_hud._last_boss_health = -1.0
+	_hud.refresh(0.16)
 
 
 func _check_flightless_chip() -> void:
@@ -472,6 +546,20 @@ func _check_local_feedback() -> void:
 	_expect(gold, "kills float a golden $ amount")
 	_expect(xp, "kills float blue XP")
 	await _check_number_jiggle(layer as DamageNumberLayer)
+	var before := _player.health()
+	var incoming := [0.0]
+	var watch := func(event: DamageNumberEvent) -> void:
+		if event != null and event.incoming:
+			incoming[0] = event.amount
+	_player.combat_feedback().damage_number.connect(watch)
+	var poke := DamageHit.impact(_player.combat_position(), 1.2, 8.0)
+	poke.faction = DamageHit.Faction.ENEMY
+	var taken := _player.apply_damage(poke)
+	await get_tree().process_frame
+	_expect(incoming[0] > 0.0, "a mob hit floats its damage off you")
+	_player.combat_feedback().damage_number.disconnect(watch)
+	if taken > 0.0:
+		_player.stats.set_health(before)
 	remote.queue_free()
 
 

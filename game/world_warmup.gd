@@ -1,13 +1,16 @@
 class_name WorldWarmup
 extends Node3D
 
-## Everything worth paying for before a game starts rather than during it.
+## Graphics and terrain work that used to block New Game.
+##
+## Crawler and sandbox only wait on site and ring assignment. Shader compiles,
+## plant prep, and quadtree settle keep running after the body is already in
+## the run. Story still pays the whole bill on the title bar.
 ##
 ## The world is never loaded when New Game is pressed — it has been rendering
 ## behind the title screen the whole time — so there is no scene to stream in.
-## The home screen's small red/green bar measures this warm-up instead: work the
-## first few minutes of play would otherwise do a piece at a time, in frames
-## the player is trying to fly in:
+## The home screen's small red/green bar measures the work that still has to
+## finish before a session opens:
 ##
 ##   - **Graphics pipelines.** A material costs a compile the first time it is
 ##     actually drawn, and from the spawn nine kilometres up almost nothing has
@@ -61,19 +64,51 @@ const WARM_VIEW_SIZE := Vector2i(256, 256)
 var compiled := 0
 
 
-## Runs the whole warm-up. Awaited by the caller while the ordinary title screen
-## remains visible.
+func _init() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
+
+## Runs the whole warm-up. Story still awaits this on the title screen.
 func run(world: Node, camera: Camera3D, _game_mode := "") -> void:
-	var planet := world.find_child("Planet", true, false) as Planet
-	if CrawlerRules.uses_mode(_game_mode) and CrawlerMeta._test_payload == null:
+	await assign_run(world, _game_mode, false)
+	await run_graphics(world, camera)
+
+
+## Picks the crawler layout and aims the planet at the pad. Sites and rings
+## have to exist before the body appears; everything else can stream in-game.
+func assign_run(world: Node, game_mode := "", finish := true) -> void:
+	if world == null or not is_instance_valid(world):
+		return
+	if CrawlerRules.uses_mode(game_mode) and CrawlerMeta._test_payload == null:
 		progressed.emit(0.0, "Choosing a run")
 		await get_tree().process_frame
+		if not is_instance_valid(world):
+			return
 		CrawlerRun.clear()
 		CrawlerRun.pick_random()
 		progressed.emit(0.04, "Loading world layout")
 		await get_tree().process_frame
+		if not is_instance_valid(world):
+			return
+	var planet := world.find_child("Planet", true, false) as Planet
+	if planet != null and is_instance_valid(planet):
+		_aim_crawler_spawn(planet)
+	if finish:
+		progressed.emit(1.0, "Ready")
+
+
+## Plant prep, shader compiles, and terrain settle. Safe to run after the
+## session is live — it uses its own offscreen viewport.
+func run_graphics(world: Node, camera: Camera3D) -> void:
+	if world == null or not is_instance_valid(world):
+		return
 	progressed.emit(0.08, "Waking the planet")
 	await get_tree().process_frame
+	if not is_instance_valid(world):
+		return
+	var planet := world.find_child("Planet", true, false) as Planet
+	if planet != null and not is_instance_valid(planet):
+		planet = null
 
 	var draws := await _collect(world)
 	compiled = draws.size()
@@ -83,6 +118,9 @@ func run(world: Node, camera: Camera3D, _game_mode := "") -> void:
 	await _compile(draws, camera)
 	progressed.emit(0.72, "Building terrain")
 
+	if planet != null and not is_instance_valid(planet):
+		planet = null
+	_aim_crawler_spawn(planet)
 	await _settle_terrain(planet)
 	# The offscreen viewport and its last batch are freed deferred. Returning
 	# after that has happened keeps the warm-up a self-contained transient node.
@@ -101,11 +139,25 @@ func _collect(world: Node) -> Array[Dictionary]:
 	var draws: Array[Dictionary] = []
 	var seen := {}
 	var species_seen := {}
+	if world == null or not is_instance_valid(world):
+		return draws
 	var nodes := world.find_children("*", "Node3D", true, false)
 	for index in nodes.size():
-		var node: Node = nodes[index]
-		var cover := node as GroundCover
-		if cover != null:
+		# The walk yields so the start bar can move. Flora, fauna, and
+		# crawler layout keep freeing nodes on those frames; casting a
+		# freed Object is a hard crash.
+		if world == null or not is_instance_valid(world):
+			return draws
+		var raw: Variant = nodes[index]
+		if raw == null or not is_instance_valid(raw):
+			if index % 64 == 0:
+				await _yield_collect(index, nodes.size())
+			continue
+		var node := raw as Node3D
+		if node == null:
+			continue
+		if node is GroundCover:
+			var cover := node as GroundCover
 			for entry in cover.species:
 				var plant := entry as PlantSpecies
 				if plant == null or species_seen.has(plant.get_instance_id()):
@@ -116,40 +168,42 @@ func _collect(world: Node) -> Array[Dictionary]:
 					null)
 				_offer(draws, seen, plant.distant_mesh(), plant.far_material(),
 					null)
-		else:
+		elif node is FaunaSpawner:
 			var fauna := node as FaunaSpawner
-			if fauna != null:
-				# Creatures are invisible to a walk of the tree for the same reason
-				# stands are: none exist until the streamer places one, and the first
-				# one placed is the one that would otherwise stall the frame.
-				for entry in fauna.species:
-					var creature := entry as FaunaSpecies
-					if creature == null or not creature.enabled \
-							or species_seen.has(creature.get_instance_id()):
-						continue
-					species_seen[creature.get_instance_id()] = true
-					creature.prepare()
-					_offer(draws, seen, creature.template_mesh(),
-						creature.template_material(), null)
-			else:
-				var batch := node as MultiMeshInstance3D
-				if batch != null and batch.multimesh != null:
-					# Rebuilt at one instance rather than borrowed: a reef swarm's own
-					# MultiMesh holds thirty-six thousand fish and drawing it a metre
-					# from the camera to compile one pipeline would be worse than the
-					# stall it is avoiding.
-					_offer(draws, seen, batch.multimesh.mesh,
-						batch.material_override, batch.multimesh)
-				else:
-					var single := node as MeshInstance3D
-					if single != null:
-						_offer(draws, seen, single.mesh, single.material_override, null)
+			# Creatures are invisible to a walk of the tree for the same reason
+			# stands are: none exist until the streamer places one, and the first
+			# one placed is the one that would otherwise stall the frame.
+			for entry in fauna.species:
+				var creature := entry as FaunaSpecies
+				if creature == null or not creature.enabled \
+						or species_seen.has(creature.get_instance_id()):
+					continue
+				species_seen[creature.get_instance_id()] = true
+				creature.prepare()
+				_offer(draws, seen, creature.template_mesh(),
+					creature.template_material(), null)
+		elif node is MultiMeshInstance3D:
+			var batch := node as MultiMeshInstance3D
+			if batch.multimesh != null:
+				# Rebuilt at one instance rather than borrowed: a reef swarm's own
+				# MultiMesh holds thirty-six thousand fish and drawing it a metre
+				# from the camera to compile one pipeline would be worse than the
+				# stall it is avoiding.
+				_offer(draws, seen, batch.multimesh.mesh,
+					batch.material_override, batch.multimesh)
+		elif node is MeshInstance3D:
+			var single := node as MeshInstance3D
+			_offer(draws, seen, single.mesh, single.material_override, null)
 		if index % 64 == 0:
-			progressed.emit(
-				lerpf(0.02, 0.14, float(index + 1) / float(maxi(nodes.size(), 1))),
-				"Preparing plants")
-			await get_tree().process_frame
+			await _yield_collect(index, nodes.size())
 	return draws
+
+
+func _yield_collect(index: int, total: int) -> void:
+	progressed.emit(
+		lerpf(0.02, 0.14, float(index + 1) / float(maxi(total, 1))),
+		"Preparing plants")
+	await get_tree().process_frame
 
 
 func _offer(draws: Array[Dictionary], seen: Dictionary, mesh: Mesh,
@@ -271,12 +325,25 @@ func _warm_node(draw: Dictionary, slot: int) -> Node3D:
 	return batch
 
 
+## Points the quadtree at the run's pad, not the title camera over Vacationer's
+## Landing. Flora and collision then stream where the body actually arrives.
+func _aim_crawler_spawn(planet: Planet) -> void:
+	if planet == null or not is_instance_valid(planet) or not CrawlerRun.active():
+		return
+	var facing := CrawlerRun.spawn_direction()
+	if facing.length_squared() < 0.0001:
+		return
+	planet.aim_at_direction(facing)
+
+
 ## Waits for the planet to stop refining under the spawn.
 func _settle_terrain(planet: Planet) -> void:
-	if planet == null:
+	if planet == null or not is_instance_valid(planet):
 		return
 	var waited := 0
 	while waited < TERRAIN_PATIENCE:
+		if not is_instance_valid(planet):
+			return
 		var numbers := planet.statistics()
 		if int(numbers.get("pending", 0)) == 0 \
 				and int(numbers.get("requests", 0)) == 0:

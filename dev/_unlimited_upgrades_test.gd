@@ -64,15 +64,30 @@ func _ready() -> void:
 			== CrawlerRules.CLIP_BASE_MUL + CrawlerRules.CLIP_MAX_RANK + 1,
 		"extra clip ranks still raise the magazine")
 
+	var host := Control.new()
+	host.name = "UpgradeHost"
+	host.custom_minimum_size = Vector2(1280.0, 720.0)
+	host.size = Vector2(1280.0, 720.0)
+	add_child(host)
+	CrtType.watch(host)
 	var page := CrawlerStoreUpgradesPage.new()
+	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	page.configure(_player)
-	add_child(page)
+	host.add_child(page)
 	page._select(clip.token())
 	page.refresh()
+	await get_tree().process_frame
+	await get_tree().process_frame
 	var act := page.find_child("UpgradeAct_ammo", true, false) as Button
+	var act_box := CrtType.screen_rect(act)
 	_expect(act != null and act.text == "UPGRADE" and not act.disabled,
 		"the upgrade stall keeps selling a maxed stat under infinite stores")
+	_expect(CrtType.host_of(act) != null,
+		"the upgrade button wears CRT type")
+	_expect(act_box.size.x >= 48.0 and act_box.size.y >= 18.0,
+		"the upgrade button stays wide enough to read")
 	page.queue_free()
+	host.queue_free()
 
 	_finish()
 

@@ -511,6 +511,19 @@ var _night_species := PackedInt32Array()
 var _aerial_glow_radius := 0.0
 
 
+func place() -> void:
+	# Planet-wide fields stream around the viewer. Planting the node on
+	# Vacationer's Landing made every MultiMesh a multi-kilometre offset from
+	# that old teleporter, which is where a random crawler spawn is not.
+	if global_cover:
+		var was := _placing
+		_placing = true
+		transform = Transform3D.IDENTITY
+		_placing = was
+		return
+	super.place()
+
+
 func _ready() -> void:
 	super()
 	if Engine.is_editor_hint() and not editor_preview:

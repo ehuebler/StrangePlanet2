@@ -111,13 +111,26 @@ static func unregister_node(host: Node) -> void:
 
 
 static func mesh_radius(root: Node) -> float:
+	var span := _aabb_half_xz(root)
+	return 24.0 if span < 0.0 else maxf(span, 8.0)
+
+
+static func mesh_span(root: Node) -> float:
+	var span := _aabb_half_xz(root)
+	return 2.0 if span < 0.0 else maxf(span, 1.6)
+
+
+static func _aabb_half_xz(root: Node) -> float:
 	if root == null:
-		return 24.0
+		return -1.0
 	var found := false
 	var bounds := AABB()
+	var start := Transform3D.IDENTITY
+	if root is Node3D:
+		start = Transform3D(Basis.from_scale((root as Node3D).scale), Vector3.ZERO)
 	var stack: Array[Dictionary] = [{
 		"node": root,
-		"xform": Transform3D.IDENTITY,
+		"xform": start,
 	}]
 	while not stack.is_empty():
 		var item: Dictionary = stack.pop_back()
@@ -140,8 +153,8 @@ static func mesh_radius(root: Node) -> float:
 				next = xform * (child as Node3D).transform
 			stack.append({"node": child, "xform": next})
 	if not found:
-		return 24.0
-	return maxf(maxf(bounds.size.x, bounds.size.z) * 0.5, 8.0)
+		return -1.0
+	return maxf(bounds.size.x, bounds.size.z) * 0.5
 
 
 static func _cell(at: Vector3) -> Vector3i:

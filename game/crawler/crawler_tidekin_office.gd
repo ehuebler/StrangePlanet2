@@ -9,6 +9,7 @@ const GROUP := &"crawler_tidekin_office"
 const PER_VARIANT := 4
 const FLOOR_Y: Array[float] = [1.0, 5.5, 10.0, 14.5, 19.0, 23.5]
 const LEAVE_PAD := 12.0
+const NEAR_RANGE := 80.0
 const PATH_X: Array[float] = [-18.0, -6.0, 6.0, 18.0]
 const PATH_Z: Array[float] = [-16.0, 0.0, 16.0, 26.0]
 
@@ -128,6 +129,11 @@ func _process(_delta: float) -> void:
 		if _seeded:
 			_clear()
 		return
+	if not _players_nearby():
+		if _auto or _seeded:
+			_auto = false
+			_clear()
+		return
 	if _anyone_inside():
 		_auto = true
 		if not _seeded:
@@ -136,6 +142,17 @@ func _process(_delta: float) -> void:
 	if _auto and _everyone_outside():
 		_auto = false
 		_clear()
+
+
+func _players_nearby() -> bool:
+	var at := _site.global_position if _site != null else global_position
+	if not at.is_finite():
+		return false
+	var reach2 := NEAR_RANGE * NEAR_RANGE
+	for player: Node3D in _players():
+		if player.global_position.distance_squared_to(at) <= reach2:
+			return true
+	return false
 
 
 func _anyone_inside() -> bool:

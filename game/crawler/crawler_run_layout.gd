@@ -5,11 +5,8 @@ extends Node
 ## waypoints from city entry and quests.
 
 const GROUP := &"crawler_run_layout"
-const CASTLE_MODEL := "res://assets/runtime/environment/stormwatch_castle.glb"
-const OFFICE_MODEL := "res://assets/runtime/environment/meridian_office_tower.glb"
-const NIGHT_LIGHTS := preload("res://game/city/building_night_lights.gd")
-const TIDEKIN_OFFICE := preload("res://game/crawler/crawler_tidekin_office.gd")
-const CASTLE_GARRISON := preload("res://game/crawler/crawler_castle_garrison.gd")
+const CASTLE_MODEL := "res://assets/runtime/environment/adobe/adobe_castle.glb"
+const OFFICE_MODEL := "res://assets/runtime/environment/adobe/adobe_office.glb"
 const TREE_BOSS := preload("res://game/crawler/crawler_tree_boss.gd")
 
 var _rendered: Dictionary = {}
@@ -103,19 +100,31 @@ func render_ring(ring_id: int) -> void:
 	_rendered[ring_id] = true
 
 
+func reveal_all() -> void:
+	if not CrawlerRun.active():
+		return
+	for ring_id in range(1, CrawlerRun.last_ring() + 1):
+		render_ring(ring_id)
+	CrawlerSites.unlock_all(get_tree(), false)
+
+
 func on_city_entered(site_id: String, player: OnlinePlayer) -> void:
 	if not CrawlerRun.active() or site_id.is_empty():
 		return
 	if site_id == CrawlerRun.first_city_id() or site_id == CrawlerRules.CITY_SITE_ID:
 		render_ring(1)
-		_reveal_ids(CrawlerRun.later_city_ids(), player)
+		_schedule_city_reveals(func() -> void:
+			_reveal_ids(CrawlerRun.later_city_ids(), player)
+		)
 		return
 	if CrawlerRun.city_entry(site_id).is_empty():
 		return
 	var ring := CrawlerRun.ring_of_city(site_id)
 	render_ring(ring)
 	render_ring(ring + 1)
-	_reveal_nearest_cities(player, 2)
+	_schedule_city_reveals(func() -> void:
+		_reveal_nearest_cities(player, 2)
+	)
 
 
 func reveal_quest_site(player: OnlinePlayer, quest_id := "") -> String:
@@ -213,10 +222,7 @@ func _place_city(city_id: String) -> void:
 	if city_id == CrawlerRun.first_city_id():
 		site_id = CrawlerRules.CITY_SITE_ID
 	var title := city_id
-	var model := CrawlerCityRing.VILLAGE_MODEL
-	if city_id == "city2":
-		model = CrawlerRules.CRESCENT_VILLAGE
-	ring.configure(patch_id, at, site_id, title, model, city_id)
+	ring.configure(patch_id, at, site_id, title, "", city_id)
 	world.add_child(ring)
 	if world.has_method(&"_record_crawler_city"):
 		world.call(&"_record_crawler_city", city_id)
@@ -307,7 +313,7 @@ func _place_monument(
 	_attach_model(site, model_path, castle)
 
 
-func _attach_model(site: PatchMonument, model_path: String, castle: bool) -> void:
+func _attach_model(site: PatchMonument, model_path: String, _castle: bool) -> void:
 	if not ResourceLoader.exists(model_path):
 		return
 	var packed := load(model_path) as PackedScene
@@ -318,17 +324,13 @@ func _attach_model(site: PatchMonument, model_path: String, castle: bool) -> voi
 		return
 	body.name = "Model"
 	site.add_child(body)
-	PatchMonuments.wire_interior_collision(body)
-	BuildingFoundation.seat(body, site.planet_host())
-	NIGHT_LIGHTS.bind(body, site.planet_host())
+	CrawlerAdobeSite.prepare(body, site.monument_id, site.planet_host())
 	BuildingFloraClear.register_node(
-		site, body, site.direction, CrawlerRules.SITE_CLEAR_RADIUS, 0.0)
-	if castle:
-		var garrison := CASTLE_GARRISON.attach(site, body)
-		_apply_goblin_pads(site, garrison)
-	else:
-		var flock := TIDEKIN_OFFICE.attach(site, body)
-		_apply_shrimp_pads(site, flock)
+		site,
+		body,
+		site.direction,
+		CrawlerAdobeSite.footprint_metres(body),
+		CrawlerAdobeSite.FLORA_PAD)
 
 
 func _apply_goblin_pads(site: PatchMonument, garrison: CrawlerCastleGarrison) -> void:
@@ -364,6 +366,19 @@ func _world_pads(rows: Array) -> PackedVector3Array:
 	return out
 
 
+func _schedule_city_reveals(work: Callable) -> void:
+	if not work.is_valid():
+		return
+	var wait := CrawlerRules.CITY_MAP_DELAY
+	var tree := get_tree()
+	if tree == null:
+		return
+	if wait <= 0.0:
+		work.call()
+		return
+	tree.create_timer(wait).timeout.connect(work)
+
+
 func _reveal_ids(ids: PackedStringArray, player: OnlinePlayer) -> void:
 	var tree := get_tree()
 	if tree == null:
@@ -372,13 +387,16 @@ func _reveal_ids(ids: PackedStringArray, player: OnlinePlayer) -> void:
 		var site_id := CrawlerSites._site_id(site)
 		if not ids.has(site_id) and not _city_matches(site_id, ids):
 			continue
+		var mark := site as Landmark
+		if mark != null and mark.waypoint:
+			continue
 		CrawlerSites.unlock(site, true)
-		if player != null:
-			player.notice_waypoint_unlocked(site as Landmark)
+		if player != null and is_instance_valid(player):
+			player.notice_waypoint_unlocked(mark)
 
 
 func _reveal_nearest_cities(player: OnlinePlayer, want: int) -> void:
-	if player == null:
+	if player == null or not is_instance_valid(player):
 		return
 	var from := player.global_position.normalized()
 	if from.length_squared() < 0.0001:

@@ -146,22 +146,9 @@ func _physics_process(delta: float) -> void:
 ## same shape the damage is dealt in, so what the rock looks like it hit and what
 ## it hits are the same test.
 func _player_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, HIT_RADIUS, 0.0)
-	for player_variant: Variant in get_tree().get_nodes_in_group(
-			&"network_players"):
-		var player := player_variant as Node3D
-		if player == null or not DamageHit.in_same_world(self, player):
-			continue
-		if player == thrower:
-			continue
-		if player.has_method(&"is_dead") and bool(player.call(&"is_dead")):
-			continue
-		var bounds := 0.4
-		if player.has_method(&"combat_radius"):
-			bounds = float(player.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(player), bounds):
-			return player
-	return null
+	return CombatantSense.first_along(
+		self, from, to, HIT_RADIUS, thrower, {}, -1,
+		true, false, true, false)
 
 
 func _strike(player: Node) -> void:
@@ -202,9 +189,7 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(player: Node) -> Vector3:
-	if player.has_method(&"combat_position"):
-		return player.call(&"combat_position")
-	return (player as Node3D).global_position
+	return CombatantSense.point_of(player)
 
 
 func _peer_of(player: Node) -> int:

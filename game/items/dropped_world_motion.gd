@@ -23,11 +23,17 @@ static func start(body: Node3D, clearance: float) -> Dictionary:
 		return _state(Vector3.ZERO, Vector3.ZERO, 1.0)
 	var from := body.global_position
 	var to := land_point(body, clearance)
-	if from.distance_to(to) < MIN_FALL:
+	if not to.is_finite():
 		return _state(from, from, 1.0)
+	if from.distance_to(to) < MIN_FALL:
+		var snapped := _state(to, to, 1.0)
+		snapped["seek_floor"] = false
+		return snapped
 	var duration := clampf(
 		from.distance_to(to) / 7.5, FALL_SECONDS, 2.1)
-	return _state(from, to, 0.0, duration)
+	var falling := _state(from, to, 0.0, duration)
+	falling["seek_floor"] = true
+	return falling
 
 
 static func start_to(body: Node3D, at: Vector3) -> Dictionary:
@@ -180,23 +186,22 @@ static func land_point(body: Node3D, clearance: float) -> Vector3:
 		return Vector3.ZERO
 	var from := body.global_position
 	var pad := maxf(clearance, 0.0)
-	var up_guess := from.normalized() if from.length_squared() > 0.01 \
-		else Vector3.UP
+	var up_guess := Vector3.UP
+	if body.global_basis.y.length_squared() > 0.0001:
+		up_guess = body.global_basis.y.normalized()
 	var planet := _planet_of(body)
 	if planet != null:
 		var local := planet.to_local(from)
 		if local.length_squared() > 0.01:
 			up_guess = planet.up_at(from)
-	# The collider under the drop, not the analytical height field: a tile
-	# that sat on the mesh but inside a rock still read as "on the ground".
+	# Walk past players, dying mobs, and other pickups. Those sit on layer
+	# one with the floor, so a single ray often stopped on the corpse and
+	# left the tile hanging when the body despawned.
 	var space := body.get_world_3d().direct_space_state
 	if space != null:
-		var query := PhysicsRayQueryParameters3D.create(
-			from + up_guess * 2.5, from - up_guess * 80.0)
-		query.exclude = [body.get_rid()] if body is CollisionObject3D \
-			else []
-		query.collide_with_areas = false
-		var hit := space.intersect_ray(query)
+		var hit := _floor_hit(
+			space, from + up_guess * 8.0, from - up_guess * 80.0,
+			_land_exclude(body), up_guess)
 		if not hit.is_empty():
 			return hit["position"] + up_guess * pad
 	if planet != null and planet.shape != null:
@@ -205,6 +210,86 @@ static func land_point(body: Node3D, clearance: float) -> Vector3:
 			var surface := planet.mesh_position(local)
 			return surface + planet.up_at(surface) * pad
 	return from
+
+
+static func _floor_hit(
+		space: PhysicsDirectSpaceState3D,
+		from: Vector3,
+		to: Vector3,
+		exclude: Array[RID],
+		up: Vector3
+	) -> Dictionary:
+	var skipped := exclude.duplicate()
+	var cursor := from
+	for _hop in 8:
+		var query := PhysicsRayQueryParameters3D.create(cursor, to)
+		query.exclude = skipped
+		query.collide_with_areas = false
+		query.hit_from_inside = true
+		var hit := space.intersect_ray(query)
+		if hit.is_empty():
+			return {}
+		var collider := hit.get("collider") as Node
+		var rid := RID()
+		if collider is CollisionObject3D:
+			rid = (collider as CollisionObject3D).get_rid()
+		if _ignore_land_body(collider):
+			if rid.is_valid() and not skipped.has(rid):
+				skipped.append(rid)
+			cursor = hit.get("position", cursor)
+			continue
+		var normal: Vector3 = hit.get("normal", up)
+		if normal.length_squared() > 0.0001 \
+				and absf(normal.normalized().dot(up)) < 0.35:
+			if rid.is_valid() and not skipped.has(rid):
+				skipped.append(rid)
+			cursor = hit.get("position", cursor)
+			continue
+		return hit
+	return {}
+
+
+static func _land_exclude(body: Node3D) -> Array[RID]:
+	var skipped: Array[RID] = []
+	if body is CollisionObject3D:
+		var own := (body as CollisionObject3D).get_rid()
+		if own.is_valid():
+			skipped.append(own)
+	if body == null or not body.is_inside_tree():
+		return skipped
+	for node_variant: Variant in body.get_tree().get_nodes_in_group(
+			DamageHit.COMBATANT_GROUP):
+		_append_land_rids(node_variant as Node, skipped)
+	return skipped
+
+
+static func _append_land_rids(node: Node, skipped: Array[RID]) -> void:
+	if node is CollisionObject3D:
+		var rid := (node as CollisionObject3D).get_rid()
+		if rid.is_valid() and not skipped.has(rid):
+			skipped.append(rid)
+	if node == null:
+		return
+	for child: Node in node.get_children():
+		_append_land_rids(child, skipped)
+
+
+static func _ignore_land_body(node: Node) -> bool:
+	if node == null:
+		return false
+	if node is DroppedCrawlerCard or node is DroppedCrawlerHat \
+			or node is DroppedItem or node is OnlinePlayer \
+			or node is CrawlerMob:
+		return true
+	var walk := node
+	while walk != null:
+		if walk.is_in_group(DamageHit.COMBATANT_GROUP):
+			return true
+		if walk is DroppedCrawlerCard or walk is DroppedCrawlerHat \
+				or walk is DroppedItem:
+			return true
+		walk = walk.get_parent()
+	return false
 
 
 static func _planet_of(body: Node3D) -> Planet:
@@ -231,4 +316,5 @@ static func _state(
 		"t": t,
 		"clock": 0.0,
 		"duration": maxf(duration, 0.12),
+		"seek_floor": false,
 	}

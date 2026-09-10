@@ -25,6 +25,7 @@ var _warning_active := false
 func _init() -> void:
 	name = "BossBar"
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	set_meta(&"crt_skip", true)
 	set_anchors_preset(Control.PRESET_TOP_WIDE)
 	offset_top = TOP
 	offset_bottom = TOP + HEIGHT

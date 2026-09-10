@@ -5,9 +5,7 @@ extends Node3D
 ## host turns the burst into damage.
 
 const GROUP := &"crawler_hat_mines"
-const CORE_COLOR := Color(1.00, 0.46, 0.14)
 const GLOW_COLOR := Color(1.00, 0.28, 0.06)
-const HALO_COLOR := Color(1.00, 0.62, 0.18, 0.42)
 const PULSE_HZ := 6.4
 
 var shooter: OnlinePlayer
@@ -18,8 +16,7 @@ var size := 0.22
 var authoritative := false
 
 var _age := 0.0
-var _core: MeshInstance3D
-var _halo: MeshInstance3D
+var _core: EnergyVfx
 var _spent := false
 
 
@@ -44,51 +41,33 @@ static func drop(world: Node, source: OnlinePlayer, at: Vector3,
 func _ready() -> void:
 	name = "CrawlerHatMine"
 	add_to_group(GROUP)
-	var radius := size
-	var body := SphereMesh.new()
-	body.radius = radius
-	body.height = radius * 2.0
-	body.radial_segments = 14
-	body.rings = 8
-	_core = MeshInstance3D.new()
-	_core.mesh = body
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = CORE_COLOR
-	material.emission_enabled = true
-	material.emission = GLOW_COLOR
-	material.emission_energy_multiplier = 6.4
-	_core.material_override = material
-	_core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_core = EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, GLOW_COLOR)
 	add_child(_core)
-	var halo_mesh := SphereMesh.new()
-	halo_mesh.radius = radius * 1.85
-	halo_mesh.height = radius * 3.7
-	halo_mesh.radial_segments = 14
-	halo_mesh.rings = 8
-	_halo = MeshInstance3D.new()
-	_halo.mesh = halo_mesh
-	var halo_material := StandardMaterial3D.new()
-	halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	halo_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	halo_material.albedo_color = HALO_COLOR
-	halo_material.emission_enabled = true
-	halo_material.emission = GLOW_COLOR
-	halo_material.emission_energy_multiplier = 3.8
-	_halo.material_override = halo_material
-	_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_halo)
-	var lamp := OmniLight3D.new()
-	lamp.light_color = GLOW_COLOR
-	lamp.light_energy = 2.8
-	lamp.omni_range = maxf(radius * 12.0, 2.4)
-	lamp.shadow_enabled = false
-	add_child(lamp)
+	_core.set_ball_radius(size)
+	CrawlerShotSense.watch(self)
+
+
+func _exit_tree() -> void:
+	CrawlerShotSense.drop(self)
+
+
+func shot_glow_color() -> Color:
+	return GLOW_COLOR
+
+
+func shot_glow_energy() -> float:
+	return 0.0 if _spent else 2.8
+
+
+func shot_glow_range() -> float:
+	return maxf(size * 12.0, 2.4)
 
 
 func _physics_process(delta: float) -> void:
+	shot_tick(delta)
+
+
+func shot_tick(delta: float) -> void:
 	if _spent:
 		return
 	_age += delta
@@ -96,9 +75,7 @@ func _physics_process(delta: float) -> void:
 	var hurry := 1.0 + (1.0 - clampf(left / maxf(fuse, 0.01), 0.0, 1.0)) * 2.4
 	var wave := 0.72 + 0.28 * (0.5 + 0.5 * sin(_age * TAU * PULSE_HZ * hurry))
 	if is_instance_valid(_core):
-		_core.scale = Vector3.ONE * wave
-	if is_instance_valid(_halo):
-		_halo.scale = Vector3.ONE * (0.86 + (1.0 - wave) * 0.4)
+		_core.set_ball_radius(size * wave)
 	if _age < fuse:
 		return
 	_burst()

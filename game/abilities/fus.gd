@@ -1,7 +1,8 @@
 class_name Fus
 extends Ability
 
-## Roar pose, then a travelling green force cone. Little chip, huge shove.
+## Roar pose, then a travelling green force ring that swells as it flies.
+## Little chip, huge shove. Size makes the ring expand faster.
 
 
 var _elapsed := 0.0

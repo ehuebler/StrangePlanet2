@@ -74,6 +74,7 @@ func _check(partition: LandPartition, shape: PlanetShape) -> void:
 			"%s still has a cell for spawn and cities" % home.name)
 	_expect(partition.border_chains.size() >= 1,
 		"patches have borders to draw")
+	_check_owner_lookup(partition)
 	for chain in partition.border_chains:
 		_expect(chain.dirs.size() >= 2,
 			"each border chain has at least one segment")
@@ -110,6 +111,43 @@ func _check(partition: LandPartition, shape: PlanetShape) -> void:
 	if lee_rest != null:
 		_expect(partition.first_cell_of(lee_rest.parent_id) == lee_rest.id,
 			"Wind Gap 4 rest is the keep cell")
+
+
+func _check_owner_lookup(partition: LandPartition) -> void:
+	var samples: PackedVector3Array = PackedVector3Array()
+	for home in partition.territories:
+		samples.append(home.direction)
+	for patch in partition.patches:
+		samples.append(patch.direction)
+		samples.append(patch.seed)
+	var axes := PackedVector3Array([
+		Vector3.UP, Vector3.DOWN, Vector3.LEFT, Vector3.RIGHT,
+		Vector3.FORWARD, Vector3.BACK,
+		Vector3(0.18, 0.62, 0.76), Vector3(-0.41, 0.22, -0.88),
+		Vector3(0.91, -0.14, 0.39), Vector3(-0.07, -0.83, 0.55),
+	])
+	for axis in axes:
+		samples.append(axis)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 47
+	for _i in 80:
+		samples.append(Vector3(
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0)
+		))
+	var checked := 0
+	for sample in samples:
+		if not sample.is_finite() or sample.length_squared() < 0.0001:
+			continue
+		var fast := partition.owner_at(sample)
+		var slow := partition.owner_at_scan(sample)
+		_expect(fast == slow,
+			"owner_at matches the vertex scan at %s" % sample)
+		checked += 1
+		if _failures > 0:
+			break
+	_expect(checked > 40, "owner_at was checked on a useful sample set")
 
 
 func _expect(ok: bool, message: String) -> void:

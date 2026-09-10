@@ -14,6 +14,7 @@ static func poll(player: OnlinePlayer) -> String:
 	if site == null:
 		return ""
 	var site_id := _site_id(site)
+	clear_around_city(player)
 	if _lights_on_enter(site_id, progress):
 		unlock(site)
 	var first := not progress.site_unlocked(site_id)
@@ -36,6 +37,34 @@ static func poll(player: OnlinePlayer) -> String:
 	if hud != null and hud.has_method(&"show_entering"):
 		hud.call(&"show_entering", title, gems)
 	return title
+
+
+static func clear_around_city(player: OnlinePlayer) -> void:
+	if player == null or not player.is_inside_tree():
+		return
+	var horde := CrawlerHorde.instance(player.get_tree())
+	if horde == null:
+		return
+	if horde.should_clear_all_field():
+		horde.dismiss_all_field()
+		return
+	var around := false
+	for zone_variant: Variant in player.get_tree().get_nodes_in_group(CrawlerCityRing.GROUP):
+		var ring := zone_variant as CrawlerCityRing
+		if ring == null or not ring.blocks_near(player.global_position):
+			continue
+		around = true
+		horde.dismiss_near(
+			ring.global_position, ring.keepout_radius() + CrawlerRules.AGRO_RANGE)
+	if around:
+		horde.dismiss_near(player.global_position, CrawlerRules.SITE_CLEAR_RADIUS)
+
+
+static func unlock_all(tree: SceneTree, announce := false) -> void:
+	if tree == null:
+		return
+	for site in _collect(tree):
+		unlock(site, announce)
 
 
 static func apply_progress(progress: CrawlerProgress, tree: SceneTree) -> void:

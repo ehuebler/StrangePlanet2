@@ -22,6 +22,7 @@ const RIM_RED := Color(1.0, 0.22, 0.28)
 var _fire_left := 0.0
 var _aim_left := 0.0
 var _pending_shot := false
+var _muzzle: Node3D
 
 
 func _ready() -> void:
@@ -52,14 +53,20 @@ func combat_display_name() -> String:
 
 
 func combat_position() -> Vector3:
+	if _hit_ready:
+		return super.combat_position()
 	return global_position
 
 
 func combat_radius() -> float:
+	if _hit_ready:
+		return super.combat_radius()
 	return hit_box() * 0.5
 
 
 func combat_aabb() -> AABB:
+	if _hit_ready:
+		return super.combat_aabb()
 	var half := hit_box() * 0.5
 	var at := combat_position()
 	return AABB(at - Vector3.ONE * half, Vector3.ONE * (half * 2.0))
@@ -183,8 +190,8 @@ func _try_fire(player: Node, distance: float, delta: float) -> void:
 	_faces_motion = true
 	if _fire_left > 0.0:
 		return
-	if distance < CrawlerRules.ranger_engage_min(_rank()) \
-			or distance > CrawlerRules.ranger_engage_max(_rank()):
+	if distance < CrawlerHunt.shot_min(wild_kind(), threat_level) \
+			or distance > CrawlerHunt.shot_max(wild_kind(), threat_level):
 		return
 	var aim := CrawlerMobs.number(
 		"ranger", _rank(), "aim_seconds", CrawlerRules.RANGER_AIM_SECONDS)
@@ -194,10 +201,16 @@ func _try_fire(player: Node, distance: float, delta: float) -> void:
 	_aim_left = aim
 
 
+func muzzle_point() -> Vector3:
+	if _muzzle is Node3D:
+		return _muzzle.global_position
+	return combat_position()
+
+
 func _release_shot(player: Node) -> void:
 	_pending_shot = false
 	_faces_motion = true
-	var from := combat_position()
+	var from := muzzle_point()
 	var target := _combat_position_of(player)
 	var shot_speed := CrawlerRules.ranger_shot_speed(_player_speed(player), _rank())
 	var launch := CrawlerRules.lead_launch(

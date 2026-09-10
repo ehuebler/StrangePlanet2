@@ -5,9 +5,10 @@ extends Control
 ## them, and the only way back.
 ##
 ## Colony deaths keep the world running underneath and offer a respawn. Crawler
-## deaths end the run unless a ticket is on the ledger: GAME OVER, a summary,
-## and a trip back to the home screen. In co-op a living teammate leaves the
-## fallen player DOWNED — hold E to get them up — until the last body drops.
+## and sandbox GAME OVER still recap the run and offer HOME, plus a free
+## RESPAWN that does not spend a ticket. A living teammate leaves a fallen
+## player DOWNED — hold E to get them up — until the last body drops; a ticket
+## is still the way out of DOWNED on your own.
 ##
 ## The world keeps running underneath — in company it has to, and alone a frozen
 ## ragdoll reads as a crash — so this is an overlay over live play rather than a
@@ -49,6 +50,8 @@ var _summary_text := ""
 var _title_text := TITLE
 var _button_text := RESPAWN_LABEL
 var _sends_home := false
+var _offer_home := false
+var _offer_respawn := true
 var _hide_button := false
 var _downed := false
 var _recap := {}
@@ -56,6 +59,10 @@ var _title: Label
 var _notice: Label
 var _summary: Label
 var _button: Button
+var _home_button: Button
+var _respawn_button: Button
+var _button_lane: CenterContainer
+var _button_row: HBoxContainer
 var _plate: RedGlowPanel
 var _column: VBoxContainer
 var _recap_scroll: ScrollContainer
@@ -65,6 +72,7 @@ var _xp_bar: ProgressBar
 var _xp_flash: ColorRect
 var _shown := 0.0
 var _asked := false
+var _armed := false
 var _xp_shown := 0.0
 var _xp_from := 0.0
 var _xp_to := 0.0
@@ -98,9 +106,12 @@ func present_crawler(
 	_summary_text = summary
 	_title_text = GAME_OVER_TITLE
 	_sends_home = not can_respawn
+	_offer_home = true
+	_offer_respawn = can_respawn
 	_hide_button = false
 	_downed = false
 	_asked = false
+	_armed = false
 	_button_text = RESPAWN_LABEL if can_respawn else HOME_LABEL
 	_recap = recap.duplicate(true)
 	_apply_copy()
@@ -112,9 +123,12 @@ func present_downed(cause: String, can_respawn: bool) -> void:
 	_summary_text = WAITING_COPY
 	_title_text = DOWNED_TITLE
 	_sends_home = false
+	_offer_home = false
+	_offer_respawn = can_respawn
 	_downed = true
 	_hide_button = not can_respawn
 	_asked = false
+	_armed = false
 	_button_text = RESPAWN_LABEL
 	_recap = {}
 	_apply_copy()
@@ -153,7 +167,15 @@ func finish_recap() -> void:
 
 
 func respawn_button() -> Button:
+	if _offer_respawn and _respawn_button != null:
+		return _respawn_button
+	if _offer_home and _home_button != null:
+		return _home_button
 	return _button
+
+
+func home_button() -> Button:
+	return _home_button
 
 
 func _ready() -> void:
@@ -179,11 +201,10 @@ func _process(delta: float) -> void:
 		_paint_xp(t >= 1.0)
 	if _shown <= FADE_IN + 0.35:
 		_fit_plate()
-	if _asked or _button == null or not _button.disabled:
+	if _asked or _armed:
 		return
 	if _shown >= ARM_DELAY:
-		_button.disabled = false
-		_button.grab_focus()
+		_arm_buttons()
 
 
 func _build() -> void:
@@ -288,23 +309,28 @@ func _build() -> void:
 	_recap_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_recap_scroll.add_child(_recap_host)
 
-	var button_lane := CenterContainer.new()
-	button_lane.name = "ButtonLane"
-	button_lane.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	button_lane.custom_minimum_size = Vector2(220.0, 52.0)
-	button_lane.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	button_lane.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	column.add_child(button_lane)
+	_button_lane = CenterContainer.new()
+	_button_lane.name = "ButtonLane"
+	_button_lane.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_button_lane.custom_minimum_size = Vector2(220.0, 52.0)
+	_button_lane.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_button_lane.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	column.add_child(_button_lane)
 
-	_button = Button.new()
-	_button.name = "RespawnButton"
-	_button.text = _button_text
-	_button.custom_minimum_size = Vector2(200.0, 46.0)
-	_button.focus_mode = Control.FOCUS_ALL
-	_button.disabled = true
-	RedHudTheme.button(_button, 17, 8.0)
-	_button.pressed.connect(_on_respawn_pressed)
-	button_lane.add_child(_button)
+	_button_row = HBoxContainer.new()
+	_button_row.name = "ButtonRow"
+	_button_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_button_row.add_theme_constant_override(&"separation", 12)
+	_button_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_button_lane.add_child(_button_row)
+
+	_home_button = _make_end_button("HomeButton", HOME_LABEL)
+	_home_button.pressed.connect(_on_home_pressed)
+	_button_row.add_child(_home_button)
+	_respawn_button = _make_end_button("RespawnButton", RESPAWN_LABEL)
+	_respawn_button.pressed.connect(_on_respawn_pressed)
+	_button_row.add_child(_respawn_button)
+	_button = _respawn_button
 
 
 func _apply_copy() -> void:
@@ -319,15 +345,7 @@ func _apply_copy() -> void:
 	_fit_plate()
 	if is_inside_tree():
 		call_deferred(&"_fit_plate")
-	if _button != null:
-		_button.text = _button_text
-		_button.name = "HomeButton" if _sends_home else "RespawnButton"
-		_button.visible = not _hide_button
-		var lane := _button.get_parent() as Control
-		if lane != null:
-			lane.visible = not _hide_button
-		if not _hide_button and _shown >= ARM_DELAY:
-			_button.disabled = _asked
+	_apply_buttons()
 
 
 func _fill_recap() -> void:
@@ -542,15 +560,79 @@ func _recap_line(text: String, font_size: int, colour: Color) -> Label:
 	return label
 
 
+func _make_end_button(node_name: String, label: String) -> Button:
+	var button := Button.new()
+	button.name = node_name
+	button.text = label
+	button.custom_minimum_size = Vector2(200.0, 46.0)
+	# CRT wraps text buttons in a SubViewport. Grabbing focus on RESPAWN every
+	# frame then sent HOME clicks into that viewport, so the visible HOME
+	# button never saw them.
+	button.set_meta(&"crt_skip", true)
+	button.focus_mode = Control.FOCUS_NONE
+	button.disabled = true
+	RedHudTheme.button(button, 17, 8.0)
+	return button
+
+
+func _apply_buttons() -> void:
+	var show_home := _offer_home and not _hide_button
+	var show_respawn := _offer_respawn and not _hide_button
+	_show_end_button(_home_button, show_home, HOME_LABEL)
+	_show_end_button(_respawn_button, show_respawn, RESPAWN_LABEL)
+	_button = respawn_button()
+	if _button_lane != null:
+		_button_lane.visible = show_home or show_respawn
+		_button_lane.custom_minimum_size = Vector2(
+			420.0 if show_home and show_respawn else 220.0, 52.0)
+	if (show_home or show_respawn) and _shown >= ARM_DELAY and not _armed:
+		_arm_buttons()
+
+
+func _show_end_button(button: Button, show: bool, label: String) -> void:
+	if button == null:
+		return
+	button.visible = show
+	button.text = label
+	var host := CrtType.host_of(button)
+	if host != null and is_instance_valid(host) \
+			and not host.is_queued_for_deletion():
+		host.visible = show
+
+
+func _arm_buttons() -> void:
+	if _asked:
+		return
+	_armed = true
+	if _home_button != null and _home_button.visible:
+		_home_button.disabled = false
+	if _respawn_button != null and _respawn_button.visible:
+		_respawn_button.disabled = false
+
+
+func _lock_buttons() -> void:
+	if _home_button != null:
+		_home_button.disabled = true
+	if _respawn_button != null:
+		_respawn_button.disabled = true
+
+
+func _on_home_pressed() -> void:
+	if _asked:
+		return
+	_asked = true
+	_lock_buttons()
+	home_requested.emit()
+
+
 func _on_respawn_pressed() -> void:
 	if _asked:
 		return
 	# One press. The world answers over the network, so the button has to stop
 	# asking rather than wait to be told that it worked.
 	_asked = true
-	if _button != null:
-		_button.disabled = true
-	if _sends_home:
+	_lock_buttons()
+	if not _offer_respawn:
 		home_requested.emit()
-	else:
-		respawn_requested.emit()
+		return
+	respawn_requested.emit()

@@ -30,8 +30,10 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_PAUSABLE
 	_build_visual()
 	_build_collision()
-	if _motion.is_empty():
-		_motion = DroppedWorldMotion.start(self, 0.10)
+
+
+func begin_settle() -> void:
+	_motion = DroppedWorldMotion.start(self, 0.10)
 
 
 func begin_settle_to(at: Vector3) -> void:

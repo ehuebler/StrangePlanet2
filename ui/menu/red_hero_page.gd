@@ -845,7 +845,7 @@ func _juke_copy() -> Dictionary:
 		distance = _player.juke_distance()
 	var description := ItemDB.description(CrawlerProgress.STAT_JUKE).strip_edges()
 	if description.is_empty():
-		description = "A short invulnerable dash. Press F to slip aside."
+		description = "A short invulnerable dash. Press RMB to slip aside."
 	var effects := "Cooldown  //  %.2fs\nDistance  //  %.1f m\nHits miss you during the dash." \
 		% [cooldown, distance]
 	return {

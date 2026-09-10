@@ -388,7 +388,7 @@ func base_stats_for(card: CrawlerCard) -> Dictionary:
 			if not base.has("radius"):
 				base["radius"] = 0.45
 		base["size"] = 1.0
-		base["damage_unit"] = "/s"
+		base["damage_unit"] = ""
 	elif card.id == "meteor_punch":
 		base["damage"] = CrawlerRules.METEOR_DAMAGE
 		base["impact"] = CrawlerRules.METEOR_IMPACT
@@ -709,8 +709,6 @@ func _apply_fus_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 		CrawlerRules.FUS_KNOCKBACK, upgrade_rank_for(card, "knockback"))
 	stats["radius"] = CrawlerRules.FUS_RADIUS
 	stats["projectile_radius"] = CrawlerRules.FUS_PROJECTILE_RADIUS
-	_scale_shop_stat(stats, "radius", cone_size)
-	_scale_shop_stat(stats, "projectile_radius", cone_size)
 
 
 func _apply_hero_punch_ranks(stats: Dictionary, card: CrawlerCard) -> void:
@@ -949,7 +947,7 @@ func _apply_lightning_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 	stats["shock"] = CrawlerRules.scaled_stat(
 		CrawlerRules.LIGHTNING_SHOCK, upgrade_rank_for(card, "shock"))
 	stats["hop_range"] = CrawlerRules.LIGHTNING_ARC_RANGE
-	stats["damage_unit"] = "/s"
+	stats["damage_unit"] = ""
 	if not stats.has("radius"):
 		stats["radius"] = CrawlerRules.LIGHTNING_RADIUS
 	if not stats.has("beam_width"):
@@ -979,7 +977,7 @@ func _apply_pulsed_beam_ranks(stats: Dictionary, card: CrawlerCard) -> void:
 	stats["size"] = size
 	stats["knockback"] = CrawlerRules.scaled_stat(
 		knockback, upgrade_rank_for(card, "knockback"))
-	stats["damage_unit"] = "/s"
+	stats["damage_unit"] = "/s" if kame else ""
 	if kame:
 		stats["damage_hz"] = CrawlerRules.KAME_DAMAGE_HZ
 	_scale_shop_stat(stats, "radius", size)

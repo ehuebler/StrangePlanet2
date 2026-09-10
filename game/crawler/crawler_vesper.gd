@@ -15,6 +15,7 @@ var _aim_left := 0.0
 var _fire_left := 0.0
 var _locked := Vector3.INF
 var _line: EnergyVfx
+var _muzzle: Node3D
 
 
 func _ready() -> void:
@@ -53,15 +54,25 @@ func combat_display_name() -> String:
 
 
 func combat_position() -> Vector3:
+	if _hit_ready:
+		return super.combat_position()
 	return global_position + _up() * (HEIGHT * 0.12)
 
 
 func combat_radius() -> float:
+	if _hit_ready:
+		return super.combat_radius()
 	return WIDTH * 0.58
 
 
 func flies() -> bool:
 	return true
+
+
+func muzzle_point() -> Vector3:
+	if _muzzle is Node3D:
+		return _muzzle.global_position
+	return combat_position()
 
 
 func flyer_floor() -> float:
@@ -92,76 +103,87 @@ func _desired_clip() -> String:
 	return BODY.CLIP_FLY
 
 
+func director_cold_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and (chase or hunting()):
+		steer = true
+		step = maxf(step, delta)
+	super.director_cold_tick(delta, step, steer, player, in_city)
+
+
+func director_warm_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and (chase or hunting()):
+		steer = true
+		step = maxf(step, delta)
+	super.director_warm_tick(delta, step, steer, player, in_city)
+
+
+func _track_hold_min() -> float:
+	return CrawlerMobs.number(
+		wild_kind(), threat_level, "standoff_min", CrawlerRules.VESPER_STANDOFF_MIN)
+
+
+func _track_hold_max() -> float:
+	return CrawlerMobs.number(
+		wild_kind(), threat_level, "standoff_max", CrawlerRules.VESPER_STANDOFF_MAX)
+
+
 func _tick_idle(delta: float) -> void:
 	_abort_aim()
 	_patrol(delta, 0.52)
 
 
 func _tick_ai(delta: float) -> void:
-	_fire_left = maxf(_fire_left - delta, 0.0)
 	var player := _hunt_target(delta)
 	if player == null:
+		_fire_left = maxf(_fire_left - delta, 0.0)
 		_tick_idle(delta)
-		_draw_beam(0.0)
 		return
-	var at := _combat_position_of(player)
-	var hold := lerpf(
-		CrawlerMobs.number(wild_kind(), threat_level, "standoff_min",
-			CrawlerRules.VESPER_STANDOFF_MIN),
-		CrawlerMobs.number(wild_kind(), threat_level, "standoff_max",
-			CrawlerRules.VESPER_STANDOFF_MAX),
-		_hold_share()
-	)
-	var desired := _hover_hold(at, hold)
+	_fight(player, delta)
+
+
+func _tick_far(delta: float) -> void:
+	var player := _nearest_player()
+	if player != null and tick_agro(player, delta):
+		_fight(player, delta)
+		return
+	_fire_left = maxf(_fire_left - delta, 0.0)
+	_tick_idle(delta)
+
+
+func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
+	if _movement_locked():
+		velocity = Vector3.ZERO
+		return
+	var step := maxf(delta, 0.0)
+	if player != null and _apply_agro(player, step, in_city):
+		_fight(player, step)
+	else:
+		_fire_left = maxf(_fire_left - step, 0.0)
+		_tick_idle(step)
+	if flies():
+		_director_climb()
+
+
+func _fight(player: Node, delta: float) -> void:
+	_fire_left = maxf(_fire_left - delta, 0.0)
+	var hold := lerpf(_track_hold_min(), _track_hold_max(), _hold_share())
+	var desired := _hover_hold(_combat_position_of(player), hold)
 	if aiming():
 		_hold_aim(player, desired, delta)
 	else:
-		_close_or_drift(player, desired, hold, delta)
+		_flyer_track(player, delta)
 		_try_charge(player)
 	_draw_beam(_charge_share())
-
-
-func _hold_share() -> float:
-	return 0.5 + 0.5 * sin(float(hash(mob_id) % 97) * 0.11)
-
-
-func _hover_hold(at: Vector3, hold: float) -> Vector3:
-	var up := _up()
-	var bias := _orbit_bias()
-	bias -= up * bias.dot(up)
-	if bias.length_squared() < 0.0001:
-		bias = up.cross(Vector3.FORWARD)
-	bias = bias.normalized()
-	return _clamp_flyer_band(at + bias * hold + up * 3.2)
-
-
-func _close_or_drift(player: Node, desired: Vector3, hold: float, delta: float) -> void:
-	var player_speed := _player_speed(player)
-	var gap := global_position.distance_to(desired)
-	var matched := absf(_cruise - player_speed) <= maxf(player_speed * 0.18, 4.0) \
-		and gap <= hold * 1.25
-	if matched:
-		_match_speed(player_speed, delta, 2.2, 28.0)
-		var bob := _up() * sin(Time.get_ticks_msec() * 0.004 + float(hash(mob_id))) * 1.4
-		var along := desired + bob - global_position
-		var ride := along.normalized() * _cruise if along.length_squared() > 0.2 \
-			else _player_velocity(player)
-		_steer_toward(ride, delta, 12.0)
-	else:
-		_match_speed(maxf(player_speed, move_speed()), delta, 1.8, 24.0)
-		var along := desired - global_position
-		if along.length_squared() > 0.0001:
-			_steer_toward(along.normalized() * _cruise, delta, 13.0)
 
 
 func _try_charge(player: Node) -> void:
 	if _fire_left > 0.0 or aiming():
 		return
 	var gap := _flat_gap(player)
-	var near := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_min", CrawlerRules.VESPER_ENGAGE_MIN)
-	var far := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_max", CrawlerRules.VESPER_ENGAGE_MAX)
+	var near := CrawlerHunt.shot_min(wild_kind(), threat_level)
+	var far := CrawlerHunt.shot_max(wild_kind(), threat_level)
 	if gap < near or gap > far:
 		return
 	var aim := CrawlerMobs.number(
@@ -175,9 +197,20 @@ func _try_charge(player: Node) -> void:
 func _hold_aim(player: Node, desired: Vector3, delta: float) -> void:
 	_aim_left = maxf(_aim_left - delta, 0.0)
 	_faces_motion = false
-	_match_speed(0.0, delta, 4.0, 40.0)
-	velocity = velocity.move_toward(Vector3.ZERO, 28.0 * delta)
+	var frame := _player_velocity(player)
+	var lag := CrawlerRules.GLORB_FLYER_HOLD_LAG \
+		if CrawlerRules.is_glorb_soft_flyer(wild_kind()) else 1.4
+	var floor_rate := CrawlerRules.GLORB_FLYER_HOLD_FLOOR \
+		if CrawlerRules.is_glorb_soft_flyer(wild_kind()) else 8.0
+	var lock := CrawlerRules.GLORB_FLYER_HOLD_LOCK \
+		if CrawlerRules.is_glorb_soft_flyer(wild_kind()) else 4.2
+	_match_speed(frame.length(), delta, lag, floor_rate)
+	var spring := (desired - global_position) * 1.35
+	velocity = velocity.lerp(
+		frame + spring, clampf(lock * delta, 0.0, 1.0))
 	var look := _locked - global_position
+	if not look.is_finite():
+		look = _combat_position_of(player) - global_position
 	if look.length_squared() > 0.0001:
 		var up := _up()
 		look -= up * look.dot(up)
@@ -195,7 +228,7 @@ func _release(player: Node) -> void:
 	if not _locked.is_finite():
 		_abort_aim()
 		return
-	var from := combat_position()
+	var from := muzzle_point()
 	var hit := DamageHit.beam(
 		from, _locked, CrawlerRules.VESPER_BEAM_RADIUS, damage())
 	hit.faction = outgoing_faction()
@@ -227,13 +260,6 @@ func _charge_share() -> float:
 	return 1.0 - clampf(_aim_left / wait, 0.0, 1.0)
 
 
-func _flat_gap(player: Node) -> float:
-	var up := _up()
-	var along := _combat_position_of(player) - global_position
-	along -= up * along.dot(up)
-	return along.length()
-
-
 func _draw_beam(share: float) -> void:
 	if _line == null:
 		return
@@ -244,4 +270,4 @@ func _draw_beam(share: float) -> void:
 	if share > 0.92:
 		thick = 0.28
 	_line.set_tint(EnergyVfx.TINT_PURPLE)
-	_line.place_beam(combat_position(), _locked, thick)
+	_line.place_beam(muzzle_point(), _locked, thick)

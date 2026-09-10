@@ -405,7 +405,7 @@ static func stat_blurb(id: String) -> String:
 		STAT_JUKE_DISTANCE:
 			return "Right-click dashes carry farther."
 		STAT_DAMAGE:
-			return "Ability damage multiplier."
+			return "Added to each ability hit."
 		STAT_KNOCKBACK:
 			return "Ability knockback multiplier."
 		STAT_RANGE:
@@ -2381,7 +2381,9 @@ func hero_stat_text(stat_id: String, _owner: OnlinePlayer = null) -> String:
 			return _with_boost("%.1f m" % JUKE_DISTANCE_BASE,
 				juke_distance() - JUKE_DISTANCE_BASE)
 		STAT_DAMAGE:
-			return _with_boost("1.00x", damage_scale() - 1.0)
+			var shown := CrawlerRules.PLAYER_DAMAGE * damage_scale()
+			return _with_boost("%d" % int(round(CrawlerRules.PLAYER_DAMAGE)),
+				shown - CrawlerRules.PLAYER_DAMAGE)
 		STAT_KNOCKBACK:
 			return _with_boost("1.00x", knockback_scale() - 1.0)
 		STAT_RANGE:

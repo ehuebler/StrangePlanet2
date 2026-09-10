@@ -69,10 +69,12 @@ var _linger_from := Vector3.ZERO
 var _linger_at := Vector3.ZERO
 var _linger_ready := false
 var _linger_paths: Array[PackedVector3Array] = []
+var _release_requested := false
 
 
 func _press() -> bool:
 	_gap_left = 0.0
+	_release_requested = false
 	_left = stat("duration", 4.0)
 	_since_damage = _damage_step()
 	_forget_dwell()
@@ -86,8 +88,8 @@ func _press() -> bool:
 
 
 func _pulse_mode() -> bool:
-	# Crawler keeps a cooldown between bursts. Damage inside a burst is still
-	# a rate: duration is how long the beam cooks, not a one-shot projectile.
+	# Crawler keeps a cooldown between bursts. Each damage step inside a
+	# short burst is one full pair, not a slice of a per-second rate.
 	return cooldown() > 0.0 and stat("duration", 4.0) <= 1.0
 
 
@@ -95,7 +97,7 @@ func _tick(delta: float) -> void:
 	# Walking into the sea with the beam on ends it, the same as trying to start
 	# it there. Checked before the duration so the refusal is immediate.
 	if player.submerged_share() > 0.0:
-		release()
+		cancel()
 		return
 	if _pulse_mode():
 		_tick_pulse(delta)
@@ -109,8 +111,22 @@ func _tick(delta: float) -> void:
 	_step_damage(delta, shot["eyes"], shot["at"], bool(shot["landed"]))
 
 
+func release() -> void:
+	# A tap or the repeater cap still owes the burst. Same-frame release
+	# used to black the beams before the first draw, so only Icicle showed.
+	if is_held() and _left > 0.0 and (_pulse_mode() or CrawlerRules.active()):
+		_release_requested = true
+		return
+	_release_requested = false
+	super.release()
+
+
 func _tick_pulse(delta: float) -> void:
 	if _gap_left > 0.0:
+		if _release_requested:
+			_release_requested = false
+			super.release()
+			return
 		_gap_left = maxf(_gap_left - delta, 0.0)
 		if _gap_left > 0.0:
 			return
@@ -121,10 +137,14 @@ func _tick_pulse(delta: float) -> void:
 		return
 	_left -= delta
 	if _left <= 0.0:
-		player.laser_beams().stop()
 		_forget_dwell()
-		_gap_left = cooldown()
 		_on_beam_dark()
+		if _release_requested:
+			_release_requested = false
+			super.release()
+			return
+		_stop_beams_if_idle()
+		_gap_left = cooldown()
 		return
 	var shot := _aim_beams()
 	_step_damage(delta, shot["eyes"], shot["at"], bool(shot["landed"]))
@@ -140,6 +160,8 @@ func _aim_beams() -> Dictionary:
 	var at: Vector3 = landing["at"]
 	var targets := CrawlerMulti.fan_points(
 		from, at, CrawlerMulti.shots(stats), CrawlerMulti.up_of(player))
+	if ability_id == "laser_eyes":
+		targets = _offset_shared_targets(from, targets)
 	var paths := _bounce_paths(player, from, targets)
 	_linger_paths.clear()
 	if CrawlerHoming.uses_path(stats):
@@ -147,7 +169,8 @@ func _aim_beams() -> Dictionary:
 	player.laser_beams().aim_many(
 		origins[0], origins[1], targets, _beam_tint(), _beam_width(),
 		_wobble_amount(), _follow_mode(), CrawlerReach.far_cast(stats),
-		paths if CrawlerHoming.uses_path(stats) else [], _beam_invert())
+		paths if CrawlerHoming.uses_path(stats) else [], _beam_invert(),
+		slot)
 	return {"eyes": origins, "at": at, "landed": landing["landed"]}
 
 
@@ -173,10 +196,45 @@ func _step_damage(delta: float, eyes: Array, at: Vector3, landed: bool) -> void:
 
 
 func _release() -> void:
-	if player != null:
-		player.laser_beams().stop()
+	_stop_beams_if_idle()
 	_forget_dwell()
 	_on_beam_dark()
+
+
+func _stop_beams_if_idle() -> void:
+	if player == null:
+		return
+	player.laser_beams().stop(slot)
+
+
+func _offset_shared_targets(from: Vector3, targets: PackedVector3Array) -> PackedVector3Array:
+	var copies := _seated_laser_count()
+	if copies <= 1 or targets.is_empty() or player == null:
+		return targets
+	var along := targets[0] - from
+	if along.length_squared() < 0.0001:
+		return targets
+	var right := along.normalized().cross(CrawlerMulti.up_of(player))
+	if right.length_squared() < 0.0001:
+		right = along.normalized().cross(Vector3.UP)
+	if right.length_squared() < 0.0001:
+		return targets
+	right = right.normalized()
+	var bias := float(slot) - float(copies - 1) * 0.5
+	var shifted := PackedVector3Array()
+	for at: Vector3 in targets:
+		shifted.append(at + right * bias * 1.25)
+	return shifted
+
+
+func _seated_laser_count() -> int:
+	if player == null:
+		return 1
+	var count := 0
+	for index in player.abilities.size():
+		if CrawlerCatalog.ability_id(player.abilities.get_item(index)) == "laser_eyes":
+			count += 1
+	return maxi(count, 1)
 
 
 ## Where the beam stops, and whether it stopped on something or ran out of
@@ -197,7 +255,14 @@ func _landing(from: Vector3) -> Dictionary:
 				return {"at": dest, "landed": true}
 			return {"at": wall["position"], "landed": true}
 	var to := from + along * reach
+	var prey := DamageHit.first_combatant_along(
+		player, from, to, maxf(stat("radius", 0.45), 0.2))
 	var hit := _surface(player, from, to)
+	if not prey.is_empty():
+		var at: Vector3 = prey["at"]
+		if hit.is_empty() or from.distance_to(at) \
+				<= from.distance_to(hit.get("position", at)) + 0.05:
+			return {"at": at, "landed": true}
 	if hit.is_empty():
 		return {"at": to, "landed": false}
 	return {"at": hit["position"], "landed": true}
@@ -473,14 +538,9 @@ static func apply_effect(shooter: OnlinePlayer, id: String, left_eye: Vector3,
 		left_eye, right_eye, targets, _tint_for(id), beam_width, wobble,
 		_follow_for(id), CrawlerReach.far_cast(stats), draw_paths,
 		_invert_for(id))
-	var per_tick := float(stats.get("damage", 0.0))
-	if shooter != null and CrawlerRules.active() \
-			and shooter.has_method(&"crawler_damage_scale"):
-		per_tick *= float(shooter.call(&"crawler_damage_scale"))
-	# Damage is a rate. A crawler burst used to dump the whole number once,
-	# which made duration only a visual; each step now pays a slice of the
-	# authored per-second figure for as long as the beam stays on the target.
-	per_tick *= step
+	var per_tick := CrawlerRules.ability_hit_damage(
+		shooter, id, float(stats.get("damage", 0.0)), stats,
+		_damage_hz_for(id, stats))
 	if radius < 0.0:
 		radius = float(stats.get("radius", 0.4))
 	var impact_radius := IMPACT_RADIUS
@@ -552,6 +612,10 @@ static func _apply_one(shooter: OnlinePlayer, id: String, stats: Dictionary,
 	burst.faction = shooter.combat_faction()
 	burst.set_source(shooter, shooter.peer_id)
 	burst.plant_break_effects = false
+	# The pair is the whole combatant hit. The landing burst still chars
+	# flora; stacking it on the same body would turn one pulse into three.
+	if CrawlerRules.active() and CrawlerRules.full_pulse_hit(id, stats):
+		burst.affects_combatants = false
 	if knockback > 0.0:
 		if along != Vector3.ZERO:
 			burst.world_impulse = along * knockback

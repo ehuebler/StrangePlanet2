@@ -5,10 +5,7 @@ extends Node3D
 ## host turns a hit into damage.
 
 const GROUP := &"crawler_missiles"
-const CORE_COLOR := Color(0.78, 0.42, 1.0)
 const GLOW_COLOR := Color(0.56, 0.16, 0.96)
-const HALO_COLOR := Color(0.90, 0.48, 1.0, 0.44)
-const TIP_COLOR := Color(1.0, 0.82, 0.34)
 const PULSE_HZ := 7.2
 const PULSE_SPAN := 0.16
 const POP_COLORS: PackedColorArray = [
@@ -28,7 +25,7 @@ var velocity := Vector3.ZERO
 var authoritative := false
 
 var _age := 0.0
-var _core: MeshInstance3D
+var _core: EnergyVfx
 var _spent := false
 
 
@@ -84,68 +81,21 @@ static func launch(world: Node, source: OnlinePlayer, recipe: Dictionary,
 func _ready() -> void:
 	name = "CrawlerMissile"
 	add_to_group(GROUP)
-	var radius := size
-	var body := CapsuleMesh.new()
-	body.radius = radius * 0.42
-	body.height = radius * 2.8
-	body.radial_segments = 12
-	body.rings = 4
-	_core = MeshInstance3D.new()
-	_core.mesh = body
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = CORE_COLOR
-	material.emission_enabled = true
-	material.emission = GLOW_COLOR
-	material.emission_energy_multiplier = 7.2
-	_core.material_override = material
-	_core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_core = EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, GLOW_COLOR)
 	add_child(_core)
-	var tip := MeshInstance3D.new()
-	var tip_mesh := SphereMesh.new()
-	tip_mesh.radius = radius * 0.38
-	tip_mesh.height = radius * 0.76
-	tip_mesh.radial_segments = 12
-	tip_mesh.rings = 6
-	tip.mesh = tip_mesh
-	tip.position = Vector3(0.0, radius * 1.15, 0.0)
-	var tip_material := StandardMaterial3D.new()
-	tip_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	tip_material.albedo_color = TIP_COLOR
-	tip_material.emission_enabled = true
-	tip_material.emission = TIP_COLOR
-	tip_material.emission_energy_multiplier = 8.4
-	tip.material_override = tip_material
-	tip.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(tip)
-	var halo_mesh := SphereMesh.new()
-	halo_mesh.radius = radius * 1.7
-	halo_mesh.height = radius * 3.4
-	halo_mesh.radial_segments = 14
-	halo_mesh.rings = 8
-	var halo := MeshInstance3D.new()
-	halo.mesh = halo_mesh
-	var halo_material := StandardMaterial3D.new()
-	halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	halo_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	halo_material.albedo_color = HALO_COLOR
-	halo_material.emission_enabled = true
-	halo_material.emission = GLOW_COLOR
-	halo_material.emission_energy_multiplier = 4.6
-	halo.material_override = halo_material
-	halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(halo)
-	var lamp := OmniLight3D.new()
-	lamp.light_color = GLOW_COLOR
-	lamp.light_energy = 3.4
-	lamp.omni_range = maxf(radius * 10.0, 2.2)
-	lamp.shadow_enabled = false
-	add_child(lamp)
+	_core.set_ball_radius(size)
+	CrawlerShotSense.watch(self)
+
+
+func _exit_tree() -> void:
+	CrawlerShotSense.drop(self)
 
 
 func _physics_process(delta: float) -> void:
+	shot_tick(delta)
+
+
+func shot_tick(delta: float) -> void:
 	if _spent:
 		return
 	_age += delta
@@ -153,8 +103,7 @@ func _physics_process(delta: float) -> void:
 	scale = Vector3.ONE * pulse
 	_steer(delta)
 	var from := global_position
-	var field_slow := CrawlerFieldVolume.speed_scale_at(self, from) \
-		* CrawlerLingerCloud.speed_scale_at(self, from)
+	var field_slow := CrawlerMobSense.field_slow(self, from)
 	var to := from + velocity * field_slow * delta
 	var struck := _victim_along(from, to)
 	if struck != null:
@@ -193,47 +142,35 @@ func _steer(delta: float) -> void:
 	velocity = velocity.lerp(wanted, blend)
 
 
+func shot_glow_color() -> Color:
+	return GLOW_COLOR
+
+
+func shot_glow_energy() -> float:
+	return 0.0 if _spent else 3.4
+
+
+func shot_glow_range() -> float:
+	return maxf(size * 10.0, 2.2)
+
+
 func _nearest_mob() -> Node:
-	var best: Node = null
-	var best_span := seek
-	for node in _hurt_targets():
-		var span := global_position.distance_to(_combat_position(node))
-		if span > best_span:
-			continue
-		best = node
-		best_span = span
-	return best
+	var skip: Node = shooter if is_instance_valid(shooter) else null
+	return CombatantSense.nearest_mob(self, global_position, seek, skip, true)
 
 
 func _victim_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, maxf(size, 0.10), 0.0)
 	if not is_inside_tree():
 		return null
-	for node in _hurt_targets():
-		var bounds := 0.4
-		if node.has_method(&"combat_radius"):
-			bounds = float(node.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(node), bounds):
-			return node
-	return null
+	var skip: Node = shooter if is_instance_valid(shooter) else null
+	return CombatantSense.first_along(
+		self, from, to, maxf(size, 0.10), skip, {}, -1, false, true, false, true)
 
 
 func _hurt_targets() -> Array[Node]:
-	var found: Array[Node] = []
-	if not is_inside_tree():
-		return found
-	for node_variant: Variant in get_tree().get_nodes_in_group(CrawlerMob.GROUP):
-		var node := node_variant as Node
-		if node == null or node == shooter:
-			continue
-		if node.has_method(&"is_alive") and not bool(node.call(&"is_alive")):
-			continue
-		if node.has_method(&"is_dead") and bool(node.call(&"is_dead")):
-			continue
-		if node.has_method(&"is_charmed") and bool(node.call(&"is_charmed")):
-			continue
-		found.append(node)
-	return found
+	var skip: Node = shooter if is_instance_valid(shooter) else null
+	return CombatantSense.collect(
+		self, skip, -1, false, true, false, true)
 
 
 func _deal(_at: Vector3, struck: Node) -> void:
@@ -283,9 +220,7 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(node: Node) -> Vector3:
-	if node.has_method(&"combat_position"):
-		return node.call(&"combat_position")
-	return (node as Node3D).global_position
+	return CombatantSense.point_of(node)
 
 
 func _up() -> Vector3:

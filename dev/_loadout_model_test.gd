@@ -426,6 +426,10 @@ func _check_cape_cloth() -> void:
 		cape._pos[cape._index(CapeCloth.COLS - 1, hem)])
 	_expect(span > CapeCloth.WIDTH * 0.35,
 		"cape constraints uncrumple a folded hem")
+	cape._commit_mesh()
+	_expect(cape.cloth_mesh() != null and cape.cloth_mesh().mesh != null
+			and cape.cloth_mesh().mesh.get_surface_count() > 0,
+		"the cape keeps a reusable cloth mesh")
 	cape.queue_free()
 
 
@@ -502,6 +506,8 @@ func _check_meta_upgrades() -> void:
 			1.0 + CrawlerProgress.TRAIT_DAMAGE_PER_LEVEL * 5.0),
 		"Noct damage grows two percent with each level")
 	scratch.level = 1
+	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_DAMAGE).begins_with("1"),
+		"hero Damage is the flat player base added to each hit")
 	_expect(scratch.hero_stat_text(CrawlerProgress.STAT_HEALTH).contains("(+"),
 		"permanent ranks appear beside the base health stat")
 	_expect(is_zero_approx(scratch.dodge_chance()),

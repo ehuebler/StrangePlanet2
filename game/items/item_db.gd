@@ -774,7 +774,7 @@ static func title(id: String) -> String:
 
 static func description(id: String, host_id := "", size_rank := -1) -> String:
 	if CrawlerCatalog.catalog_id(id) == CrawlerProgress.STAT_JUKE:
-		return "A short invulnerable dash. Press F to slip aside."
+		return "A short invulnerable dash. Press RMB to slip aside."
 	if CrawlerCatalog.has(id) and (
 			CrawlerCatalog.is_modifier(id) or CrawlerCatalog.is_modifier_token(id)):
 		return CrawlerCatalog.description_of(id, host_id, size_rank)

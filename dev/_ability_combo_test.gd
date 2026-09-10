@@ -737,6 +737,7 @@ func _step_world_once(delta: float) -> void:
 
 
 func _claim_world() -> void:
+	CrawlerShotSense.suspend()
 	for node: Node in get_tree().get_nodes_in_group(CrawlerBubble.GROUP):
 		node.set_physics_process(false)
 		node.set_process(false)

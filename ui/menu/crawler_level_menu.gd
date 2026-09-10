@@ -228,11 +228,12 @@ func _build() -> void:
 	_auto.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	_auto.add_theme_font_size_override(&"font_size", 12)
 	_auto.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_auto.clip_contents = false
 	_auto.clip_text = false
 	_auto.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_auto.pressed.connect(_on_auto_pressed)
-	footer.add_child(_auto)
 	_refresh_auto()
+	footer.add_child(_auto)
 
 	_reroll = Button.new()
 	_reroll.name = "RerollOffers"
@@ -240,9 +241,14 @@ func _build() -> void:
 	_reroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_reroll.size_flags_vertical = Control.SIZE_SHRINK_END
 	_reroll.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_reroll.clip_contents = false
 	_reroll.add_theme_font_size_override(&"font_size", 13)
 	_reroll.pressed.connect(_on_reroll)
-	_style_reroll(false)
+	if _player != null and _player.crawler_progress != null:
+		_refresh_reroll(_player.crawler_progress)
+	else:
+		_reroll.text = "REROLL"
+		_style_reroll(false)
 	footer.add_child(_reroll)
 	show_tab(_tab)
 
@@ -518,6 +524,7 @@ func _add_tab_button(label: String, tab: Tab) -> void:
 	button.text = label.to_upper()
 	button.custom_minimum_size.y = 34.0
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.clip_contents = false
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	button.add_theme_font_size_override(&"font_size", 12)
 	button.pressed.connect(func() -> void: show_tab(tab))
@@ -528,7 +535,7 @@ func _paint_tabs() -> void:
 	if _tabs == null:
 		return
 	for child: Node in _tabs.get_children():
-		var button := child as Button
+		var button := CrtType.inner(child) as Button
 		if button == null:
 			continue
 		var spend := button.name == "LevelTab_Spend"
@@ -543,25 +550,7 @@ func _style_tab(button: Button, active: bool) -> void:
 	var accent := GREEN if active else Color(RED, 0.75)
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if active \
 		else Color(0.08, 0.02, 0.02, 0.9)
-	button.add_theme_color_override(&"font_color", accent)
-	button.add_theme_color_override(&"font_hover_color", GREEN)
-	button.add_theme_color_override(&"font_pressed_color", GREEN)
-	button.add_theme_color_override(&"font_disabled_color", Color(1, 1, 1, 0.35))
-	var box := StyleBoxFlat.new()
-	box.bg_color = fill
-	box.border_color = Color(accent, 0.95)
-	box.set_border_width_all(2 if active else 1)
-	box.set_content_margin_all(8)
-	button.add_theme_stylebox_override(&"normal", box)
-	var hover := box.duplicate() as StyleBoxFlat
-	hover.bg_color = Color(0.0, 0.2, 0.06, 0.88)
-	hover.border_color = GREEN
-	button.add_theme_stylebox_override(&"hover", hover)
-	button.add_theme_stylebox_override(&"pressed", hover)
-	var dead := box.duplicate() as StyleBoxFlat
-	dead.bg_color = Color(0.08, 0.02, 0.02, 0.9)
-	dead.border_color = Color(1, 1, 1, 0.28)
-	button.add_theme_stylebox_override(&"disabled", dead)
+	_paint_button(button, accent, fill, active)
 
 
 func _fill_prefs() -> void:
@@ -609,20 +598,7 @@ func _refresh_auto() -> void:
 	var accent := GREEN if on else Color(RED, 0.75)
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if on \
 		else Color(0.08, 0.02, 0.02, 0.9)
-	_auto.add_theme_color_override(&"font_color", accent)
-	_auto.add_theme_color_override(&"font_hover_color", GREEN)
-	_auto.add_theme_color_override(&"font_pressed_color", GREEN)
-	var box := StyleBoxFlat.new()
-	box.bg_color = fill
-	box.border_color = Color(accent, 0.95)
-	box.set_border_width_all(2)
-	box.set_content_margin_all(8)
-	_auto.add_theme_stylebox_override(&"normal", box)
-	var hover := box.duplicate() as StyleBoxFlat
-	hover.bg_color = Color(0.0, 0.2, 0.06, 0.88)
-	hover.border_color = GREEN
-	_auto.add_theme_stylebox_override(&"hover", hover)
-	_auto.add_theme_stylebox_override(&"pressed", hover)
+	_paint_button(_auto, accent, fill, true)
 
 
 func _on_auto_pressed() -> void:
@@ -785,25 +761,75 @@ func _style_reroll(enabled: bool) -> void:
 	var accent := GREEN if enabled else Color(RED, 0.55)
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if enabled \
 		else Color(0.08, 0.02, 0.02, 0.9)
-	_reroll.add_theme_color_override(&"font_color", accent)
-	_reroll.add_theme_color_override(&"font_hover_color", GREEN)
-	_reroll.add_theme_color_override(&"font_pressed_color", GREEN)
-	_reroll.add_theme_color_override(&"font_disabled_color", Color(1, 1, 1, 0.45))
+	_paint_button(_reroll, accent, fill, enabled)
+
+
+func _paint_button(button: Button, accent: Color, fill: Color, thick: bool) -> void:
+	if button == null:
+		return
+	button.clip_contents = false
+	button.add_theme_color_override(&"font_color", accent)
+	button.add_theme_color_override(&"font_hover_color", GREEN)
+	button.add_theme_color_override(&"font_pressed_color", GREEN)
+	button.add_theme_color_override(&"font_disabled_color", Color(1, 1, 1, 0.45))
+	button.add_theme_stylebox_override(&"normal", _fill_box(fill))
+	var hover := _fill_box(Color(0.0, 0.2, 0.06, 0.88))
+	button.add_theme_stylebox_override(&"hover", hover)
+	button.add_theme_stylebox_override(&"pressed", hover)
+	button.add_theme_stylebox_override(&"disabled", _fill_box(Color(0.08, 0.02, 0.02, 0.9)))
+	button.add_theme_stylebox_override(&"focus", _fill_box(fill))
+	_ensure_rim(button, accent, 2.0 if thick else 1.0)
+	_ensure_type(button)
+
+
+func _fill_box(fill: Color, margin := 8) -> StyleBoxFlat:
 	var box := StyleBoxFlat.new()
 	box.bg_color = fill
-	box.border_color = Color(accent, 0.95)
-	box.set_border_width_all(2 if enabled else 1)
-	box.set_content_margin_all(8)
-	_reroll.add_theme_stylebox_override(&"normal", box)
-	var hover := box.duplicate() as StyleBoxFlat
-	hover.bg_color = Color(0.0, 0.2, 0.06, 0.88)
-	hover.border_color = GREEN
-	_reroll.add_theme_stylebox_override(&"hover", hover)
-	_reroll.add_theme_stylebox_override(&"pressed", hover)
-	var dead := box.duplicate() as StyleBoxFlat
-	dead.bg_color = Color(0.08, 0.02, 0.02, 0.9)
-	dead.border_color = Color(1, 1, 1, 0.28)
-	_reroll.add_theme_stylebox_override(&"disabled", dead)
+	box.border_color = Color.TRANSPARENT
+	box.set_border_width_all(0)
+	box.set_content_margin_all(margin)
+	return box
+
+
+func _rim_of(target: Control) -> RedGlowPanel:
+	var rim := target.get_node_or_null("RedGlowPanel") as RedGlowPanel
+	if rim != null:
+		return rim
+	var host := CrtType.host_of(target)
+	if host != null:
+		return host.get_node_or_null("RedGlowPanel") as RedGlowPanel
+	return null
+
+
+func _ensure_rim(target: Control, accent: Color, width := 2.0) -> RedGlowPanel:
+	var rim := _rim_of(target)
+	if rim == null:
+		var host := CrtType.host_of(target)
+		if host != null:
+			rim = RedGlowPanel.add_to(host)
+			host.move_child(rim, host.get_child_count() - 1)
+		else:
+			rim = RedGlowPanel.add_to(target)
+		rim.fill_color = Color.TRANSPARENT
+		rim.glow_spread = 6.0
+		rim.glow_layers = 3
+	rim.show_behind_parent = false
+	rim.fill_color = Color.TRANSPARENT
+	rim.border_color = Color(accent, 0.95)
+	rim.border_width = width
+	rim.glow_intensity = 1.15
+	rim.glow_spread = 6.0
+	return rim
+
+
+func _ensure_type(button: Button) -> void:
+	if button == null or not button.is_inside_tree():
+		return
+	if CrtType.host_of(button) != null:
+		return
+	if button.text.strip_edges().is_empty():
+		return
+	CrtType.dress(button)
 
 
 func _on_reroll() -> void:

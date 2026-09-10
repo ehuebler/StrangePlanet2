@@ -83,8 +83,8 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_build()
-	CrtType.watch(self)
 	_refresh()
+	CrtType.watch(self)
 	if _player != null and _player.crawler_progress != null \
 			and not _player.crawler_progress.changed.is_connected(_refresh):
 		_player.crawler_progress.changed.connect(_refresh)
@@ -174,18 +174,25 @@ func _build() -> void:
 	column.add_theme_constant_override(&"separation", 10)
 	shell.add_child(column)
 
+	var header := Control.new()
+	header.name = "StoreHeader"
+	header.custom_minimum_size = Vector2(0, 32)
+	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(header)
+
 	_title = Label.new()
 	_title.text = "CITY STORE"
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_title.add_theme_font_size_override(&"font_size", 22)
 	_title.add_theme_color_override(&"font_color", RED)
-	column.add_child(_title)
+	_title.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_child(_title)
 
-	_gold = Label.new()
-	_gold.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_gold.add_theme_font_size_override(&"font_size", 18)
-	_gold.add_theme_color_override(&"font_color", RED)
-	column.add_child(_gold)
+	_gold = _make_gold_label("StoreGold", RED)
+	header.add_child(_gold)
 
 	_tab_host = VBoxContainer.new()
 	_tab_host.name = "StoreTabs"
@@ -336,7 +343,7 @@ func _refresh() -> void:
 	var in_city := _player != null and _player.in_crawler_city()
 	if _title != null:
 		_title.visible = in_city
-	_gold.visible = in_city
+	_gold.visible = CrawlerRules.active() and progress != null
 	if _tab_host != null:
 		_tab_host.visible = in_city
 	for index in _tab_buttons.size():
@@ -422,10 +429,27 @@ func refresh_wallet() -> void:
 func _set_gold_line(progress: CrawlerProgress) -> void:
 	if _gold == null:
 		return
-	_gold.text = "GOLD  %s    GEMS  %d" % [
-		progress.gold_text() if progress != null else "0",
-		CrawlerMeta.gems(),
-	]
+	_gold.text = "GOLD  %s" % (progress.gold_text() if progress != null else "0")
+
+
+func _make_gold_label(node_name: String, color: Color) -> Label:
+	var gold := Label.new()
+	gold.name = node_name
+	gold.text = "GOLD  0"
+	gold.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	gold.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	gold.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gold.add_theme_font_size_override(&"font_size", 18)
+	gold.add_theme_color_override(&"font_color", color)
+	gold.custom_minimum_size = Vector2(160, 28)
+	gold.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	gold.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	gold.offset_left = -200.0
+	gold.offset_top = 0.0
+	gold.offset_right = 0.0
+	gold.offset_bottom = 32.0
+	gold.set_meta(&"crt_skip", true)
+	return gold
 
 
 func _purse(progress: CrawlerProgress) -> int:
@@ -514,9 +538,9 @@ func _fill_reststop() -> void:
 		gold,
 		_buy_rest_ammo
 	)
-	if not CrawlerRules.crawler():
+	if not CrawlerRules.active():
 		return
-	var infinite_gold := progress != null and progress.gold_unlimited
+	var infinite_gold := progress != null and progress.gold_is_unlimited()
 	_add_row(
 		"INFINITE GOLD",
 		"Spend without emptying the purse. Switch it off to use the gold you already hold.",
@@ -1290,7 +1314,10 @@ func _buy_rest_ammo() -> void:
 
 func _toggle_rest_gold() -> void:
 	if _player != null and _player.crawler_progress != null:
-		_player.set_crawler_unlimited_gold(not _player.crawler_progress.gold_unlimited)
+		var next := not _player.crawler_progress.gold_is_unlimited()
+		_player.set_crawler_unlimited_gold(next)
+		if CrawlerRules.sandbox():
+			_player.set_sandbox_cheat(CrawlerRules.CHEAT_GOLD, next)
 	_refresh()
 
 

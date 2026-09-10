@@ -387,11 +387,15 @@ static func apply_to_combatants(anywhere: Node, hit: DamageHit) -> float:
 		return 0.0
 	var absorbed := 0.0
 	var source := hit.source_node(anywhere)
-	for combatant_variant: Variant in anywhere.get_tree().get_nodes_in_group(
-			COMBATANT_GROUP):
-		var combatant := combatant_variant as Node
-		if combatant == null or not in_same_world(anywhere, combatant) \
-				or combatant == source or not hit.affects_combatant(combatant):
+	CombatantSense.ensure(anywhere)
+	var want_world := game_world_of(anywhere)
+	for index in CombatantSense.count():
+		var combatant := CombatantSense.node_at(index)
+		if combatant == null or combatant == source:
+			continue
+		if want_world != null and CombatantSense.world_at(index) != want_world:
+			continue
+		if not hit.affects_combatant(combatant):
 			continue
 		# Resolve radial falloff against the target's body bounds before handing
 		# over the immutable event. Flora already calls damage_at per instance;
@@ -492,6 +496,9 @@ func affects_combatant(combatant: Node) -> bool:
 		if not combatant.has_method(&"combat_peer_id") \
 				or int(combatant.call(&"combat_peer_id")) != target_peer:
 			return false
+	var pill := combat_capsule_of(combatant)
+	if not pill.is_empty():
+		return reaches_segment(pill["a"], pill["b"], float(pill["radius"]))
 	var box := _combatant_aabb(combatant)
 	if box.size.length_squared() > 0.0001:
 		return reaches_aabb(box)
@@ -544,19 +551,29 @@ func damage_at(point: Vector3) -> float:
 ## untouched and can still be offered to every other target and flora field.
 func resolved_for(combatant: Node) -> DamageHit:
 	var delivered := _copy()
+	var pill := combat_capsule_of(combatant)
 	var box := _combatant_aabb(combatant)
-	var boxed := box.size.length_squared() > 0.0001
+	var boxed := pill.is_empty() and box.size.length_squared() > 0.0001
+	if not pill.is_empty() and not reaches_segment(
+			pill["a"], pill["b"], float(pill["radius"])):
+		delivered.amount = 0.0
+		_scale_statuses(delivered, 0.0)
+		return delivered
 	if boxed and not reaches_aabb(box):
 		delivered.amount = 0.0
 		_scale_statuses(delivered, 0.0)
 		return delivered
-	var point := _closest_on_aabb(box, centre()) if boxed \
-		else _combatant_position(combatant)
+	var point := _combatant_position(combatant)
+	if not pill.is_empty():
+		point = closest_on_segment(pill["a"], pill["b"], centre())
+	elif boxed:
+		point = _closest_on_aabb(box, centre())
 	if not point.is_finite():
 		delivered.amount = 0.0
 		_scale_statuses(delivered, 0.0)
 		return delivered
-	var bounds := 0.0 if boxed else _combatant_radius(combatant)
+	var bounds := float(pill["radius"]) if not pill.is_empty() \
+		else (0.0 if boxed else _combatant_radius(combatant))
 	var away := 0.0
 	if boxed:
 		away = maxf(distance_to(point), 0.0)
@@ -676,6 +693,21 @@ func _cylinder_overlaps_segment(a: Vector3, b: Vector3, pad: float) -> bool:
 
 
 func _segment_distance(p1: Vector3, q1: Vector3, p2: Vector3, q2: Vector3) -> float:
+	var pair := closest_points_on_segments(p1, q1, p2, q2)
+	return pair[0].distance_to(pair[1])
+
+
+static func closest_on_segment(a: Vector3, b: Vector3, point: Vector3) -> Vector3:
+	var along := b - a
+	var length_squared := along.length_squared()
+	if length_squared < 0.000001:
+		return a
+	var share := clampf((point - a).dot(along) / length_squared, 0.0, 1.0)
+	return a + along * share
+
+
+static func closest_points_on_segments(
+		p1: Vector3, q1: Vector3, p2: Vector3, q2: Vector3) -> PackedVector3Array:
 	var d1 := q1 - p1
 	var d2 := q2 - p2
 	var r := p1 - p2
@@ -684,7 +716,7 @@ func _segment_distance(p1: Vector3, q1: Vector3, p2: Vector3, q2: Vector3) -> fl
 	var s := 0.0
 	var t := 0.0
 	if a <= 0.0000001 and e <= 0.0000001:
-		return p1.distance_to(p2)
+		return PackedVector3Array([p1, p2])
 	if a <= 0.0000001:
 		t = clampf(d2.dot(r) / e, 0.0, 1.0)
 	elif e <= 0.0000001:
@@ -703,7 +735,45 @@ func _segment_distance(p1: Vector3, q1: Vector3, p2: Vector3, q2: Vector3) -> fl
 		elif t > 1.0:
 			t = 1.0
 			s = clampf((b - c) / a, 0.0, 1.0)
-	return (p1 + d1 * s).distance_to(p2 + d2 * t)
+	return PackedVector3Array([p1 + d1 * s, p2 + d2 * t])
+
+
+static func combat_capsule_of(combatant: Node) -> Dictionary:
+	if combatant != null and combatant.has_method(&"combat_capsule"):
+		var value: Variant = combatant.call(&"combat_capsule")
+		if value is Dictionary:
+			var a: Variant = value.get("a", null)
+			var b: Variant = value.get("b", null)
+			if a is Vector3 and b is Vector3 and (a as Vector3).is_finite() \
+					and (b as Vector3).is_finite():
+				return {
+					"a": a,
+					"b": b,
+					"radius": maxf(float(value.get("radius", 0.0)), 0.0),
+				}
+	return {}
+
+
+static func first_combatant_along(anywhere: Node, from: Vector3, to: Vector3,
+		pad := 0.35, want_faction := Faction.ENEMY) -> Dictionary:
+	return CombatantSense.first_capsule_along(
+		anywhere, from, to, pad, want_faction, game_world_of(anywhere) != null)
+
+
+static func _static_combat_position(combatant: Node) -> Vector3:
+	if combatant != null and combatant.has_method(&"combat_position"):
+		var value: Variant = combatant.call(&"combat_position")
+		if value is Vector3:
+			return value
+	if combatant is Node3D:
+		return (combatant as Node3D).global_position
+	return Vector3(INF, INF, INF)
+
+
+static func _static_combat_radius(combatant: Node) -> float:
+	if combatant != null and combatant.has_method(&"combat_radius"):
+		return maxf(float(combatant.call(&"combat_radius")), 0.0)
+	return 0.0
 
 
 func _radial_axis_distance(point: Vector3) -> float:

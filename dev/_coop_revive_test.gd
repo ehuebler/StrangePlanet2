@@ -87,11 +87,13 @@ func _check_wipe_without_tickets() -> void:
 	_expect(screen != null and not screen.is_downed()
 			and screen.title_text() == DeathScreen.GAME_OVER_TITLE,
 		"the last death turns DOWNED into GAME OVER")
-	_expect(screen.sends_home()
+	_expect(screen.home_button() != null
+			and screen.home_button().visible
+			and screen.home_button().text == DeathScreen.HOME_LABEL
 			and screen.respawn_button() != null
 			and screen.respawn_button().visible
-			and screen.respawn_button().text == DeathScreen.HOME_LABEL,
-		"a wipe without tickets only offers HOME")
+			and screen.respawn_button().text == DeathScreen.RESPAWN_LABEL,
+		"a wipe without tickets still offers a free RESPAWN")
 	_expect(_player.crawler_progress != null
 			and _player.crawler_progress.settled_global,
 		"a wipe without tickets settles the run")
@@ -188,8 +190,10 @@ func _check_solo_wipe() -> void:
 	var screen := _player.death_screen()
 	_expect(screen != null and not screen.is_downed()
 			and screen.title_text() == DeathScreen.GAME_OVER_TITLE
-			and screen.sends_home(),
-		"solo death without a ticket is still GAME OVER and HOME")
+			and screen.home_button() != null and screen.home_button().visible
+			and screen.respawn_button() != null
+			and screen.respawn_button().text == DeathScreen.RESPAWN_LABEL,
+		"solo death without a ticket is GAME OVER with HOME and free RESPAWN")
 	_expect(_player.crawler_progress != null
 			and _player.crawler_progress.settled_global,
 		"solo death without a ticket still settles the run")

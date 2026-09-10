@@ -36,6 +36,21 @@ func interact(player: OnlinePlayer) -> void:
 
 func begin_settle() -> void:
 	_motion = DroppedWorldMotion.start(self, DroppedWorldMotion.HOVER_HEIGHT)
+	call_deferred(&"_refine_settle")
+
+
+func _refine_settle() -> void:
+	if not is_inside_tree() or _motion.is_empty() \
+			or not bool(_motion.get("seek_floor", false)):
+		return
+	if DroppedWorldMotion.landed(_motion):
+		var again := DroppedWorldMotion.start(self, DroppedWorldMotion.HOVER_HEIGHT)
+		if not DroppedWorldMotion.landed(again):
+			_motion = again
+		return
+	var to := DroppedWorldMotion.land_point(self, DroppedWorldMotion.HOVER_HEIGHT)
+	if to.is_finite():
+		_motion["to"] = to
 
 
 func begin_settle_to(at: Vector3) -> void:

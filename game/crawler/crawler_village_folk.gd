@@ -12,6 +12,11 @@ const WANDER_MAX := 20
 const SHOP_BACK := 0.95
 const HIDDEN_NAME := "Moss"
 const HIDDEN_LOCAL := Vector3(-18.6, 0.0, 26.8)
+const WAKE_RANGE := 140.0
+const SLEEP_RANGE := 190.0
+
+var _sleeping := false
+var _probe_left := 0.0
 
 const SHOPS: Array[Dictionary] = [
 	{"mark": "INTERACT_HATS", "title": "Brim"},
@@ -26,6 +31,10 @@ const SHOPS: Array[Dictionary] = [
 ]
 
 
+func _ready() -> void:
+	set_process(true)
+
+
 func populate(village: Node3D, seed: int, hide_at := Vector3.ZERO) -> void:
 	if village == null:
 		return
@@ -36,6 +45,51 @@ func populate(village: Node3D, seed: int, hide_at := Vector3.ZERO) -> void:
 	_seed_wanderers(village, path, rng)
 	_seed_keepers(village, rng)
 	_seed_hidden(village, rng, hide_at)
+	_probe_left = 0.0
+	_sleep_far_wanderers(true)
+
+
+func _process(delta: float) -> void:
+	_probe_left -= delta
+	if _probe_left > 0.0:
+		return
+	_probe_left = 0.35
+	_sleep_far_wanderers(false)
+
+
+func is_sleeping() -> bool:
+	return _sleeping
+
+
+func _sleep_far_wanderers(force: bool) -> void:
+	var eye := _viewer_at()
+	var gap2 := INF
+	if is_inside_tree() and eye.is_finite():
+		gap2 = global_position.distance_squared_to(eye)
+	var sleep := gap2 > SLEEP_RANGE * SLEEP_RANGE
+	if _sleeping:
+		sleep = gap2 > WAKE_RANGE * WAKE_RANGE
+	if not force and sleep == _sleeping:
+		return
+	_sleeping = sleep
+	for child in get_children():
+		if not (child is CrawlerSproutling):
+			continue
+		var folk := child as CrawlerSproutling
+		if folk.role != CrawlerSproutling.Role.WANDER:
+			continue
+		folk.set_process(not sleep)
+		if sleep:
+			folk.rest_now()
+
+
+func _viewer_at() -> Vector3:
+	if not is_inside_tree():
+		return Vector3.ZERO
+	var cam := get_viewport().get_camera_3d()
+	if cam != null:
+		return cam.global_position
+	return global_position
 
 
 func wanderers() -> Array[CrawlerSproutling]:

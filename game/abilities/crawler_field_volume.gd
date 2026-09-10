@@ -60,15 +60,7 @@ static func create(world: Node, source: OnlinePlayer, id: String,
 
 
 static func speed_scale_at(anywhere: Node, at: Vector3) -> float:
-	var scale := 1.0
-	if anywhere == null or not anywhere.is_inside_tree() or not at.is_finite():
-		return scale
-	for node_variant: Variant in anywhere.get_tree().get_nodes_in_group(GROUP):
-		var field := node_variant as CrawlerFieldVolume
-		if field == null or not field.contains(at):
-			continue
-		scale = minf(scale, field.speed_mul())
-	return scale
+	return CrawlerMobSense.field_scale(anywhere, at)
 
 
 static func wash_at(anywhere: Node, at: Vector3) -> Color:
@@ -187,27 +179,11 @@ func _tick_inside() -> void:
 		return
 	_tick_owner(owner)
 	var seen: Dictionary = {}
-	for node_variant: Variant in owner.get_tree().get_nodes_in_group(
-			DamageHit.COMBATANT_GROUP):
-		var combatant := node_variant as Node
-		if combatant == null or combatant == owner:
+	for combatant in CombatantSense.collect(self, owner):
+		if not combatant.has_method(&"apply_damage"):
 			continue
-		if not combatant.has_method(&"apply_damage") \
-				or not combatant.has_method(&"combat_faction"):
-			continue
-		if int(combatant.call(&"combat_faction")) != DamageHit.Faction.ENEMY:
-			continue
-		if combatant.has_method(&"is_alive") \
-				and not bool(combatant.call(&"is_alive")):
-			continue
-		var point := global_position
-		if combatant.has_method(&"combat_position"):
-			point = combatant.call(&"combat_position")
-		elif combatant is Node3D:
-			point = (combatant as Node3D).global_position
-		var bounds := 0.4
-		if combatant.has_method(&"combat_radius"):
-			bounds = float(combatant.call(&"combat_radius"))
+		var point := CombatantSense.point_of(combatant)
+		var bounds := CombatantSense.radius_of(combatant)
 		var key := combatant.get_instance_id()
 		if not contains(point, bounds):
 			_inside.erase(key)

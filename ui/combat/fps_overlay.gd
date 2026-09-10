@@ -1,19 +1,21 @@
 class_name FpsOverlay
 extends PanelContainer
 
-## Live FPS readout and sparkline in the upper-right.
+## Live FPS readout, speed, and sparkline in the upper-right.
 
 const MARGIN := 12.0
-const WIDTH := 228.0
+const WIDTH := 268.0
 const HISTORY := 180
 const WARN_FPS := 30.0
 const GOOD_FPS := 55.0
 
+var _body: Node3D
 var _readout: Label
 var _chart: Control
 var _values := PackedFloat32Array()
 var _latest := 0.0
 var _latest_ms := 0.0
+var _latest_speed := 0.0
 
 
 func _init() -> void:
@@ -48,11 +50,12 @@ func _ready() -> void:
 	column.add_theme_constant_override(&"separation", 3)
 	add_child(column)
 	_readout = Label.new()
+	_readout.name = "FpsReadout"
 	_readout.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_readout.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_readout.add_theme_font_size_override(&"font_size", 14)
 	_readout.add_theme_color_override(&"font_color", Color(0.82, 0.94, 1.0, 0.96))
-	_readout.text = "— FPS"
+	_readout.text = "— FPS   — m/s"
 	column.add_child(_readout)
 	_chart = Control.new()
 	_chart.name = "FpsChart"
@@ -77,6 +80,14 @@ func current_ms() -> float:
 	return _latest_ms
 
 
+func current_speed() -> float:
+	return _latest_speed
+
+
+func bind(body: Node3D) -> void:
+	_body = body
+
+
 func sample_count() -> int:
 	return _values.size()
 
@@ -87,14 +98,27 @@ func _sample() -> void:
 		frame_ms = (1.0 / maxf(Engine.get_frames_per_second(), 1.0)) * 1000.0
 	_latest_ms = frame_ms
 	_latest = 1000.0 / maxf(frame_ms, 0.01)
+	_latest_speed = _speed_mps()
 	if _values.size() >= HISTORY:
 		_values.remove_at(0)
 	_values.append(_latest)
 	if _readout != null:
-		_readout.text = "%d FPS   %.1f ms" % [int(round(_latest)), _latest_ms]
+		_readout.text = "%d FPS   %.1f ms   %d m/s" % [
+			int(round(_latest)), _latest_ms, int(round(_latest_speed))]
 		_readout.add_theme_color_override(&"font_color", _ink(_latest))
 	if _chart != null:
 		_chart.queue_redraw()
+
+
+func _speed_mps() -> float:
+	if _body is CharacterBody3D:
+		var carried := (_body as CharacterBody3D).velocity
+		return carried.length() if carried.is_finite() else 0.0
+	if _body != null:
+		var held: Variant = _body.get("velocity")
+		if held is Vector3 and (held as Vector3).is_finite():
+			return (held as Vector3).length()
+	return 0.0
 
 
 func _ink(fps: float) -> Color:

@@ -26,6 +26,9 @@ const ENABLED_ABILITIES: PackedStringArray = [
 	"charming_aura", "freeze_blast", "static_field", "toxic_field",
 	"freeze_field", "healing_field", "overdrive",
 ]
+## Flat player attack added to every ability hit. Shop and character damage
+## ranks scale this half; the ability's own `damage` is the other half.
+const PLAYER_DAMAGE := 1.0
 const LASER_DAMAGE := 1.0
 const LASER_COOLDOWN := 0.5
 const LASER_DURATION := 0.4
@@ -172,8 +175,9 @@ const FUS_RANGE := 20.0
 const FUS_RANGE_PER_RANK := 3.5
 const FUS_SPEED := 42.0
 const FUS_SPEED_PER_RANK := 6.0
-const FUS_RADIUS := 3.8
-const FUS_PROJECTILE_RADIUS := 3.8
+const FUS_RADIUS := 0.7
+const FUS_PROJECTILE_RADIUS := 0.9
+const FUS_EXPAND := 14.0
 const FUS_KNOCKBACK := 72.0
 const FUS_SLOTS := 3
 const FUS_DAMAGE_PER_RANK := 2.0
@@ -454,8 +458,8 @@ const CITY_LEE_SITE_ID := "city_lee"
 const CITY_LEE_TITLE := "Lee Reach"
 const CITY_LEE_PATCH := "Wind Gap 4"
 const CITY_OUTPOST_METRES := 750.0
-const CITY_MAP_DELAY := 1.0
-const CRESCENT_VILLAGE := "res://assets/runtime/environment/crescent_market_village.glb"
+const CITY_MAP_DELAY := 3.0
+const CRESCENT_VILLAGE := "res://assets/runtime/environment/adobe/adobe_blob_village.glb"
 const START_ENTER_RADIUS := 100.0
 const TOWER_PATCH := "Far Beacon 4"
 const CASTLE_PATCH := "Long Shore 4"
@@ -511,6 +515,34 @@ const START_FAR_KINDS: PackedStringArray = ["ranger", "rhino", "rammer"]
 const DEMON_KINDS: PackedStringArray = ["gloam", "vesper", "threnody"]
 const ROBOT_KINDS: PackedStringArray = ["kestrel", "bastion", "weaver"]
 const ALIEN_KINDS: PackedStringArray = ["scout", "gray", "tanglemaw"]
+const GLORB_KINDS: PackedStringArray = [
+	"glorb_jellyfish", "glorb_rhino", "glorb_eyeball", "glorb_punching",
+	"glorb_one_armed", "glorb_spider", "glorb_angel",
+]
+const GLORB_SPAWN := 150.0
+const GLORB_EACH := 2
+const GLORB_EACH_MAX := 100
+const GLORB_AGRO := 50.0
+const GLORB_AGRO2 := GLORB_AGRO * GLORB_AGRO
+const GLORB_DROP := 90.0
+## Angel and jellyfish take longer than a ranger to spool up to a runner.
+const GLORB_FLYER_MATCH_LAG := 0.07
+const GLORB_FLYER_MATCH_FLOOR := 1.6
+const GLORB_FLYER_MATCH_LOCK := 0.48
+const GLORB_FLYER_CLOSE_STEER := 6.0
+const GLORB_FLYER_INBOUND_LAG := 0.22
+const GLORB_FLYER_INBOUND_FLOOR := 2.2
+const GLORB_FLYER_INBOUND_STEER := 3.2
+const GLORB_FLYER_HOLD_LAG := 0.22
+const GLORB_FLYER_HOLD_FLOOR := 2.2
+const GLORB_FLYER_HOLD_LOCK := 1.15
+const GLORB_RING_STRAFE := 0.35
+const GLORB_RING_CATCH := 16.0
+const GLORB_RING_LOCK := 4.6
+static var glorb_field := true
+static var glorb_each := GLORB_EACH
+static var _glorb_off: Dictionary = {}
+static var _glorb_count: Dictionary = {}
 const SCOUT_AIM := 0.55
 const GRAY_AIM := 0.7
 const GRAY_SHOT_SPEED := 7.0
@@ -533,12 +565,12 @@ const KIND_CAP_BASE := {
 	"rhino": 9,
 	"rammer": 9,
 	"rift_hulk": 1,
-	"gloam": 32,
+	"gloam": 48,
 	"vesper": 5,
 	"threnody": 1,
 	"kestrel": 11,
-	"bastion": 20,
-	"weaver": 26,
+	"bastion": 9,
+	"weaver": 12,
 	"scout": 8,
 	"gray": 14,
 	"tanglemaw": 36,
@@ -550,13 +582,50 @@ const GLOAM_AIR_MATCH := 1.08
 const GLOAM_LAND_GAP := 10.0
 const GLOAM_CUT_SIDE := 2.2
 const GLOAM_RUN_SPEED := 8.0
-const GLOAM_FLOCK := 8
+const GLOAM_FLOCK := 16
 const TANGLEMAW_FLOCK := 6
+const WEAVER_FLOCK := 3
+const GLOAM_RESERVE_FLOCK := 6
+## Three rings around the player, each 15 m thick, from 20 m out.
+## The tile pack still picks the three kinds; the rings only place them.
+## After spawn every kind can leave the band. Caps only block new homes.
+## Leaving a tile does not despawn that tile's pack; stream-out does.
+const FIELD_RING_START := 20.0
+const FIELD_RING_THICK := 15.0
+const FIELD_RING_NONE := -1
+const FIELD_RING_CLOSE := 0
+const FIELD_RING_MID := 1
+const FIELD_RING_FAR := 2
+const FIELD_RING_CLOSE_MIN := 36
+const FIELD_RING_CLOSE_FILL := 64
+const FIELD_RING_CLOSE_MAX := 100
+const FIELD_RING_MID_MIN := 16
+const FIELD_RING_MID_FILL := 32
+const FIELD_RING_MID_MAX := 50
+const FIELD_RING_FAR_MIN := 8
+const FIELD_RING_FAR_FILL := 16
+const FIELD_RING_FAR_MAX := 25
+const FIELD_RING_SPAWN_TICK := 4
+const FIELD_RING_CLOSE_KINDS: PackedStringArray = [
+	"weaver", "rhino", "gloam", "tanglemaw", "gray"]
+const FIELD_RING_MID_KINDS: PackedStringArray = [
+	"bastion", "ranger", "kestrel", "rammer", "scout", "vesper"]
+const FIELD_RING_FAR_KINDS: PackedStringArray = [
+	"ranger", "kestrel", "rammer", "scout", "bastion", "threnody", "vesper"]
+const PACK_AGRO_NEAR := FIELD_RING_START
+const PACK_AGRO_FAR := FIELD_RING_START + FIELD_RING_THICK
+const PACK_RESERVE_NEAR := FIELD_RING_START + FIELD_RING_THICK
+const PACK_RESERVE_FAR := FIELD_RING_START + FIELD_RING_THICK * 3.0
+const PACK_SECTOR := TAU
+const PACK_FILL := FIELD_RING_SPAWN_TICK
+const WEAVER_NEAR := PACK_AGRO_NEAR
+const WEAVER_FAR := PACK_AGRO_FAR
 const VESPER_STANDOFF_MIN := 22.0
 const VESPER_STANDOFF_MAX := 38.0
 const VESPER_ENGAGE_MIN := 18.0
 const VESPER_ENGAGE_MAX := 48.0
 const VESPER_CHARGE := 1.15
+const WEAVER_CHARGE := 0.38
 const VESPER_FIRE := 1.4
 const VESPER_BEAM_RADIUS := 0.55
 const THRENODY_STANDOFF_MIN := 50.0
@@ -588,11 +657,19 @@ const SPAWN_LEAD_KIND := 3
 ## Homes dripped around the player each stream tick once the local pack
 ## is below [constant LIVE_AROUND]. Patch-enter still queues the roster.
 const RING_FILL_PER_TICK := 3
-const BASTION_CLEAR := 15.0
-const BASTION_GRID := 11.0
-const BASTION_NEAR := 18.0
-const BASTION_FAR := 46.0
-const BASTION_FILL := 6
+const BASTION_CLEAR := FIELD_RING_START
+const BASTION_GRID := 8.0
+const BASTION_AGRO_NEAR := FIELD_RING_START + FIELD_RING_THICK
+const BASTION_AGRO_FAR := FIELD_RING_START + FIELD_RING_THICK * 2.0
+const BASTION_RESERVE_NEAR := FIELD_RING_START + FIELD_RING_THICK * 2.0
+const BASTION_RESERVE_FAR := FIELD_RING_START + FIELD_RING_THICK * 3.0
+const BASTION_RESERVE_AGRO := 72.0
+const BASTION_WAKE := 72.0
+const BASTION_NEAR := 85.0
+const BASTION_FAR := 120.0
+const BASTION_AGRO_CAP := 3
+const BASTION_RESERVE_CAP := 6
+const BASTION_FILL := 2
 const BASTION_LOFT := 0.72
 const BASTION_GRAVITY := 32.0
 ## Cheap horde separation: distance checks, not physics colliders.
@@ -606,14 +683,16 @@ const SPAWN_AGRO_EVERY := 12
 const MOB_LOD_COLD := 0
 const MOB_LOD_WARM := 1
 const MOB_LOD_HOT := 2
-const MOB_LOD_HOT_RANGE := 72.0
-const MOB_LOD_WARM_RANGE := 160.0
+## Unique think, attacks, and ground raycasts stay in this combat bubble.
+## Agroed walkers outside it still seek on the cheap far tick.
+const MOB_LOD_HOT_RANGE := 36.0
+const MOB_LOD_WARM_RANGE := 70.0
 const MOB_THINK_BUDGET := 14
 const MOB_ATTACK_BUDGET := 3
 const MOB_SPAWN_BUILD := 2
-const MOB_SPAWN_QUEUE := 384
-const MOB_COLD_STRIDE := 8
-const MOB_WARM_STRIDE := 2
+const MOB_SPAWN_QUEUE := 1536
+const MOB_COLD_STRIDE := 16
+const MOB_WARM_STRIDE := 4
 const KILL_COOLDOWN := 5.0
 const KILL_RADIUS := 34.0
 const KILL_REFILL := 3.5
@@ -630,9 +709,11 @@ const IDLE_DESPAWN := 7.5
 const CITY_SAFE_PAD := 48.0
 const CITY_ENTER_RADIUS := CITY_RING_RADIUS + CITY_SAFE_PAD
 ## Cities, castles, and offices keep this circle clear of flora. Patch
-## mobs despawn in the same circle; coop cities wait until every player
-## is inside. The teleporter is flora-only at 1 m and never culls packs.
-## Field packs still ignore a player standing on the teleporter deck.
+## mobs also leave the city keepout and this circle around a player who
+## reaches the walls, so the border pack is gone before the map reveal.
+## The teleporter is flora-only at 1 m and never culls packs. The field
+## stays empty until a player steps off the deck; after that the pad is
+## no longer a site.
 const SITE_CLEAR_RADIUS := 100.0
 const START_FLORA_RADIUS := 1.0
 const PERCEPTION := 120.0
@@ -692,7 +773,7 @@ const OFFICE_WAYPOINT_TINT := Color("3d8cff")
 const CASTLE_WAYPOINT_TINT := Color("6a1016")
 const BOSS_WAYPOINT_TINT := Color("3d0a4a")
 const BOSS_SITE_RADIUS := 100.0
-const TREE_BATTLE_RADIUS := 50.0
+const TREE_BATTLE_RADIUS := 200.0
 const TREE_FLORA_CLEAR := 1.0
 const BOSS_ENCOUNTER_EMPTY := "empty"
 const BOSS_ENCOUNTER_TREE := "tree"
@@ -706,6 +787,8 @@ const REVIVE_REACH := 3.2
 ## frame, and the spawn reveal points the player at it before tilde is needed.
 ## Tide Margin and later cities wait until the first city is entered.
 static func starts_visible(site_id: String) -> bool:
+	if site_id.is_empty():
+		return false
 	if CrawlerRun.active():
 		return site_id == CITY_SITE_ID or site_id == CrawlerRun.first_city_id()
 	return site_id == CITY_SITE_ID
@@ -785,7 +868,8 @@ static func later_city_ids() -> PackedStringArray:
 
 static func first_city_map_ids() -> PackedStringArray:
 	var ids: PackedStringArray = []
-	ids.append(START_SITE_ID)
+	if not CrawlerRun.active():
+		ids.append(START_SITE_ID)
 	for id: String in later_city_ids():
 		ids.append(id)
 	return ids
@@ -928,6 +1012,16 @@ static func crawler_party_wiped() -> bool:
 				and not bool(player.call(&"is_dead")):
 			living += 1
 	return counted > 0 and living == 0
+
+
+## Start Game and Sandbox can stand back up from GAME OVER without a ticket.
+## A living teammate still needs a ticket to leave DOWNED on their own.
+static func crawler_free_respawn() -> bool:
+	if not (crawler() or sandbox()):
+		return false
+	if coop() and not crawler_party_wiped():
+		return false
+	return true
 
 
 static func crawler_has_respawn_ticket() -> bool:
@@ -1144,6 +1238,37 @@ static func lightning_start_stats() -> Dictionary:
 static func is_pulsed_beam(catalog_id: String) -> bool:
 	return catalog_id == "laser_eyes" or catalog_id == "kame" \
 		or catalog_id == "lightning"
+
+
+## Short crawler bursts (Laser Eyes, lightning) deal the full pair every
+## pulse. A long beam such as Kame still pays that pair as a rate.
+static func full_pulse_hit(catalog_id: String, stats: Dictionary = {}) -> bool:
+	if not is_pulsed_beam(catalog_id):
+		return false
+	return float(stats.get("duration", 4.0)) <= 1.0
+
+
+static func player_hit_damage(shooter: Node) -> float:
+	var scale := 1.0
+	if shooter != null and shooter.has_method(&"crawler_damage_scale"):
+		scale = maxf(float(shooter.call(&"crawler_damage_scale")), 0.0)
+	return PLAYER_DAMAGE * scale
+
+
+static func paired_hit_damage(shooter: Node, ability_damage: float) -> float:
+	return player_hit_damage(shooter) + maxf(ability_damage, 0.0)
+
+
+static func ability_hit_damage(
+		shooter: Node, catalog_id: String, ability_damage: float,
+		stats: Dictionary = {}, hz := 10.0
+	) -> float:
+	if not active():
+		return maxf(ability_damage, 0.0) / maxf(hz, 1.0)
+	var paired := paired_hit_damage(shooter, ability_damage)
+	if full_pulse_hit(catalog_id, stats):
+		return paired
+	return paired / maxf(hz, 1.0)
 
 
 static func wall_start_stats() -> Dictionary:
@@ -2053,15 +2178,15 @@ static func upgrade_stat_blurb(catalog_id: String, stat_id: String) -> String:
 	if catalog_id == "fus":
 		match stat_id:
 			"damage":
-				return "The cone chips a little harder."
+				return "The ring chips a little harder."
 			"cooldown":
 				return "Shorter wait between shouts."
 			"size":
-				return "A wider force cone."
+				return "The ring swells faster as it flies."
 			"range":
 				return "The burst travels farther."
 			"knockback":
-				return "The cone throws mobs much farther."
+				return "The ring throws mobs much farther."
 			"speed":
 				return "The burst flies faster."
 			"slots":
@@ -2262,15 +2387,21 @@ static func demon_start_grounds(name: String) -> bool:
 
 
 static func castle_grounds(name: String) -> bool:
+	if CrawlerRun.active():
+		return patch_combo(name) == PATCH_COMBO_GOBLIN
 	var clean := name.strip_edges()
 	return clean == CASTLE_PATCH or clean.begins_with(CASTLE_PATCH + " ")
 
 
 static func demon_grounds(name: String) -> bool:
+	if CrawlerRun.active():
+		return patch_combo(name) == PATCH_COMBO_DEMON
 	return demon_start_grounds(name)
 
 
 static func robot_grounds(name: String) -> bool:
+	if CrawlerRun.active():
+		return patch_combo(name) == PATCH_COMBO_ROBOT
 	var clean := name.strip_edges()
 	return clean == TOWER_PATCH or clean.begins_with(TOWER_PATCH + " ")
 
@@ -2293,6 +2424,10 @@ static func is_demon_kind(kind: String) -> bool:
 
 static func is_robot_kind(kind: String) -> bool:
 	return ROBOT_KINDS.has(kind.strip_edges())
+
+
+static func office_site_allows(kind: String) -> bool:
+	return is_goblin_kind(kind) or is_robot_kind(kind) or is_glorb_kind(kind)
 
 
 static func is_alien_kind(kind: String) -> bool:
@@ -2334,6 +2469,17 @@ static func all_players_inside_city(players: Array, ring: CrawlerCityRing) -> bo
 	return true
 
 
+static func any_player_at_city(players: Array, ring: CrawlerCityRing) -> bool:
+	if ring == null or players.is_empty():
+		return false
+	for item: Variant in players:
+		var player := item as Node3D
+		if player != null and is_instance_valid(player) \
+				and ring.blocks_near(player.global_position):
+			return true
+	return false
+
+
 static func in_office_site_clear(at: Vector3) -> bool:
 	if not at.is_finite():
 		return false
@@ -2351,14 +2497,35 @@ static func castle_keep_center() -> Vector3:
 	return castle.global_position
 
 
+static var _keep_stamp := -1
+static var _keep_count := -1
+static var _keep_centers: PackedVector3Array = PackedVector3Array()
+
+
 static func in_castle_keep(at: Vector3) -> bool:
 	if not at.is_finite():
 		return false
-	for site in _monuments():
-		if is_castle_id(site.monument_id) \
-				and at.distance_to(site.global_position) <= CASTLE_KEEP_RANGE:
+	for center: Vector3 in _castle_keep_centers():
+		if at.distance_to(center) <= CASTLE_KEEP_RANGE:
 			return true
 	return false
+
+
+static func _castle_keep_centers() -> PackedVector3Array:
+	var tree := Engine.get_main_loop() as SceneTree
+	var count := 0
+	if tree != null:
+		count = tree.get_node_count_in_group(PatchMonument.KEEP_GROUP)
+	var stamp := Engine.get_process_frames()
+	if stamp == _keep_stamp and count == _keep_count:
+		return _keep_centers
+	_keep_stamp = stamp
+	_keep_count = count
+	_keep_centers = PackedVector3Array()
+	for site in _monuments():
+		if is_castle_id(site.monument_id):
+			_keep_centers.append(site.global_position)
+	return _keep_centers
 
 
 static func office_tower_center() -> Vector3:
@@ -2384,15 +2551,27 @@ static func in_office_tower(at: Vector3, pad := 0.0) -> bool:
 	return false
 
 
+static var _monument_stamp := -1
+static var _monument_count := -1
+static var _monument_list: Array[PatchMonument] = []
+
+
 static func _monuments() -> Array[PatchMonument]:
 	var found: Array[PatchMonument] = []
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null:
 		return found
+	var count := tree.get_node_count_in_group(PatchMonument.KEEP_GROUP)
+	var stamp := Engine.get_process_frames()
+	if stamp == _monument_stamp and count == _monument_count:
+		return _monument_list
+	_monument_stamp = stamp
+	_monument_count = count
 	for node_variant: Variant in tree.get_nodes_in_group(PatchMonument.KEEP_GROUP):
 		var site := node_variant as PatchMonument
 		if site != null:
 			found.append(site)
+	_monument_list = found
 	return found
 
 
@@ -2430,6 +2609,8 @@ static func combo_allows_kind(combo: String, kind: String) -> bool:
 	var clean := kind.strip_edges()
 	if clean.is_empty() or is_goblin_kind(clean):
 		return false
+	if is_glorb_kind(clean):
+		return true
 	match combo:
 		PATCH_COMBO_GOBLIN:
 			return false
@@ -2450,6 +2631,10 @@ static func same_patch_combo(left: String, right: String) -> bool:
 
 static func field_kinds(patch_name: String, from_start := -1.0,
 		at := Vector3.INF) -> PackedStringArray:
+	if glorb_field:
+		if in_castle_keep(at):
+			return PackedStringArray()
+		return glorb_roster_kinds()
 	if in_castle_keep(at) or patch_combo(patch_name) == PATCH_COMBO_GOBLIN:
 		return PackedStringArray()
 	var combo := patch_combo(patch_name)
@@ -2479,7 +2664,71 @@ static func patch_recipe(patch_key: Variant = "", from_start := -1.0) -> Diction
 
 
 static func kind_cap(kind: String, level: int) -> int:
+	if is_glorb_kind(kind):
+		return glorb_each_for(kind)
 	return CrawlerMobs.kind_cap(kind, level)
+
+
+static func glorb_kind_enabled(kind: String) -> bool:
+	return not bool(_glorb_off.get(kind.strip_edges(), false))
+
+
+static func set_glorb_kind_enabled(kind: String, on: bool) -> void:
+	var clean := kind.strip_edges()
+	if not is_glorb_kind(clean):
+		return
+	if on:
+		_glorb_off.erase(clean)
+	else:
+		_glorb_off[clean] = true
+
+
+static func set_glorb_each(count: int) -> void:
+	glorb_each = clampi(count, 0, GLORB_EACH_MAX)
+	_glorb_count.clear()
+
+
+static func glorb_kind_count(kind: String) -> int:
+	var clean := kind.strip_edges()
+	if not is_glorb_kind(clean):
+		return 0
+	if _glorb_count.has(clean):
+		return clampi(int(_glorb_count[clean]), 0, GLORB_EACH_MAX)
+	return glorb_each
+
+
+static func glorb_each_for(kind: String) -> int:
+	if not glorb_kind_enabled(kind):
+		return 0
+	return glorb_kind_count(kind)
+
+
+static func set_glorb_kind_count(kind: String, count: int) -> void:
+	var clean := kind.strip_edges()
+	if not is_glorb_kind(clean):
+		return
+	_glorb_count[clean] = clampi(count, 0, GLORB_EACH_MAX)
+
+
+static func glorb_roster_kinds() -> PackedStringArray:
+	var kinds := PackedStringArray()
+	for kind: String in GLORB_KINDS:
+		if glorb_each_for(kind) > 0:
+			kinds.append(kind)
+	return kinds
+
+
+static func glorb_circle_slots() -> int:
+	var total := 0
+	for kind: String in GLORB_KINDS:
+		total += glorb_each_for(kind)
+	return maxi(total, 1)
+
+
+static func reset_glorb_field_prefs() -> void:
+	glorb_each = GLORB_EACH
+	_glorb_off.clear()
+	_glorb_count.clear()
 
 
 static func kind_cap_fallback(kind: String, level: int) -> int:
@@ -2512,6 +2761,19 @@ static func attack_budget_for(chasing: int) -> int:
 	return MOB_ATTACK_BUDGET
 
 
+static func is_glorb_kind(kind: String) -> bool:
+	return GLORB_KINDS.has(kind.strip_edges())
+
+
+static func is_glorb_soft_flyer(kind: String) -> bool:
+	var clean := kind.strip_edges()
+	return clean == "glorb_jellyfish" or clean == "glorb_angel"
+
+
+static func glorb_menu_range(agro: bool) -> float:
+	return GLORB_AGRO if agro else GLORB_AGRO + 1.0
+
+
 static func is_goblin_kind(kind: String) -> bool:
 	return GOBLIN_KINDS.has(kind.strip_edges())
 
@@ -2538,7 +2800,9 @@ static func goblin_garrison_reach(index: int) -> float:
 
 static func flies(kind: String) -> bool:
 	return kind == "ranger" or kind == "rammer" or kind == "kestrel" \
-		or kind == "scout" or is_demon_kind(kind)
+		or kind == "scout" or kind == "glorb_jellyfish" \
+		or kind == "glorb_angel" or kind == "glorb_eyeball" \
+		or is_demon_kind(kind)
 
 
 static func spawn_weight(kind: String) -> int:
@@ -2554,7 +2818,7 @@ static func spawn_weight(kind: String) -> int:
 		"kestrel":
 			return 5
 		"weaver":
-			return 18
+			return 8
 		"tanglemaw":
 			return 18
 		"gray":
@@ -2785,6 +3049,14 @@ static func mob_lod(gap: float) -> int:
 	return MOB_LOD_COLD
 
 
+static func mob_lod_gap2(gap2: float) -> int:
+	if gap2 <= MOB_LOD_HOT_RANGE * MOB_LOD_HOT_RANGE:
+		return MOB_LOD_HOT
+	if gap2 <= MOB_LOD_WARM_RANGE * MOB_LOD_WARM_RANGE:
+		return MOB_LOD_WARM
+	return MOB_LOD_COLD
+
+
 static func spawn_ring_point(from: Vector3, up: Vector3, yaw: float,
 		reach: float) -> Vector3:
 	if not from.is_finite():
@@ -2879,17 +3151,169 @@ static func spawn_is_agro(serial: int) -> bool:
 	return serial > 1 and posmod(serial, SPAWN_AGRO_EVERY) == 0
 
 
+static func uses_pack_mass(kind: String) -> bool:
+	return is_demon_kind(kind) or is_robot_kind(kind) or is_alien_kind(kind)
+
+
+static func field_ring_out() -> float:
+	return FIELD_RING_START + FIELD_RING_THICK * 3.0
+
+
+static func field_ring_of(gap: float) -> int:
+	if gap > field_ring_out():
+		return FIELD_RING_NONE
+	if gap < FIELD_RING_START:
+		return FIELD_RING_CLOSE
+	if gap < FIELD_RING_START + FIELD_RING_THICK:
+		return FIELD_RING_CLOSE
+	if gap < FIELD_RING_START + FIELD_RING_THICK * 2.0:
+		return FIELD_RING_MID
+	return FIELD_RING_FAR
+
+
+static func field_ring_band(ring: int) -> Vector2:
+	var near := FIELD_RING_START + FIELD_RING_THICK * float(clampi(ring, 0, 2))
+	return Vector2(near, near + FIELD_RING_THICK)
+
+
+static func field_ring_min(ring: int) -> int:
+	if ring == FIELD_RING_MID:
+		return FIELD_RING_MID_MIN
+	if ring == FIELD_RING_FAR:
+		return FIELD_RING_FAR_MIN
+	return FIELD_RING_CLOSE_MIN
+
+
+static func field_ring_fill(ring: int) -> int:
+	if ring == FIELD_RING_MID:
+		return FIELD_RING_MID_FILL
+	if ring == FIELD_RING_FAR:
+		return FIELD_RING_FAR_FILL
+	return FIELD_RING_CLOSE_FILL
+
+
+static func field_ring_max(ring: int) -> int:
+	if ring == FIELD_RING_MID:
+		return FIELD_RING_MID_MAX
+	if ring == FIELD_RING_FAR:
+		return FIELD_RING_FAR_MAX
+	return FIELD_RING_CLOSE_MAX
+
+
+static func field_ring_roles(ring: int) -> PackedStringArray:
+	if ring == FIELD_RING_MID:
+		return FIELD_RING_MID_KINDS
+	if ring == FIELD_RING_FAR:
+		return FIELD_RING_FAR_KINDS
+	return FIELD_RING_CLOSE_KINDS
+
+
+static func pack_kinds_for_ring(ring: int, pack: PackedStringArray) -> PackedStringArray:
+	var out := PackedStringArray()
+	for kind: String in field_ring_roles(ring):
+		if pack.has(kind):
+			out.append(kind)
+	return out
+
+
+static func field_ring_should_engage(gap: float, kind: String) -> bool:
+	return field_ring_should_engage_gap2(gap * gap, kind)
+
+
+static func field_ring_should_engage_gap2(gap2: float, kind: String) -> bool:
+	if is_glorb_kind(kind):
+		return gap2 <= GLORB_AGRO2
+	if kind == "threnody":
+		return gap2 <= THRENODY_PERCEPTION * THRENODY_PERCEPTION
+	if kind == "bastion":
+		var wake := CrawlerMobs.number("bastion", 1, "agro_range", BASTION_WAKE)
+		return gap2 <= wake * wake
+	if kind == "kestrel":
+		var reach := CrawlerMobs.number("kestrel", 1, "agro_range", 68.0)
+		return gap2 <= reach * reach
+	var close := FIELD_RING_START + FIELD_RING_THICK
+	return gap2 < close * close
+
+
+static func field_ring_flock(kind: String) -> int:
+	if kind == "gloam":
+		return 6
+	if kind == "tanglemaw":
+		return 4
+	if kind == "weaver":
+		return WEAVER_FLOCK
+	return 1
+
+
+static func field_ring_spawn_agro(ring: int, kind: String, serial: int) -> bool:
+	if kind == "threnody":
+		return true
+	if ring == FIELD_RING_CLOSE:
+		return true
+	if ring == FIELD_RING_MID:
+		return serial > 1 and posmod(serial, 3) == 0
+	return false
+
+
+static func pack_band(agroed: bool) -> Vector2:
+	return field_ring_band(FIELD_RING_CLOSE if agroed else FIELD_RING_FAR)
+
+
+static func pack_flock(kind: String, agroed: bool) -> int:
+	if kind == "gloam":
+		return GLOAM_FLOCK if agroed else GLOAM_RESERVE_FLOCK
+	if kind == "tanglemaw":
+		return TANGLEMAW_FLOCK
+	if kind == "weaver":
+		return WEAVER_FLOCK
+	return 1
+
+
+static func pack_homes(kind: String, agroed: bool, level := 1) -> int:
+	if not agroed and kind == "threnody":
+		return 0
+	if pack_flock(kind, agroed) > 1:
+		return 1
+	if kind == "bastion":
+		return bastion_agro_cap(level) if agroed else bastion_reserve_cap(level)
+	if kind == "threnody":
+		return 1
+	if kind == "vesper":
+		return 2
+	if kind == "kestrel":
+		return 3 if agroed else 4
+	if kind == "scout":
+		return 2 if agroed else 3
+	if kind == "gray":
+		return 3 if agroed else 4
+	return 2 if agroed else 3
+
+
+static func bastion_agro_cap(level := 1) -> int:
+	return BASTION_AGRO_CAP + maxi(level - 1, 0) / KIND_CAP_EVERY
+
+
+static func bastion_reserve_cap(level := 1) -> int:
+	return BASTION_RESERVE_CAP + maxi(level - 1, 0) / KIND_CAP_EVERY
+
+
 static func bastion_keepout(at: Vector3, player_at: Vector3, up := Vector3.ZERO) -> bool:
 	if not at.is_finite() or not player_at.is_finite():
 		return true
 	return _flat_span(at, player_at, _spawn_rise(up, player_at)) < BASTION_CLEAR
 
 
-static func bastion_in_grid(at: Vector3, player_at: Vector3, up := Vector3.ZERO) -> bool:
+static func bastion_in_band(at: Vector3, player_at: Vector3, near: float, far: float,
+		up := Vector3.ZERO) -> bool:
 	if not at.is_finite() or not player_at.is_finite():
 		return false
 	var span := _flat_span(at, player_at, _spawn_rise(up, player_at))
-	return span >= BASTION_CLEAR and span <= BASTION_FAR
+	return span >= near and span <= far
+
+
+static func bastion_in_grid(at: Vector3, player_at: Vector3, up := Vector3.ZERO) -> bool:
+	return bastion_in_band(
+		at, player_at, BASTION_RESERVE_NEAR, BASTION_RESERVE_FAR, up)
 
 
 static func should_agro(distance: float) -> bool:
@@ -2982,21 +3406,59 @@ static func lead_launch(from: Vector3, target: Vector3, velocity: Vector3,
 	return aim.normalized() * speed
 
 
+## High-arc flight time. Keep the flat/up ratio so the shell can reach.
+static func high_lob_flight(from: Vector3, target: Vector3, speed: float,
+		gravity: float, up: Vector3, loft := BASTION_LOFT) -> float:
+	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
+	var offset := target - from
+	var rise := offset.dot(lift)
+	var dist := (offset - lift * rise).length()
+	var hang := 1.2 + clampf(loft, 0.2, 1.4)
+	var flight := maxf(dist / maxf(speed, 8.0) * hang, 0.9)
+	for _step in 5:
+		var v_flat := dist / maxf(flight, 0.05)
+		var v_up := rise / maxf(flight, 0.05) + 0.5 * gravity * flight
+		if v_up >= v_flat * 0.55 or flight >= 5.4:
+			break
+		flight *= 1.12
+	return flight
+
+
+static func high_lob_velocity(from: Vector3, target: Vector3,
+		gravity: float, up: Vector3, flight: float) -> Vector3:
+	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
+	var hold := maxf(flight, 0.05)
+	var offset := target - from
+	var rise := offset.dot(lift)
+	var flat := offset - lift * rise
+	var dist := flat.length()
+	var launch := lift * (rise / hold + 0.5 * gravity * hold)
+	if dist > 0.08:
+		launch += flat / dist * (dist / hold)
+	return launch
+
+
+static func high_lob_lead(from: Vector3, target: Vector3, velocity: Vector3,
+		speed: float, gravity: float, up: Vector3,
+		loft := BASTION_LOFT) -> Vector3:
+	var motion := velocity if velocity.is_finite() else Vector3.ZERO
+	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
+	var at := target
+	var flight := high_lob_flight(from, at, speed, gravity, lift, loft)
+	for _step in 5:
+		at = target + motion * flight
+		if not at.is_finite():
+			return target
+		flight = high_lob_flight(from, at, speed, gravity, lift, loft)
+	return at if at.is_finite() else target
+
+
 static func high_lob_intercept(from: Vector3, target: Vector3, velocity: Vector3,
 		speed: float, gravity: float, up: Vector3,
 		loft := BASTION_LOFT) -> Vector3:
 	if speed <= 0.001 or not from.is_finite() or not target.is_finite():
 		return Vector3.INF
-	var motion := velocity if velocity.is_finite() else Vector3.ZERO
-	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
-	var at := target
-	var flight := from.distance_to(at) / speed * (1.35 + clampf(loft, 0.2, 1.2))
-	for _step in 5:
-		at = target + motion * flight
-		var along := at - from + lift * 0.5 * gravity * flight * flight
-		if along.is_zero_approx():
-			break
-		flight = along.length() / speed
+	var at := high_lob_lead(from, target, velocity, speed, gravity, up, loft)
 	return at if at.is_finite() else Vector3.INF
 
 
@@ -3005,20 +3467,8 @@ static func high_lob_launch(from: Vector3, target: Vector3, velocity: Vector3,
 		loft := BASTION_LOFT) -> Vector3:
 	if speed <= 0.001 or not from.is_finite() or not target.is_finite():
 		return Vector3.ZERO
-	var motion := velocity if velocity.is_finite() else Vector3.ZERO
 	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
-	var at := target
-	var flight := from.distance_to(at) / speed * (1.35 + clampf(loft, 0.2, 1.2))
-	for _step in 5:
-		at = target + motion * flight
-		var along := at - from + lift * 0.5 * gravity * flight * flight
-		if along.is_zero_approx():
-			break
-		flight = along.length() / speed
-	var aim := at - from + lift * 0.5 * gravity * flight * flight
-	if aim.is_zero_approx():
-		return Vector3.ZERO
-	aim += lift * speed * clampf(loft, 0.0, 1.4)
-	if aim.is_zero_approx():
-		return Vector3.ZERO
-	return aim.normalized() * speed
+	var at := high_lob_lead(from, target, velocity, speed, gravity, lift, loft)
+	var flight := high_lob_flight(from, at, speed, gravity, lift, loft)
+	var launch := high_lob_velocity(from, at, gravity, lift, flight)
+	return launch if launch.is_finite() else Vector3.ZERO

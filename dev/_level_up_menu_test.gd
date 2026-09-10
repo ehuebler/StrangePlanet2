@@ -104,6 +104,24 @@ func _check_solo() -> void:
 		"the spend board has an auto select button")
 	_expect(menu != null and menu.find_child("LevelTab_Prefs", true, false) != null,
 		"the spend board has Auto Select Prefs")
+	await get_tree().process_frame
+	var auto := menu.find_child("AutoSelectToggle", true, false) as Button
+	var reroll := menu.find_child("RerollOffers", true, false) as Button
+	var auto_crt := CrtType.host_of(auto)
+	var reroll_crt := CrtType.host_of(reroll)
+	_expect(auto_crt != null and auto_crt.glitch > 0.0,
+		"auto select wears the CRT type")
+	_expect(reroll_crt != null and reroll_crt.glitch > 0.0,
+		"reroll wears the CRT type")
+	_expect(_level_button_rim(auto) != null and _level_button_rim(reroll) != null,
+		"auto select and reroll wear CRT rims")
+	menu.show_tab(CrawlerLevelMenu.Tab.PREFS)
+	var prefs_tab := menu.find_child("LevelTab_Prefs", true, false) as Button
+	var prefs_rim := _level_button_rim(prefs_tab)
+	_expect(prefs_rim != null and prefs_rim.crt_material() != null
+			and prefs_rim.border_color.g > prefs_rim.border_color.r,
+		"switching tabs still paints the CRT rim")
+	menu.show_tab(CrawlerLevelMenu.Tab.SPEND)
 	await _clear_hud()
 
 
@@ -178,6 +196,16 @@ func _check_coop_prefs() -> void:
 		"coop K closes the prefs board")
 	NetworkManager.is_single_player = true
 	await _clear_hud()
+
+
+func _level_button_rim(button: Control) -> RedGlowPanel:
+	var walk: Node = button
+	while walk != null:
+		var rim := walk.get_node_or_null("RedGlowPanel") as RedGlowPanel
+		if rim != null:
+			return rim
+		walk = walk.get_parent()
+	return null
 
 
 func _expect(ok: bool, label: String) -> void:

@@ -36,6 +36,17 @@ static func pick_random(forced := "") -> bool:
 	return load_path(files[rng.randi_range(0, files.size() - 1)])
 
 
+static func ensure_session() -> bool:
+	if active():
+		return true
+	var held := ""
+	if NetworkManager != null:
+		held = str(NetworkManager.session_options.get("crawler_run", ""))
+	if not held.is_empty() and load_path(held):
+		return true
+	return pick_random()
+
+
 static func list_runs() -> PackedStringArray:
 	var found := PackedStringArray()
 	var dir := DirAccess.open(RUNS_DIR)
@@ -135,6 +146,18 @@ static func is_tree_boss(id: String) -> bool:
 static func rings() -> Array:
 	var listed: Variant = payload.get("rings", [])
 	return listed if listed is Array else []
+
+
+static func last_ring() -> int:
+	var last := 1
+	for listed: Array in [cities(), castles(), offices(), bosses()]:
+		for raw: Variant in listed:
+			if raw is Dictionary:
+				last = maxi(last, int(raw.get("ring", 1)))
+	for raw: Variant in rings():
+		if raw is Dictionary:
+			last = maxi(last, int(raw.get("id", raw.get("ring", 1))))
+	return last
 
 
 static func shops_for(city_key: String) -> PackedStringArray:

@@ -2,7 +2,7 @@ class_name StartLoadingBar
 extends Control
 
 ## Thin red trough with a green fill. Sits over the still home-screen world
-## while [WorldWarmup] pays for shaders and terrain.
+## while the run is chosen. Crawler shaders and terrain finish in-game.
 
 const RED := Color("ef151f")
 const GREEN := Color("45df68")

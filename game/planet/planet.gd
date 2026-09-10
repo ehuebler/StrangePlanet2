@@ -154,6 +154,9 @@ var detail_level := 1
 ## Finished meshes are still handed to the scene every frame — that part is a
 ## tenth of a millisecond and it is what puts new ground on screen.
 @export_range(5, 240) var lod_updates_per_second := 16
+## Walk rate while the viewer is standing or strolling. The 16 Hz ordinary
+## cadence still rebuilt the tree while flora was the only thing moving.
+@export_range(2, 60) var parked_lod_updates_per_second := 3
 ## Walk rate while the viewer is crossing the ground fast.
 ##
 ## Each walk is two GDScript passes over hundreds of chunks. Raising this with
@@ -318,6 +321,10 @@ const COLLIDER_DROP := 0.5
 ## What the detail is built around. Falls back to the active camera, which is what
 ## the harness wants; the world will point this at the local player.
 var viewer: Node3D
+## Planet-local metres used when [member viewer] is empty. Warm-up aims this at
+## a random crawler spawn so the quadtree is not still refining Vacationer's
+## Landing while the body drops in somewhere else.
+var _focus := Vector3.INF
 
 ## The sea, or null if this planet has none. Anything asking how deep it is
 ## standing in water goes through this.
@@ -567,6 +574,10 @@ func _process(delta: float) -> void:
 		maxf(fast_lod_at_speed, fast_lod_from_speed + 0.01), _drift.length())
 	_lod_walk_rate = lerpf(float(lod_updates_per_second),
 		float(fast_lod_updates_per_second), fast_share)
+	var parked_share := 1.0 - smoothstep(1.5, 8.0, _drift.length())
+	if parked_share > 0.0:
+		_lod_walk_rate = lerpf(
+			_lod_walk_rate, float(parked_lod_updates_per_second), parked_share)
 	if _since_lod < 1.0 / maxf(_lod_walk_rate, 1.0):
 		# Zeroed rather than left alone, so an average over frames is an average
 		# of what those frames actually cost and not of the last one that walked.
@@ -1795,9 +1806,23 @@ func viewer_lead_length() -> float:
 ## Where the detail is being built around, in planet-local metres. Public because
 ## the sea has to follow the same point the ground does, and because working out
 ## what counts as a viewer in the editor is a job with one right answer.
+func aim_at_direction(direction: Vector3) -> void:
+	if shape == null or not direction.is_finite() or direction.length_squared() < 0.0001:
+		_focus = Vector3.INF
+		return
+	shape.prepare()
+	_focus = shape.surface_point(direction.normalized(), finest_spacing())
+
+
+func clear_aim() -> void:
+	_focus = Vector3.INF
+
+
 func viewer_position() -> Vector3:
 	if is_instance_valid(viewer):
 		return to_local(viewer.global_position)
+	if _focus.is_finite():
+		return _focus
 	# In the editor the detail has to follow the camera being flown around the
 	# scene, which is not the edited scene's own camera and is not reachable
 	# through this node's viewport. Reached through the engine rather than named
@@ -1812,4 +1837,8 @@ func viewer_position() -> Vector3:
 	var camera := get_viewport().get_camera_3d()
 	if camera != null:
 		return to_local(camera.global_position)
+	if CrawlerRun.active():
+		var facing := CrawlerRun.spawn_direction()
+		if facing.length_squared() > 0.0001 and shape != null:
+			return shape.surface_point(facing.normalized(), finest_spacing())
 	return Vector3.ZERO

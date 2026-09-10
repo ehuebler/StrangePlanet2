@@ -100,10 +100,12 @@ func _ready() -> void:
 	_check_mini_nuke()
 	_check_shared_ability_upgrades()
 	_check_hero_page()
+	await _check_dropped_tile_skips_bodies()
 	await _check_sandbox_cheats()
 	await _check_teammate_waypoint()
 	await _check_city_shop_hours()
 	await _check_later_cities()
+	await _check_sandbox_waypoints()
 	await _check_game_save()
 	await _check_city_shop_stock()
 	await _check_cap_merge_once()
@@ -165,15 +167,15 @@ func _check_catalog() -> void:
 	_expect(not CrawlerRules.starts_visible(CrawlerRules.CITY_CRESCENT_SITE_ID)
 			and not CrawlerRules.starts_visible(CrawlerRules.CITY_LEE_SITE_ID),
 		"later cities wait until you enter Neon Fjord")
-	_expect(is_equal_approx(CrawlerRules.CITY_MAP_DELAY, 1.0)
+	_expect(is_equal_approx(CrawlerRules.CITY_MAP_DELAY, 3.0)
 			and CrawlerRules.first_city_map_ids().has(CrawlerRules.START_SITE_ID)
 			and CrawlerRules.first_city_map_ids().has(
 				CrawlerRules.CITY_CRESCENT_SITE_ID),
-		"Neon Fjord lights Tide Margin and Crescent after a second")
-	_expect(ResourceLoader.exists(CrawlerCityRing.VILLAGE_MODEL),
-		"Neon Fjord village is in the project")
-	_expect(ResourceLoader.exists(CrawlerRules.CRESCENT_VILLAGE),
-		"Crescent Market village is in the project")
+		"Neon Fjord lights Tide Margin and Crescent after three seconds")
+	_expect(CrawlerAdobeSite.city_ready(),
+		"adobe village buildings are in the project")
+	_expect(CrawlerAdobeSite.monuments_ready(),
+		"adobe office and castle are in the project")
 	var city := Vector3(0.0, 0.0, 1.0)
 	var tower := Vector3(1.0, 0.2, 1.0).normalized()
 	var castle := Vector3(0.4, 0.7, 1.0).normalized()
@@ -909,9 +911,9 @@ func _check_starter() -> void:
 		"starter bag does not give a free mod")
 	var stats := _player.crawler_kit.resolved_stats(0)
 	_expect(is_equal_approx(float(stats.get("damage", 0.0)), CrawlerRules.LASER_DAMAGE),
-		"starter laser eyes deal 1 per second")
-	_expect(str(stats.get("damage_unit", "")) == "/s",
-		"starter laser eyes list damage as a rate")
+		"starter laser eyes have 1 ability base")
+	_expect(str(stats.get("damage_unit", "")).is_empty(),
+		"starter laser eyes list damage per pulse, not per second")
 	_expect(is_equal_approx(float(stats.get("cooldown", 0.0)), CrawlerRules.LASER_COOLDOWN),
 		"starter laser eyes wait half a second")
 	_expect(is_equal_approx(float(stats.get("duration", 0.0)), CrawlerRules.LASER_DURATION),
@@ -994,9 +996,19 @@ func _check_controller() -> void:
 	_expect(ability.stat("range", 0.0) > CrawlerRules.LASER_RANGE,
 		"the live beam uses the upgraded range")
 	_expect(ability._pulse_mode(), "crawler laser eyes fire in pulses")
+	var beam_stats := _player.crawler_kit.resolved_stats(0)
+	var pulse := CrawlerRules.ability_hit_damage(
+		_player, "laser_eyes", CrawlerRules.LASER_DAMAGE, beam_stats)
 	_expect(is_equal_approx(
-			CrawlerRules.LASER_DAMAGE * LaserEyes.DAMAGE_STEP, 0.1),
-		"each beam tick is a tenth of the per-second damage")
+			CrawlerRules.paired_hit_damage(null, CrawlerRules.LASER_DAMAGE),
+			CrawlerRules.PLAYER_DAMAGE + CrawlerRules.LASER_DAMAGE),
+		"a pulse is player base plus laser base")
+	_expect(is_equal_approx(pulse, CrawlerRules.paired_hit_damage(
+			_player, CrawlerRules.LASER_DAMAGE)),
+		"Laser Eyes deals the pair on every pulse, not a slice of a rate")
+	_expect(is_equal_approx(pulse * 2.0,
+			CrawlerRules.paired_hit_damage(_player, CrawlerRules.LASER_DAMAGE) * 2.0),
+		"two pulses in one firing deal two pairs")
 	_expect(ability.press(), "holding starts a pulse")
 	ability.tick(0.05)
 	_expect(ability.is_held() and ability._gap_left <= 0.0 and ability._left > 0.0,
@@ -1469,7 +1481,7 @@ func _check_fus() -> void:
 		"particle speed can be upgraded")
 	_expect(float(_player.crawler_kit.stats_for(card).get("speed", 0.0))
 			> CrawlerRules.FUS_SPEED,
-		"speed upgrades make the cone fly faster")
+		"speed upgrades make the ring fly faster")
 	_expect(_player.crawler_kit.upgrade_card(card.uid, "damage"),
 		"fus damage can be upgraded")
 	_expect(float(_player.crawler_kit.stats_for(card).get("damage", 0.0))
@@ -1518,7 +1530,7 @@ func _check_fus() -> void:
 				== AbilityDefinition.ProjectileType.ENERGY_CONE
 			and definition.impact_type
 				== AbilityDefinition.ImpactType.KNOCKBACK_BURST,
-		"fus authors a roar-posed energy cone")
+		"fus authors a roar-posed energy ring")
 	var ability := Fus.new()
 	ability.configure(_player, 1, "fus", definition)
 	ability.apply_crawler(card)
@@ -1531,9 +1543,9 @@ func _check_fus() -> void:
 				and (child as AbilityProjectile).definition != null \
 				and (child as AbilityProjectile).definition.ability_id == "fus":
 			cone = child as AbilityProjectile
-	_expect(cone != null and is_instance_valid(cone._cone_beam)
-			and cone._cone_beam.kind == EnergyVfx.Kind.BEAM_STREAMS,
-		"fus launches a visible white stream beam")
+	_expect(cone != null and is_instance_valid(cone._ring)
+			and cone._ring.mesh is TorusMesh,
+		"fus launches a visible expanding ring")
 	if cone != null:
 		cone.queue_free()
 	ability.release()
@@ -1547,7 +1559,7 @@ func _check_fus() -> void:
 	var before := victim.health()
 	var burst := AbilityProjectile.launch(
 		self, _player, "fus", from, along, true, Vector3.ZERO, paired)
-	_expect(burst != null, "fus can launch a force cone")
+	_expect(burst != null, "fus can launch a force ring")
 	if burst != null:
 		for _step in 12:
 			burst._physics_process(0.08)
@@ -1558,7 +1570,7 @@ func _check_fus() -> void:
 	_expect(victim.health() < before
 			and (before - victim.health()) < CrawlerRules.ROAR_DAMAGE
 			and victim.velocity.length() > CrawlerRules.ROAR_KNOCKBACK,
-		"the fus cone chips lightly and knocks hard")
+		"the fus ring chips lightly and knocks hard")
 	victim.queue_free()
 
 
@@ -4410,7 +4422,7 @@ func _check_hero_page() -> void:
 		"clicking juke selects its portrait tile")
 	_expect(desc_title != null and desc_title.text.contains("JUKE"),
 		"clicking juke titles the description panel")
-	_expect(body.text.contains("F")
+	_expect(body.text.contains("RMB")
 			and body.text.to_upper().contains("EFFECTS"),
 		"clicking juke lists its description and effects")
 	page.select_token(eyes_token)
@@ -4454,6 +4466,46 @@ func _check_hero_page() -> void:
 			and hat.find_child("PickupBeacon", true, false) != null,
 		"dropped hats show a glowing spinning model over a local god-ray")
 	hat.queue_free()
+
+
+func _check_dropped_tile_skips_bodies() -> void:
+	var floor := StaticBody3D.new()
+	floor.name = "DropFloor"
+	var floor_box := BoxShape3D.new()
+	floor_box.size = Vector3(24.0, 1.0, 24.0)
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = floor_box
+	floor.add_child(floor_shape)
+	add_child(floor)
+	floor.global_position = Vector3(80.0, -0.5, 80.0)
+	var blocker := StaticBody3D.new()
+	blocker.name = "DropBlocker"
+	blocker.add_to_group(DamageHit.COMBATANT_GROUP)
+	var blocker_box := BoxShape3D.new()
+	blocker_box.size = Vector3(1.4, 2.2, 1.4)
+	var blocker_shape := CollisionShape3D.new()
+	blocker_shape.shape = blocker_box
+	blocker.add_child(blocker_shape)
+	add_child(blocker)
+	blocker.global_position = Vector3(80.0, 1.1, 80.0)
+	var dropped := DroppedCrawlerCard.new()
+	dropped.configure(91, {"id": "laser_eyes", "mods": []})
+	add_child(dropped)
+	dropped.global_position = Vector3(80.0, 3.4, 80.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var land := DroppedWorldMotion.land_point(
+		dropped, DroppedWorldMotion.HOVER_HEIGHT)
+	_expect(land.y < 1.2,
+		"dropped tiles land on the floor, not the corpse under them")
+	dropped.begin_settle()
+	var start_y := dropped.global_position.y
+	dropped._process(0.45)
+	_expect(dropped.global_position.y < start_y - 0.7,
+		"tiles over a corpse still fall toward the floor")
+	dropped.queue_free()
+	blocker.queue_free()
+	floor.queue_free()
 
 
 func _check_sandbox_cheats() -> void:
@@ -4509,6 +4561,11 @@ func _check_sandbox_cheats() -> void:
 	var invincible_key := menu.find_child("SandboxInvincible", true, false) as Button
 	var fast_key := menu.find_child("SandboxFast", true, false) as Button
 	_expect(hero != null, "sandbox Tab Hero is the crawler hero page")
+	var menu_gold := menu.find_child("MenuGold", true, false) as Label
+	_expect(menu_gold != null and menu_gold.visible
+			and menu_gold.text == "GOLD  %s" % _player.crawler_progress.gold_text()
+			and menu_gold.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT,
+		"the Tab menu names the purse in the upper right")
 	_expect(cheats != null
 			and menu.find_child("SandboxMobs", true, false) != null
 			and invincible_key != null
@@ -4522,6 +4579,22 @@ func _check_sandbox_cheats() -> void:
 			and cheats.get_global_rect().position.y
 				>= actions.get_global_rect().end.y - 2.0,
 		"sandbox cheat keys sit under the respawn circle buttons")
+	var store := CrawlerFieldMenu.new()
+	store.configure(_player)
+	add_child(store)
+	await get_tree().process_frame
+	store._clear_list()
+	store._fill_reststop()
+	var rest_gold := store.find_child("RestAct_gold", true, false) as Button
+	var rest_stores := store.find_child("RestAct_stores", true, false) as Button
+	_expect(rest_gold != null and rest_gold.visible and rest_gold.text == "SET"
+			and not rest_gold.disabled,
+		"sandbox reststop offers infinite gold")
+	_expect(rest_stores != null and rest_stores.visible and rest_stores.text == "SET"
+			and not rest_stores.disabled,
+		"sandbox reststop offers infinite stores")
+	store.queue_free()
+	await get_tree().process_frame
 	var before_fly := _player.fly_speed
 	_player.set_sandbox_cheat(CrawlerRules.CHEAT_FAST, false)
 	_expect(not CrawlerRules.sandbox_fast()
@@ -4539,8 +4612,20 @@ func _check_sandbox_cheats() -> void:
 	_player.set_sandbox_cheat(CrawlerRules.CHEAT_INVINCIBLE, true)
 	var poke := DamageHit.impact(_player.global_position, 1.2, 40.0)
 	poke.faction = DamageHit.Faction.ENEMY
+	var before_hp := _player.health()
 	_expect(is_zero_approx(_player.apply_damage(poke)),
 		"invincible ignores incoming hits")
+	_expect(is_equal_approx(_player.health(), before_hp),
+		"invincible keeps its health")
+	await get_tree().process_frame
+	var floated := false
+	var nums := _player.hud.get_node_or_null("DamageNumbers") as Node \
+		if _player.hud != null else null
+	if nums != null:
+		for child in nums.get_children():
+			if child is Label and not str((child as Label).text).is_empty():
+				floated = true
+	_expect(floated, "invincible still floats the hit off you")
 	var saved_gold := _player.crawler_progress.gold
 	_player.set_sandbox_cheat(CrawlerRules.CHEAT_GOLD, true)
 	_expect(_player.crawler_progress.has_gold(CrawlerRules.SANDBOX_GOLD),
@@ -4551,6 +4636,8 @@ func _check_sandbox_cheats() -> void:
 		"infinite gold does not empty the purse")
 	_player.set_sandbox_cheat(CrawlerRules.CHEAT_MOBS, true)
 	_expect(CrawlerRules.sandbox_no_mobs(), "no-mobs turns the field packs off")
+	_expect(CrawlerRules.crawler_free_respawn(),
+		"sandbox GAME OVER respawns without a ticket")
 	menu.queue_free()
 	await get_tree().process_frame
 	CrawlerRules.clear_sandbox_cheats()
@@ -4804,6 +4891,89 @@ func _check_later_cities() -> void:
 	lee.queue_free()
 	spawn.queue_free()
 	await get_tree().process_frame
+
+
+func _check_sandbox_waypoints() -> void:
+	var saved_mode := str(NetworkManager.session_options.get("mode", "crawler"))
+	NetworkManager.session_options["mode"] = "sandbox"
+	_expect(CrawlerRules.starts_visible(CrawlerRules.CITY_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerRules.START_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerRules.CITY_CRESCENT_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerRules.CITY_LEE_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerProgress.QUEST_CASTLE),
+		"sandbox starts with city 1 and waits on the later sites")
+	var spawn := CrawlerSite.new()
+	spawn.site_id = CrawlerRules.START_SITE_ID
+	spawn.title = CrawlerRules.START_SITE_TITLE
+	spawn.enter_radius = 40.0
+	add_child(spawn)
+	var first := CrawlerCityRing.new()
+	first.configure(-1, Transform3D.IDENTITY)
+	add_child(first)
+	var crescent := CrawlerCityRing.new()
+	crescent.configure(
+		-1,
+		Transform3D(Basis(), Vector3(220.0, 0.0, 0.0)),
+		CrawlerRules.CITY_CRESCENT_SITE_ID,
+		CrawlerRules.CITY_CRESCENT_TITLE,
+		"",
+		CrawlerRules.CITY_CRESCENT_SITE_ID
+	)
+	add_child(crescent)
+	var office := PatchMonument.new()
+	office.monument_id = CrawlerProgress.QUEST_TOWER
+	office.title = "Meridian Tower"
+	office.waypoint = false
+	add_child(office)
+	var keep := PatchMonument.new()
+	keep.monument_id = CrawlerProgress.QUEST_CASTLE
+	keep.title = "Stormwatch Castle"
+	keep.waypoint = false
+	add_child(keep)
+	var boss := PatchMonument.new()
+	boss.monument_id = "boss1"
+	boss.title = "Boss Site"
+	boss.waypoint = false
+	add_child(boss)
+	await get_tree().process_frame
+	var first_mark := first.get_node_or_null("CrawlerWaypoint") as CrawlerSite
+	var crescent_mark := crescent.get_node_or_null("CrawlerWaypoint") as CrawlerSite
+	_expect(first_mark != null and first_mark.waypoint
+			and not spawn.waypoint
+			and crescent_mark != null and not crescent_mark.waypoint
+			and not office.waypoint and not keep.waypoint and not boss.waypoint,
+		"sandbox lights city 1 and leaves the other marks dark")
+	var held := CrawlerRun.payload.duplicate(true)
+	var held_path := CrawlerRun.path
+	CrawlerRun.payload = {
+		"rings": [{"id": 1}, {"id": 2}],
+		"cities": [
+			{"id": "city1", "ring": 1},
+			{"id": "city2", "ring": 2},
+		],
+		"castles": [{"id": "castle2", "ring": 2}],
+		"offices": [{"id": "office2", "ring": 2}],
+		"bosses": [{"id": "boss2", "ring": 2}],
+	}
+	CrawlerRun.path = "res://dev/fake_run.json"
+	CrawlerRun._index()
+	_expect(CrawlerRun.last_ring() == 2, "a two-ring run reports its outer ring")
+	CrawlerRun.clear()
+	CrawlerRun.payload = held
+	CrawlerRun.path = held_path
+	if not held.is_empty():
+		CrawlerRun._index()
+	first.queue_free()
+	crescent.queue_free()
+	spawn.queue_free()
+	office.queue_free()
+	keep.queue_free()
+	boss.queue_free()
+	await get_tree().process_frame
+	NetworkManager.session_options["mode"] = saved_mode
+	_expect(not CrawlerRules.starts_visible(CrawlerRules.START_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerRules.CITY_CRESCENT_SITE_ID),
+		"crawler still hides Tide Margin and later cities until Neon Fjord")
 
 
 func _check_game_save() -> void:
@@ -5129,13 +5299,15 @@ func _check_city_shop_stock() -> void:
 	if star_tile != null:
 		star_tile.picked.emit(star_tile)
 	await get_tree().process_frame
+	await get_tree().process_frame
 	var damage := menu.find_child("UpgradeAct_damage", true, false) as Button
 	var range_act := menu.find_child("UpgradeAct_range", true, false) as Button
 	_expect(menu.find_child("UpgradeTile_damage", true, false) != null
 			and menu.find_child("UpgradeTile_range", true, false) != null
 			and menu.find_child("UpgradeTile_slots", true, false) != null,
 		"out-of-stock upgrades stay listed")
-	_expect(damage != null and damage.text != "OUT OF STOCK",
+	_expect(damage != null and damage.text != "OUT OF STOCK"
+			and CrtType.screen_rect(damage).size.x >= 48.0,
 		"in-stock upgrades stay buyable")
 	_expect(range_act != null and range_act.text == "OUT OF STOCK" and range_act.disabled,
 		"unpicked upgrades read OUT OF STOCK")
@@ -5319,6 +5491,22 @@ func _check_level_tiles() -> void:
 	_expect(auto != null and auto.text.contains("OFF")
 			and auto.text.contains("PRESS K TO TOGGLE"),
 		"the auto select button sits next to reroll and names the K toggle")
+	var auto_crt := CrtType.host_of(auto)
+	var reroll_crt := CrtType.host_of(reroll)
+	_expect(auto_crt != null and auto_crt.glitch > 0.0
+			and auto_crt.chromatic() < 0.5,
+		"auto select wears slightly glitched type without chromatic aberration")
+	_expect(reroll_crt != null and reroll_crt.glitch > 0.0
+			and reroll_crt.chromatic() < 0.5,
+		"reroll wears slightly glitched type without chromatic aberration")
+	var auto_rim := _level_button_rim(auto)
+	var reroll_rim := _level_button_rim(reroll)
+	_expect(auto_rim != null and auto_rim.crt_material() != null
+			and auto_rim.crt_material().shader != null,
+		"auto select wears the CRT rim")
+	_expect(reroll_rim != null and reroll_rim.crt_material() != null
+			and reroll_rim.crt_material().shader != null,
+		"reroll wears the CRT rim")
 	_expect(menu.find_child("LevelTab_Prefs", true, false) != null,
 		"the level-up menu has an Auto Select Prefs tab")
 	menu.show_tab(CrawlerLevelMenu.Tab.PREFS)
@@ -5343,6 +5531,16 @@ func _check_level_tiles() -> void:
 	if is_instance_valid(menu):
 		menu.queue_free()
 	await get_tree().process_frame
+
+
+func _level_button_rim(button: Control) -> RedGlowPanel:
+	var walk: Node = button
+	while walk != null:
+		var rim := walk.get_node_or_null("RedGlowPanel") as RedGlowPanel
+		if rim != null:
+			return rim
+		walk = walk.get_parent()
+	return null
 
 
 func _check_level_offers() -> void:

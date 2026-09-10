@@ -17,6 +17,11 @@ var core_color := Color(0.55, 0.95, 1.0)
 var glow_color := Color(0.12, 0.78, 1.0)
 var ability_id := "crawler_robot_laser"
 var shooter: Node
+## Who this bolt should hit. The kestrel keeps flying through its windup, so
+## the heading baked at burst-start is already stale by the time the first
+## round leaves. [member prey] is the lock; [method _aim_from_muzzle] aims
+## again from the live socket.
+var prey: Node
 var _charmed_shot := false
 var _velocity := Vector3.ZERO
 var _planet: Planet
@@ -105,6 +110,10 @@ func _fit_bolt() -> void:
 	if not is_instance_valid(_core):
 		return
 	var along := _velocity
+	if not _armed:
+		var dest := _aim_point()
+		if dest.is_finite():
+			along = dest - global_position
 	if along.length_squared() < 0.0001:
 		along = -_up()
 	along = along.normalized()
@@ -124,11 +133,51 @@ func _stick_muzzle() -> void:
 
 
 func _aim_from_muzzle() -> void:
-	var at := _muzzle_point()
-	if at.is_finite():
-		global_position = at
+	var from := _muzzle_point()
+	if from.is_finite():
+		global_position = from
+	else:
+		from = global_position
+	var dest := _aim_point()
+	if dest.is_finite():
+		var along := dest - from
+		if along.length_squared() > 0.0001:
+			_velocity = along.normalized() * maxf(shot_speed, 8.0)
+			return
 	if _velocity.length_squared() < 0.0001:
 		_velocity = -_up() * shot_speed
+
+
+func _aim_point() -> Vector3:
+	var target := _resolve_prey()
+	if target == null:
+		return Vector3.INF
+	var dest := _combat_position(target)
+	if not dest.is_finite():
+		return Vector3.INF
+	var speed := maxf(shot_speed, 8.0)
+	var lead := _prey_velocity(target)
+	if lead.length_squared() > 0.0001:
+		dest += lead * (global_position.distance_to(dest) / speed)
+	return dest
+
+
+func _resolve_prey() -> Node:
+	if is_instance_valid(prey):
+		return prey
+	if is_instance_valid(shooter) and shooter.has_method(&"laser_prey"):
+		var found: Variant = shooter.call(&"laser_prey")
+		if found is Node and is_instance_valid(found):
+			return found
+	return null
+
+
+func _prey_velocity(target: Node) -> Vector3:
+	if target == null:
+		return Vector3.ZERO
+	var lead: Variant = target.get(&"velocity")
+	return lead as Vector3 if lead is Vector3 and (lead as Vector3).is_finite() \
+		else Vector3.ZERO
 
 
 func _muzzle_point() -> Vector3:
@@ -177,30 +226,16 @@ func _make_blast(at: Vector3) -> DamageHit:
 
 
 func _victim_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, hit_radius, 0.0)
 	if not is_inside_tree():
 		return null
-	for node in _hurt_targets():
-		if not is_instance_valid(node):
-			continue
-		var bounds := 0.4
-		if node.has_method(&"combat_radius"):
-			bounds = float(node.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(node), bounds):
-			return node
-	return null
+	return CombatantSense.first_shot_along(
+		self, from, to, hit_radius, shooter, _shooter_charmed())
 
 
 func _hurt_targets() -> Array[Node]:
-	var found: Array[Node] = []
 	if not is_inside_tree():
-		return found
-	CrawlerMobSense.ensure_frame(get_tree())
-	for node_variant: Variant in CrawlerMobSense.shot_targets(_shooter_charmed()):
-		var node := node_variant as Node
-		if node != null and _should_hurt(node):
-			found.append(node)
-	return found
+		return []
+	return CombatantSense.shot_collect(self, shooter, _shooter_charmed())
 
 
 func _should_hurt(node: Node) -> bool:
@@ -242,12 +277,7 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(player: Node) -> Vector3:
-	if not is_instance_valid(player):
-		return global_position
-	if player.has_method(&"combat_position"):
-		return player.call(&"combat_position")
-	var body := player as Node3D
-	return body.global_position if body != null else global_position
+	return CombatantSense.point_of(player)
 
 
 func _up() -> Vector3:

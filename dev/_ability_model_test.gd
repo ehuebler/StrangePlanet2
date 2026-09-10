@@ -333,7 +333,7 @@ func _check_authored_ability_shapes() -> void:
 				> CrawlerRules.ROAR_KNOCKBACK
 			and float(fus.stats.get("damage", 0.0))
 				< CrawlerRules.ROAR_DAMAGE,
-		"Fus authors a roar-posed green force cone with light damage and huge knockback")
+		"Fus authors a roar-posed green force ring with light damage and huge knockback")
 	_expect(load(ItemDB.ability_script("fus")).new() is Fus,
 		"Fus uses its own committed shout script")
 	_expect(roar != null and toxic != null and charm != null and frost != null
@@ -448,8 +448,11 @@ func _check_laser_beam_placement() -> void:
 	_expect(core != null and core.visible, "the first aim shows the left beam")
 	if core != null:
 		var along := (at - left).normalized()
-		_expect(core.global_position.distance_to(left.lerp(at, 0.5)) < 0.02,
-			"the beam sits on the eye-to-target line")
+		var muzzle := left + along * LaserBeams.MUZZLE_CLEARANCE
+		_expect(core.global_position.distance_to(muzzle) < 0.08,
+			"the beam starts just in front of the eye, not inside the skull")
+		_expect(core.global_position.distance_to(left.lerp(at, 0.5)) > 1.0,
+			"the beam is anchored at the eye, not the midpoint")
 		_expect(core.global_transform.basis.y.normalized().dot(along) > 0.99,
 			"the beam points out of the eye")
 	_expect(beams.physics_interpolation_mode
@@ -584,9 +587,11 @@ func _check_new_ability_runtime() -> void:
 		if child is AbilityProjectile \
 				and (child as AbilityProjectile).definition == nuke_definition:
 			orb = child as AbilityProjectile
-	_expect(orb != null and orb._disk.mesh is SphereMesh
-		and orb.authoritative,
-		"Nuke builds a spherical orb whose offline copy owns impact")
+	_expect(orb != null and orb._disk is EnergyVfx
+			and (orb._disk as EnergyVfx).kind == EnergyVfx.Kind.PROJECTILE
+			and (orb._disk as EnergyVfx).uses_glow_shader()
+			and orb.authoritative,
+		"Nuke builds a glowing energy orb whose offline copy owns impact")
 	if orb != null:
 		_expect(orb.global_position.distance_to(_player.merged_hand_point()) < 0.05,
 			"Nuke leaves from the front of both hands")
@@ -600,7 +605,8 @@ func _check_new_ability_runtime() -> void:
 		self, _player, "mini_nuke",
 		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
 	_expect(mini_orb != null and mini_definition != null
-			and mini_orb._disk.mesh is SphereMesh
+			and mini_orb._disk is EnergyVfx
+			and (mini_orb._disk as EnergyVfx).kind == EnergyVfx.Kind.PROJECTILE
 			and mini_orb._emits_blast_bubbles()
 			and mini_orb._speed > float(nuke_definition.stats.get("speed", 0.0))
 			and mini_orb._range > float(nuke_definition.stats.get("range", 0.0)),
@@ -627,11 +633,12 @@ func _check_new_ability_runtime() -> void:
 	var spear := AbilityProjectile.launch(
 		self, _player, "icicle",
 		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
-	_expect(spear != null and spear._disk.mesh is CylinderMesh
-			and spear._halo != null
+	_expect(spear != null and spear._disk is EnergyVfx
+			and (spear._disk as EnergyVfx).kind == EnergyVfx.Kind.PROJECTILE
+			and (spear._disk as EnergyVfx).uses_glow_shader()
 			and is_equal_approx(spear._speed, CrawlerRules.ICICLE_SPEED)
 			and not spear._emits_blast_bubbles(),
-		"Icicle builds a sharp flying spear")
+		"Icicle builds a glowing energy orb")
 	if spear != null:
 		spear.queue_free()
 	var marker := AbilityProjectile.launch(
@@ -649,13 +656,30 @@ func _check_new_ability_runtime() -> void:
 	var cone := AbilityProjectile.launch(
 		self, _player, "fus",
 		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true)
-	_expect(cone != null and is_instance_valid(cone._cone_beam)
-			and cone._cone_beam.kind == EnergyVfx.Kind.BEAM_STREAMS
+	_expect(cone != null and is_instance_valid(cone._ring)
+			and cone._ring.mesh is TorusMesh
 			and is_equal_approx(cone._speed, CrawlerRules.FUS_SPEED)
 			and not cone._emits_blast_bubbles(),
-		"Fus builds a travelling white stream beam")
+		"Fus builds a travelling expanding ring")
 	if cone != null:
 		cone.queue_free()
+	var slow_ring := AbilityProjectile.launch(
+		self, _player, "fus",
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true,
+		Vector3.ZERO, {"size": 1.0})
+	var fast_ring := AbilityProjectile.launch(
+		self, _player, "fus",
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), true,
+		Vector3.ZERO, {"size": 2.0})
+	if slow_ring != null and fast_ring != null:
+		slow_ring._travelled = 8.0
+		fast_ring._travelled = 8.0
+		_expect(fast_ring._cone_radius() > slow_ring._cone_radius() + 1.5,
+			"size makes the fus ring expand quicker")
+	if slow_ring != null:
+		slow_ring.queue_free()
+	if fast_ring != null:
+		fast_ring.queue_free()
 	var thrown := Teleport.new()
 	thrown.configure(_player, 0, "teleport", ItemDB.ability_definition("teleport"))
 	_expect(thrown.press() and _player._ability_clip == "NukeThrow",

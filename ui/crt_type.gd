@@ -18,6 +18,8 @@ const MENU_SOFT_GLITCH := 0.14
 var glitch := 1.0
 var destructive := 0.0
 var _clock := 0.0
+var _last_hover := -1.0
+var _last_off := -1.0
 
 var _view: SubViewport
 var _mounted: Control
@@ -235,14 +237,11 @@ func _on_tree_exiting() -> void:
 
 
 func _process(_delta: float) -> void:
-	if not _mounted_usable():
-		return
-	_sync_view()
-	if not _mounted_usable():
+	if is_queued_for_deletion() or not _mounted_usable():
 		return
 	if visible != _mounted.visible:
 		visible = _mounted.visible
-	if _crt == null:
+	if not visible:
 		return
 	var lit := 0.0
 	var off := 0.0
@@ -253,13 +252,23 @@ func _process(_delta: float) -> void:
 		# ink. The shader crush would turn that gray into black.
 		off = 1.0 if button.disabled \
 			and not button.has_meta(&"crt_keep_disabled_ink") else 0.0
+	var fx := _shader_glitch() > 0.001 or _shader_chromatic() > 0.001
+	if not fx and is_equal_approx(lit, _last_hover) and is_equal_approx(off, _last_off):
+		if Engine.get_process_frames() % 10 != 0:
+			return
+	_last_hover = lit
+	_last_off = off
+	_sync_view()
+	if not _mounted_usable() or _crt == null:
+		return
 	_crt.set_shader_parameter(&"hover", lit)
 	_crt.set_shader_parameter(&"disabled", off)
 	_crt.set_shader_parameter(&"destructive", destructive)
 	_crt.set_shader_parameter(&"glitch", _shader_glitch())
 	_crt.set_shader_parameter(&"chromatic", _shader_chromatic())
-	_tick_clock()
-	queue_redraw()
+	if fx:
+		_tick_clock()
+		queue_redraw()
 	if _view != null:
 		var focused := (
 			_mounted is LineEdit or _mounted is TextEdit
@@ -311,6 +320,8 @@ func _adopt_layout(from: Control) -> void:
 	mouse_filter = from.mouse_filter
 	if from is BaseButton:
 		mouse_filter = Control.MOUSE_FILTER_STOP
+		if "mouse_target" in self:
+			set(&"mouse_target", true)
 	var parent := from.get_parent()
 	var boxed := parent is Container
 	if boxed:
@@ -541,6 +552,12 @@ static func _skip_control(control: Control) -> bool:
 		if walk is DamageNumberLayer:
 			return true
 		if walk is HoldActionButton:
+			return true
+		if walk is CrawlerBossTitle:
+			return true
+		if walk.has_meta(&"crt_skip"):
+			return true
+		if walk.name == "CrawlerBossTitle" or walk.name == "CrawlerBossTitleLayer":
 			return true
 		if walk.name == "RunRecap" or walk.name == "RunRecapScroll":
 			return true

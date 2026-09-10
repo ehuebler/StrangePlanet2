@@ -26,8 +26,10 @@ const WIND_DRAG := 0.30
 const WIND_MAX := 3.4
 const WIND_FOLLOW := 4.5
 const FLUTTER := 0.05
-const SUBSTEPS := 2
-const CONSTRAINT_PASSES := 6
+const SUBSTEPS := 1
+const CONSTRAINT_PASSES := 3
+const IDLE_SPEED := 0.45
+const IDLE_PIN := 0.012
 const BEND_STIFF := 0.55
 const TETHER_SLACK := 1.06
 const TORSO_RADIUS := 0.15
@@ -61,6 +63,25 @@ var _axis_back := Vector3.FORWARD
 var _axis_right := Vector3.RIGHT
 var _gold := false
 var _sparkle := false
+var _body: CharacterBody3D
+var _bone_ids: Dictionary = {}
+var _chest := Vector3.ZERO
+var _hips := Vector3.ZERO
+var _head := Vector3.ZERO
+var _left_root := Vector3.ZERO
+var _right_root := Vector3.ZERO
+var _left_arm := Vector3.ZERO
+var _right_arm := Vector3.ZERO
+var _chest_center := Vector3.ZERO
+var _hip_center := Vector3.ZERO
+var _plane_point := Vector3.ZERO
+var _rest_across: PackedFloat32Array = PackedFloat32Array()
+var _vertices: PackedVector3Array = PackedVector3Array()
+var _normals: PackedVector3Array = PackedVector3Array()
+var _uvs: PackedVector2Array = PackedVector2Array()
+var _indices: PackedInt32Array = PackedInt32Array()
+var _array_mesh: ArrayMesh
+var _idle_ticks := 0
 
 
 func _init() -> void:
@@ -78,6 +99,7 @@ func _init() -> void:
 	add_child(_mesh)
 	_rest_len_col = LENGTH / float(ROWS - 1)
 	_fill_local_rest()
+	_build_mesh_shell()
 	_commit_mesh()
 	process_physics_priority = 40
 
@@ -86,6 +108,14 @@ func attach_to_skeleton(skeleton: Skeleton3D) -> void:
 	_skeleton = skeleton
 	_simulating = skeleton != null
 	_has_last_pin = false
+	_bone_ids.clear()
+	_body = null
+	var walk: Node = skeleton
+	while walk != null:
+		if walk is CharacterBody3D:
+			_body = walk
+			break
+		walk = walk.get_parent()
 	if _simulating:
 		_snap_to_body()
 
@@ -112,14 +142,25 @@ func set_sparkle(on: bool) -> void:
 func _physics_process(delta: float) -> void:
 	if not _simulating or _skeleton == null or not is_instance_valid(_skeleton):
 		return
-	var pin := _pin_world(int(COLS / 2.0))
+	_cache_pose()
+	var pin := _pin_at(int(COLS / 2.0))
 	if _has_last_pin and pin.distance_to(_last_pin) > TELEPORT:
 		_snap_to_body()
+		_cache_pose()
+		pin = _pin_at(int(COLS / 2.0))
+	var moving := _body_velocity().length_squared() > IDLE_SPEED * IDLE_SPEED
+	if _has_last_pin and pin.distance_squared_to(_last_pin) > IDLE_PIN * IDLE_PIN:
+		moving = true
 	_has_last_pin = true
 	_last_pin = pin
+	if not moving:
+		_idle_ticks += 1
+		if (_idle_ticks & 1) == 1:
+			return
+	else:
+		_idle_ticks = 0
 	var step := delta / float(SUBSTEPS)
 	for _sub in SUBSTEPS:
-		_cache_pose()
 		_clock += step
 		_integrate(step)
 		_solve_constraints()
@@ -127,12 +168,29 @@ func _physics_process(delta: float) -> void:
 
 
 func _cache_pose() -> void:
+	_chest = _read_bone(&"UpperChest")
+	_hips = _read_bone(&"Hips")
+	_head = _read_bone(&"Head")
+	_left_root = _read_bone(&"LeftShoulder")
+	_right_root = _read_bone(&"RightShoulder")
+	_left_arm = _read_bone(&"LeftUpperArm")
+	_right_arm = _read_bone(&"RightUpperArm")
 	_axis_down = _down()
 	_axis_back = _back()
 	_axis_right = _right()
 	_pins.resize(COLS)
+	var left := _shoulder_from(_left_root, _left_arm, true)
+	var right := _shoulder_from(_right_root, _right_arm, false)
+	var mid := left.lerp(right, 0.5)
+	if _chest != Vector3.ZERO:
+		mid = mid.lerp(_chest, 0.18)
+	var lift := _up() * 0.015 + _axis_back * COLLAR_BACK
 	for col in COLS:
-		_pins[col] = _pin_world(col)
+		var t := float(col) / float(COLS - 1)
+		_pins[col] = left.lerp(right, t).lerp(mid, 0.12) + lift
+	_chest_center = _chest + _axis_back * 0.02
+	_hip_center = _hips + _axis_back * 0.04
+	_plane_point = _chest + _axis_back * 0.01
 
 
 func _integrate(delta: float) -> void:
@@ -175,30 +233,38 @@ func _solve_constraints() -> void:
 
 func _solve_stretch() -> void:
 	for row in ROWS:
-		var rest := _rest_row(row)
+		var rest := _across(row)
+		var base := row * COLS
 		for col in range(COLS - 1):
-			_keep(_index(col, row), _index(col + 1, row), rest)
+			_keep(base + col, base + col + 1, rest)
 	for row in range(ROWS - 1):
+		var base := row * COLS
+		var below := base + COLS
 		for col in COLS:
-			_keep(_index(col, row), _index(col, row + 1), _rest_len_col)
+			_keep(base + col, below + col, _rest_len_col)
 
 
 func _solve_shear() -> void:
 	for row in range(ROWS - 1):
-		var rest := Vector2((_rest_row(row) + _rest_row(row + 1)) * 0.5, _rest_len_col).length()
+		var rest := Vector2((_across(row) + _across(row + 1)) * 0.5, _rest_len_col).length()
+		var base := row * COLS
+		var below := base + COLS
 		for col in range(COLS - 1):
-			_keep(_index(col, row), _index(col + 1, row + 1), rest)
-			_keep(_index(col + 1, row), _index(col, row + 1), rest)
+			_keep(base + col, below + col + 1, rest)
+			_keep(base + col + 1, below + col, rest)
 
 
 func _solve_bend() -> void:
 	for row in ROWS:
-		var rest := _rest_row(row) * 2.0
+		var rest := _across(row) * 2.0
+		var base := row * COLS
 		for col in range(COLS - 2):
-			_keep(_index(col, row), _index(col + 2, row), rest, BEND_STIFF)
+			_keep(base + col, base + col + 2, rest, BEND_STIFF)
 	for row in range(ROWS - 2):
+		var base := row * COLS
+		var skip := base + COLS * 2
 		for col in COLS:
-			_keep(_index(col, row), _index(col, row + 2), _rest_len_col * 2.0, BEND_STIFF)
+			_keep(base + col, skip + col, _rest_len_col * 2.0, BEND_STIFF)
 
 
 func _solve_tethers() -> void:
@@ -206,8 +272,9 @@ func _solve_tethers() -> void:
 	# its collar pin than the sewn path. Unilateral, so the hem can still lift.
 	for row in range(1, ROWS):
 		var limit := _rest_len_col * float(row) * TETHER_SLACK
+		var base := row * COLS
 		for col in COLS:
-			_tether(_index(col, row), _pin_at(col), limit)
+			_tether(base + col, _pin_at(col), limit)
 
 
 func _pin_collar() -> void:
@@ -250,19 +317,15 @@ func _tether(index: int, anchor: Vector3, rest: float) -> void:
 
 
 func _collide_torso() -> void:
-	var chest := _bone_world(&"UpperChest")
-	var hips := _bone_world(&"Hips")
 	var back := _axis_back
-	var chest_center := chest + back * 0.02
-	var hip_center := hips + back * 0.04
-	var plane_point := chest + back * 0.01
 	for row in range(1, ROWS):
+		var base := row * COLS
 		for col in COLS:
-			var index := _index(col, row)
+			var index := base + col
 			var point := _pos[index]
-			point = _push_sphere(point, chest_center, TORSO_RADIUS)
-			point = _push_sphere(point, hip_center, HIP_RADIUS)
-			var into := (point - plane_point).dot(back)
+			point = _push_sphere(point, _chest_center, TORSO_RADIUS)
+			point = _push_sphere(point, _hip_center, HIP_RADIUS)
+			var into := (point - _plane_point).dot(back)
 			if into < 0.0:
 				point -= back * into
 			_pos[index] = point
@@ -275,10 +338,11 @@ func _uncross_columns() -> void:
 	if right.length_squared() < 0.0001:
 		return
 	for row in range(1, ROWS):
-		var min_sep := _rest_row(row) * MIN_COL_SEP
+		var min_sep := _across(row) * MIN_COL_SEP
+		var base := row * COLS
 		for col in range(COLS - 1):
-			var a := _index(col, row)
-			var b := _index(col + 1, row)
+			var a := base + col
+			var b := a + 1
 			var along := (_pos[b] - _pos[a]).dot(right)
 			if along >= min_sep:
 				continue
@@ -297,6 +361,8 @@ func _push_sphere(point: Vector3, center: Vector3, radius: float) -> Vector3:
 
 func _snap_to_body() -> void:
 	_wind = Vector3.ZERO
+	if _skeleton != null and is_instance_valid(_skeleton):
+		_cache_pose()
 	_pos.resize(COLS * ROWS)
 	_prev.resize(COLS * ROWS)
 	for row in ROWS:
@@ -347,91 +413,120 @@ func _rest_row(row: int) -> float:
 	return (WIDTH * (1.0 - row_t * TAPER)) / float(COLS - 1)
 
 
-func _commit_mesh() -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+func _across(row: int) -> float:
+	if row >= 0 and row < _rest_across.size():
+		return _rest_across[row]
+	return _rest_row(row)
+
+
+func _build_mesh_shell() -> void:
+	var count := COLS * ROWS
+	_uvs.resize(count)
+	_rest_across.resize(ROWS)
+	for row in ROWS:
+		_rest_across[row] = _rest_row(row)
+		for col in COLS:
+			_uvs[row * COLS + col] = Vector2(
+				float(col) / float(COLS - 1), float(row) / float(ROWS - 1))
+	_indices = PackedInt32Array()
 	for row in range(ROWS - 1):
 		for col in range(COLS - 1):
-			var a := _local(_index(col, row))
-			var b := _local(_index(col + 1, row))
-			var c := _local(_index(col, row + 1))
-			var d := _local(_index(col + 1, row + 1))
-			var uv_a := Vector2(float(col) / float(COLS - 1), float(row) / float(ROWS - 1))
-			var uv_b := Vector2(float(col + 1) / float(COLS - 1), float(row) / float(ROWS - 1))
-			var uv_c := Vector2(float(col) / float(COLS - 1), float(row + 1) / float(ROWS - 1))
-			var uv_d := Vector2(float(col + 1) / float(COLS - 1), float(row + 1) / float(ROWS - 1))
-			_quad(st, a, b, c, d, uv_a, uv_b, uv_c, uv_d)
-	var mesh := st.commit()
-	if mesh.get_surface_count() > 0:
-		mesh.surface_set_material(0, _material)
-	_mesh.mesh = mesh
+			var a := row * COLS + col
+			var b := a + 1
+			var c := a + COLS
+			var d := c + 1
+			_indices.append(a)
+			_indices.append(b)
+			_indices.append(d)
+			_indices.append(a)
+			_indices.append(d)
+			_indices.append(c)
+
+
+func _commit_mesh() -> void:
+	var count := COLS * ROWS
+	_vertices.resize(count)
+	_normals.resize(count)
+	var to_local := Transform3D.IDENTITY
+	if is_inside_tree():
+		to_local = global_transform.affine_inverse()
+	for index in count:
+		_vertices[index] = to_local * _pos[index]
+		_normals[index] = Vector3.ZERO
+	var stop := _indices.size()
+	var cursor := 0
+	while cursor < stop:
+		var ia := _indices[cursor]
+		var ib := _indices[cursor + 1]
+		var ic := _indices[cursor + 2]
+		var a := _vertices[ia]
+		var b := _vertices[ib]
+		var c := _vertices[ic]
+		var normal := (b - a).cross(c - a)
+		if normal.length_squared() < 0.000001:
+			normal = Vector3.BACK
+		else:
+			normal = normal.normalized()
+		_normals[ia] += normal
+		_normals[ib] += normal
+		_normals[ic] += normal
+		cursor += 3
+	for index in count:
+		if _normals[index].length_squared() > 0.000001:
+			_normals[index] = _normals[index].normalized()
+		else:
+			_normals[index] = Vector3.BACK
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = _vertices
+	arrays[Mesh.ARRAY_NORMAL] = _normals
+	arrays[Mesh.ARRAY_TEX_UV] = _uvs
+	arrays[Mesh.ARRAY_INDEX] = _indices
+	if _array_mesh == null:
+		_array_mesh = ArrayMesh.new()
+	elif _array_mesh.get_surface_count() > 0:
+		_array_mesh.clear_surfaces()
+	_array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	if _array_mesh.get_surface_count() > 0:
+		_array_mesh.surface_set_material(0, _material)
+	_mesh.mesh = _array_mesh
 	if _mesh.material_override == null:
 		_mesh.material_override = _material
 
 
-func _quad(
-	st: SurfaceTool,
-	a: Vector3, b: Vector3, c: Vector3, d: Vector3,
-	uv_a: Vector2, uv_b: Vector2, uv_c: Vector2, uv_d: Vector2
-) -> void:
-	_tri(st, a, b, d, uv_a, uv_b, uv_d)
-	_tri(st, a, d, c, uv_a, uv_d, uv_c)
-	_tri(st, a, d, b, uv_a, uv_d, uv_b)
-	_tri(st, a, c, d, uv_a, uv_c, uv_d)
-
-
-func _tri(
-	st: SurfaceTool,
-	a: Vector3, b: Vector3, c: Vector3,
-	uv_a: Vector2, uv_b: Vector2, uv_c: Vector2
-) -> void:
-	var normal := (b - a).cross(c - a)
-	if normal.length_squared() < 0.000001:
-		normal = Vector3.BACK
-	else:
-		normal = normal.normalized()
-	st.set_normal(normal)
-	st.set_uv(uv_a)
-	st.add_vertex(a)
-	st.set_normal(normal)
-	st.set_uv(uv_b)
-	st.add_vertex(b)
-	st.set_normal(normal)
-	st.set_uv(uv_c)
-	st.add_vertex(c)
-
-
-func _local(index: int) -> Vector3:
-	if not is_inside_tree():
-		return _pos[index]
-	return global_transform.affine_inverse() * _pos[index]
-
-
 func _pin_world(col: int) -> Vector3:
-	var t := float(col) / float(COLS - 1)
-	var left := _shoulder(&"LeftShoulder", &"LeftUpperArm")
-	var right := _shoulder(&"RightShoulder", &"RightUpperArm")
-	var mid := left.lerp(right, 0.5)
-	var chest := _bone_world(&"UpperChest")
-	if chest != Vector3.ZERO:
-		mid = mid.lerp(chest, 0.18)
-	return left.lerp(right, t).lerp(mid, 0.12) + _back() * COLLAR_BACK + _up() * 0.015
+	if _pins.size() == COLS:
+		return _pins[col]
+	_cache_pose()
+	return _pin_at(col)
 
 
 func _shoulder(root_name: StringName, arm_name: StringName) -> Vector3:
-	var root := _bone_world(root_name)
-	var arm := _bone_world(arm_name)
+	return _shoulder_from(
+		_read_bone(root_name),
+		_read_bone(arm_name),
+		String(root_name).begins_with("Left"))
+
+
+func _shoulder_from(root: Vector3, arm: Vector3, left: bool) -> Vector3:
 	if root == Vector3.ZERO:
-		return _fallback_origin() + _right() * (-WIDTH * 0.5 if String(root_name).begins_with("Left") else WIDTH * 0.5)
+		return _fallback_origin() + _right() * (-WIDTH * 0.5 if left else WIDTH * 0.5)
 	if arm == Vector3.ZERO:
 		return root
 	return root.lerp(arm, 0.42)
 
 
 func _bone_world(bone_name: StringName) -> Vector3:
+	return _read_bone(bone_name)
+
+
+func _read_bone(bone_name: StringName) -> Vector3:
 	if _skeleton == null or not is_instance_valid(_skeleton):
 		return Vector3.ZERO
-	var bone := CharacterRig.find_bone(_skeleton, bone_name)
+	var bone := int(_bone_ids.get(bone_name, -2))
+	if bone == -2:
+		bone = CharacterRig.find_bone(_skeleton, bone_name)
+		_bone_ids[bone_name] = bone
 	if bone < 0:
 		return Vector3.ZERO
 	return _skeleton.global_transform * _skeleton.get_bone_global_pose(bone).origin
@@ -466,10 +561,8 @@ func _basis_axis(axis: int) -> Vector3:
 
 
 func _up() -> Vector3:
-	var hips := _bone_world(&"Hips")
-	var chest := _bone_world(&"UpperChest")
-	if hips != Vector3.ZERO and chest != Vector3.ZERO:
-		var up := (chest - hips).normalized()
+	if _hips != Vector3.ZERO and _chest != Vector3.ZERO:
+		var up := (_chest - _hips).normalized()
 		if up.length_squared() > 0.01:
 			return up
 	return _basis_axis(1)
@@ -480,10 +573,8 @@ func _down() -> Vector3:
 
 
 func _right() -> Vector3:
-	var left := _bone_world(&"LeftShoulder")
-	var right := _bone_world(&"RightShoulder")
-	if left != Vector3.ZERO and right != Vector3.ZERO:
-		var across := right - left
+	if _left_root != Vector3.ZERO and _right_root != Vector3.ZERO:
+		var across := _right_root - _left_root
 		if across.length_squared() > 0.002:
 			return across.normalized()
 	return _basis_axis(0)
@@ -496,10 +587,8 @@ func _back() -> Vector3:
 	if back.length_squared() < 0.0001:
 		back = -_basis_axis(2)
 	back = back.normalized()
-	var head := _bone_world(&"Head")
-	var chest := _bone_world(&"UpperChest")
-	if head != Vector3.ZERO and chest != Vector3.ZERO:
-		var forward := head - chest
+	if _head != Vector3.ZERO and _chest != Vector3.ZERO:
+		var forward := _head - _chest
 		forward -= up * forward.dot(up)
 		if forward.length_squared() > 0.0004 and back.dot(forward.normalized()) > 0.0:
 			back = -back
@@ -507,11 +596,8 @@ func _back() -> Vector3:
 
 
 func _body_velocity() -> Vector3:
-	var node: Node = _skeleton
-	while node != null:
-		if node is CharacterBody3D:
-			return (node as CharacterBody3D).velocity
-		node = node.get_parent()
+	if _body != null and is_instance_valid(_body):
+		return _body.velocity
 	return Vector3.ZERO
 
 

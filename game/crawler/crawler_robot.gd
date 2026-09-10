@@ -21,6 +21,7 @@ const INK := Color(0.46, 0.50, 0.52)
 var _muzzle: Node3D
 var _fire_left := 0.0
 var _act := ""
+var _snapped_at := Vector3.INF
 
 
 func _ready() -> void:
@@ -64,10 +65,14 @@ func combat_display_name() -> String:
 
 
 func combat_position() -> Vector3:
+	if _hit_ready:
+		return super.combat_position()
 	return global_position + _up() * (body_height() * 0.22)
 
 
 func combat_radius() -> float:
+	if _hit_ready:
+		return super.combat_radius()
 	return body_width() * 0.55
 
 
@@ -75,10 +80,23 @@ func ground_clearance() -> float:
 	return body_height() * 0.5
 
 
+func snap_to_ground() -> void:
+	if _snapped_at.is_finite() \
+			and global_position.distance_squared_to(_snapped_at) < 0.12 \
+			and absf(_cached_alt - ground_clearance()) < 0.2:
+		return
+	super.snap_to_ground()
+	_snapped_at = global_position
+
+
 func muzzle_point() -> Vector3:
 	if _muzzle is Node3D:
 		return _muzzle.global_position
 	return combat_position() + -global_transform.basis.z * (body_width() * 0.7)
+
+
+func laser_prey() -> Node:
+	return _combat_target()
 
 
 func _flat_toward(at: Vector3) -> Vector3:
@@ -113,7 +131,8 @@ func _melee(player: Node, reach: float, ability: String) -> void:
 
 func _spawn_laser(
 		along: Vector3, delay := 0.0, glow := Color(0.12, 0.78, 1.0),
-		core := Color(0.55, 0.95, 1.0), ability := "crawler_robot_laser"
+		core := Color(0.55, 0.95, 1.0), ability := "crawler_robot_laser",
+		lock: Node = null
 	) -> void:
 	var heading := along
 	if heading.length_squared() < 0.0001:
@@ -130,6 +149,7 @@ func _spawn_laser(
 	bolt.core_color = core
 	bolt.glow_color = glow
 	bolt.ability_id = ability
+	bolt.prey = lock if is_instance_valid(lock) else _combat_target()
 	var world: Node = _planet
 	if world == null:
 		world = DamageHit.game_world_of(self)

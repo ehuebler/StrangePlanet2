@@ -140,9 +140,8 @@ func _configure() -> void:
 ## does not mention it.
 func stat(key: String, fallback: float) -> float:
 	var value := float(stats.get(key, fallback))
-	if key == "damage" and player != null and CrawlerRules.active() \
-			and player.has_method(&"crawler_damage_scale"):
-		value *= float(player.call(&"crawler_damage_scale"))
+	if key == "damage" and player != null and CrawlerRules.active():
+		return CrawlerRules.paired_hit_damage(player, value)
 	if key == "knockback" and player != null and CrawlerRules.active() \
 			and player.has_method(&"crawler_knockback_scale"):
 		value *= float(player.call(&"crawler_knockback_scale"))

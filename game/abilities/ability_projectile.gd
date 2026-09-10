@@ -21,9 +21,6 @@ var _trail_travelled := 0.0
 var _linger_travelled := 0.0
 var _shooter_rid := RID()
 var _disk: Node3D
-var _halo: MeshInstance3D
-var _core_material: StandardMaterial3D
-var _halo_material: StandardMaterial3D
 var _probe: SphereShape3D
 var _split_done := false
 var _pulse := 0.0
@@ -31,9 +28,15 @@ var _persist_trail: AbilityTrail
 var _struck: Node
 var _shock: MeteorShock
 var _cone_beam: EnergyVfx
+var _ring: MeshInstance3D
+var _ring_mesh: TorusMesh
+var _ring_light: OmniLight3D
 var _cone_origin := Vector3.INF
 var _pierced: Dictionary = {}
 var _bounces_left := 0
+var _glow_color := Color.WHITE
+var _glow_energy := 0.0
+var _glow_range := 2.4
 
 
 static func launch(world: Node, source: OnlinePlayer, ability_id: String,
@@ -102,87 +105,36 @@ func _ready() -> void:
 			_build_energy_cone()
 		_:
 			queue_free()
+			return
+	CrawlerShotSense.watch(self)
 
 
 func _build_energy_disk() -> void:
 	var quoted_radius := maxf(
 		float(stats.get("projectile_radius", 0.36)), 0.08)
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = quoted_radius
-	mesh.bottom_radius = quoted_radius
-	mesh.height = maxf(quoted_radius * 0.18, 0.035)
-	mesh.radial_segments = 24
-	mesh.rings = 1
-
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	var tint := _cast_tint()
-	material.albedo_color = tint
-	material.emission_enabled = true
-	material.emission = tint
-	material.emission_energy_multiplier = 4.2
-	mesh.material = material
-
-	_disk = MeshInstance3D.new()
-	_disk.mesh = mesh
-	# CylinderMesh stands on Y already. Keeping that spin axis aligned with the
-	# launch up makes the thin rim lead and the broad faces ride above and below
-	# the path, like a thrown frisbee rather than a coin flying face-first.
-	add_child(_disk)
-
-	var light := OmniLight3D.new()
-	light.light_color = _cast_tint()
-	light.light_energy = 2.4
-	light.omni_range = maxf(quoted_radius * 7.0, 2.5)
-	add_child(light)
+	var ball := EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, tint)
+	add_child(ball)
+	ball.set_ball_radius(quoted_radius)
+	_disk = ball
+	_glow_color = tint
+	_glow_energy = 2.4
+	_glow_range = maxf(quoted_radius * 7.0, 2.5)
 
 
 func _build_energy_orb() -> void:
 	var quoted_radius := maxf(
 		float(stats.get("projectile_radius", 1.0)), 0.15)
-	var sphere := SphereMesh.new()
-	sphere.radius = quoted_radius
-	sphere.height = quoted_radius * 2.0
-	sphere.radial_segments = 28
-	sphere.rings = 16
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	var tint := _cast_tint()
-	material.albedo_color = tint.lightened(0.28)
-	material.emission_enabled = true
-	material.emission = tint
-	material.emission_energy_multiplier = 7.5
-	sphere.material = material
-	_disk = MeshInstance3D.new()
-	_disk.mesh = sphere
-	_disk.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(_disk)
-
-	var halo_mesh := SphereMesh.new()
-	halo_mesh.radius = quoted_radius * 1.32
-	halo_mesh.height = quoted_radius * 2.64
-	halo_mesh.radial_segments = 24
-	halo_mesh.rings = 12
-	var halo_material := StandardMaterial3D.new()
-	halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	halo_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var halo_tint := _cast_tint()
-	halo_material.albedo_color = Color(halo_tint, 0.38)
-	halo_material.emission_enabled = true
-	halo_material.emission = halo_tint
-	halo_material.emission_energy_multiplier = 4.5
-	halo_mesh.material = halo_material
-	var halo := MeshInstance3D.new()
-	halo.mesh = halo_mesh
-	halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(halo)
-
+	var ball := EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, tint)
+	add_child(ball)
+	ball.set_ball_radius(quoted_radius)
+	_disk = ball
 	var light := OmniLight3D.new()
-	light.light_color = _cast_tint()
+	light.light_color = tint
 	light.light_energy = 5.5
 	light.omni_range = maxf(quoted_radius * 10.0, 7.0)
+	light.shadow_enabled = false
 	add_child(light)
 
 
@@ -195,11 +147,9 @@ func _build_energy_bolt() -> void:
 	add_child(ball)
 	ball.set_ball_radius(quoted_radius)
 	_disk = ball
-	var light := OmniLight3D.new()
-	light.light_color = tint.lerp(Color(1.0, 0.5, 0.85), 0.4)
-	light.light_energy = 1.8
-	light.omni_range = maxf(quoted_radius * 14.0, 1.6)
-	add_child(light)
+	_glow_color = tint.lerp(Color(1.0, 0.5, 0.85), 0.4)
+	_glow_energy = 1.8
+	_glow_range = maxf(quoted_radius * 14.0, 1.6)
 
 
 func _build_energy_icicle() -> void:
@@ -207,55 +157,13 @@ func _build_energy_icicle() -> void:
 		float(stats.get("projectile_radius",
 			CrawlerRules.ICICLE_PROJECTILE_RADIUS)), 0.06)
 	var tint := _cast_tint()
-	var length := maxf(quoted_radius * 5.6, 0.42)
-	var spear := CylinderMesh.new()
-	spear.top_radius = 0.012
-	spear.bottom_radius = quoted_radius * 1.15
-	spear.height = length
-	spear.radial_segments = 8
-	spear.rings = 1
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = tint.lightened(0.22)
-	material.emission_enabled = true
-	material.emission = tint
-	material.emission_energy_multiplier = 3.8
-	spear.material = material
-	_disk = MeshInstance3D.new()
-	_disk.mesh = spear
-	_disk.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	# CylinderMesh stands on Y. Point the sharp tip along local -Z so look_at
-	# sends the icicle tip-first.
-	_disk.rotation.x = PI * 0.5
-	add_child(_disk)
-
-	var sheen := CylinderMesh.new()
-	sheen.top_radius = 0.03
-	sheen.bottom_radius = quoted_radius * 1.55
-	sheen.height = length * 0.92
-	sheen.radial_segments = 8
-	sheen.rings = 1
-	var halo_material := StandardMaterial3D.new()
-	halo_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	halo_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	halo_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	halo_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	halo_material.albedo_color = Color(tint.lightened(0.35), 0.34)
-	halo_material.emission_enabled = true
-	halo_material.emission = Color(0.92, 0.98, 1.0)
-	halo_material.emission_energy_multiplier = 2.2
-	sheen.material = halo_material
-	_halo = MeshInstance3D.new()
-	_halo.mesh = sheen
-	_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_halo.rotation.x = PI * 0.5
-	add_child(_halo)
-
-	var light := OmniLight3D.new()
-	light.light_color = tint.lerp(Color(0.95, 0.98, 1.0), 0.45)
-	light.light_energy = 2.2
-	light.omni_range = maxf(quoted_radius * 12.0, 2.2)
-	add_child(light)
+	var ball := EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, tint)
+	add_child(ball)
+	ball.set_ball_radius(quoted_radius * 1.35)
+	_disk = ball
+	_glow_color = tint.lerp(Color(0.95, 0.98, 1.0), 0.45)
+	_glow_energy = 2.2
+	_glow_range = maxf(quoted_radius * 12.0, 2.2)
 
 
 func _build_teleport_orb() -> void:
@@ -267,11 +175,9 @@ func _build_teleport_orb() -> void:
 	add_child(ball)
 	ball.set_ball_radius(quoted_radius)
 	_disk = ball
-	var light := OmniLight3D.new()
-	light.light_color = tint
-	light.light_energy = 3.2
-	light.omni_range = maxf(quoted_radius * 14.0, 2.8)
-	add_child(light)
+	_glow_color = tint
+	_glow_energy = 3.2
+	_glow_range = maxf(quoted_radius * 14.0, 2.8)
 	_persist_trail = AbilityTrail.create(
 		get_parent(), global_position, quoted_radius * 0.85, tint)
 
@@ -286,25 +192,59 @@ func _build_energy_cone() -> void:
 	dummy.mesh = mesh
 	_disk = dummy
 	add_child(dummy)
-	_cone_beam = EnergyVfx.make(EnergyVfx.Kind.BEAM_STREAMS, EnergyVfx.TINT_WHITE)
-	_cone_beam.top_level = true
-	add_child(_cone_beam)
-	_shock = MeteorShock.new()
-	_shock.radius = _cone_radius()
-	_shock.visible = false
-	add_child(_shock)
+	_ring_mesh = TorusMesh.new()
+	_ring_mesh.inner_radius = 0.85
+	_ring_mesh.outer_radius = 1.15
+	_ring_mesh.rings = 48
+	_ring_mesh.ring_segments = 14
+	_ring = MeshInstance3D.new()
+	_ring.name = "FusRing"
+	_ring.mesh = _ring_mesh
+	_ring.top_level = true
+	_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var fire := _cast_tint()
+	if fire.a <= 0.0 or fire.is_equal_approx(Color.WHITE):
+		fire = EnergyVfx.TINT_GREEN
+	_ring.material_override = EnergyVfx.glow_material(
+		fire, Color(0.92, 1.0, 0.82), false, 4.2, 0.42, 0.22, 1.0)
+	add_child(_ring)
+	_ring_light = OmniLight3D.new()
+	_ring_light.light_color = fire
+	_ring_light.light_energy = 2.6
+	_ring_light.omni_range = 4.0
+	_ring_light.shadow_enabled = false
+	_ring.add_child(_ring_light)
 	_aim_cone()
 
 
 func _exit_tree() -> void:
+	CrawlerShotSense.drop(self)
 	if is_instance_valid(_persist_trail):
 		_persist_trail.linger(0.55)
 		_persist_trail = null
 	if is_instance_valid(_shock):
 		_shock.stop()
+	if is_instance_valid(_ring):
+		_ring.visible = false
 
 
 func _physics_process(delta: float) -> void:
+	shot_tick(delta)
+
+
+func shot_glow_color() -> Color:
+	return _glow_color
+
+
+func shot_glow_energy() -> float:
+	return _glow_energy
+
+
+func shot_glow_range() -> float:
+	return _glow_range
+
+
+func shot_tick(delta: float) -> void:
 	if not is_instance_valid(shooter) or definition == null \
 			or not is_instance_valid(_disk):
 		queue_free()
@@ -320,8 +260,7 @@ func _physics_process(delta: float) -> void:
 			_velocity, global_position, stats, shooter, delta, _speed)
 		if _velocity.length_squared() > 0.0001:
 			_along = _velocity.normalized()
-	var field_slow := CrawlerFieldVolume.speed_scale_at(self, global_position) \
-		* CrawlerLingerCloud.speed_scale_at(self, global_position)
+	var field_slow := CrawlerMobSense.field_slow(self, global_position)
 	var step_vector := _velocity * field_slow * delta
 	var from := global_position
 	var to := from + step_vector
@@ -372,9 +311,7 @@ func _physics_process(delta: float) -> void:
 	if definition.projectile_type == AbilityDefinition.ProjectileType.ENERGY_BOLT:
 		_pulse_bolt(delta)
 	elif definition.projectile_type == AbilityDefinition.ProjectileType.ENERGY_ICICLE:
-		_disk.rotate_object_local(Vector3.UP, delta * 18.0)
-		if is_instance_valid(_halo):
-			_halo.rotate_object_local(Vector3.UP, delta * 18.0)
+		_pulse_bolt(delta)
 	elif definition.projectile_type == AbilityDefinition.ProjectileType.ENERGY_CONE:
 		_aim_cone()
 		_pierce_cone()
@@ -462,27 +399,10 @@ func _flight_up() -> Vector3:
 
 
 func _victim_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, _quoted_radius(), 0.0)
 	if not is_inside_tree():
 		return null
-	for node_variant: Variant in get_tree().get_nodes_in_group(
-			DamageHit.COMBATANT_GROUP):
-		var node := node_variant as Node
-		if node == null or node == shooter:
-			continue
-		if node.has_method(&"is_alive") and not bool(node.call(&"is_alive")):
-			continue
-		if node.has_method(&"is_dead") and bool(node.call(&"is_dead")):
-			continue
-		if node.has_method(&"combat_faction") \
-				and int(node.call(&"combat_faction")) != DamageHit.Faction.ENEMY:
-			continue
-		var bounds := 0.4
-		if node.has_method(&"combat_radius"):
-			bounds = float(node.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(node), bounds):
-			return node
-	return null
+	return CombatantSense.first_along(
+		self, from, to, _quoted_radius(), shooter)
 
 
 func _combatant_from_hit(hit: Dictionary) -> Node:
@@ -500,11 +420,7 @@ func _combatant_from_hit(hit: Dictionary) -> Node:
 
 
 func _combat_position(node: Node) -> Vector3:
-	if node != null and node.has_method(&"combat_position"):
-		return node.call(&"combat_position")
-	if node is Node3D:
-		return (node as Node3D).global_position
-	return global_position
+	return CombatantSense.point_of(node)
 
 
 func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
@@ -556,8 +472,6 @@ func _pulse_bolt(delta: float) -> void:
 			(_disk as EnergyVfx).set_ball_radius(radius * wave)
 		else:
 			_disk.scale = Vector3.ONE * wave
-	if is_instance_valid(_halo):
-		_halo.scale = Vector3.ONE * (0.88 + (1.0 - wave) * 0.45)
 
 
 func _emit_impact_cast(facing: Vector3) -> void:
@@ -604,7 +518,10 @@ func _is_energy_cone() -> bool:
 
 
 func _cone_radius() -> float:
-	return maxf(float(stats.get("radius", CrawlerRules.FUS_RADIUS)), 0.8)
+	var start := maxf(float(stats.get("radius", CrawlerRules.FUS_RADIUS)), 0.25)
+	var size := maxf(float(stats.get("size", 1.0)), 0.25)
+	var age := _travelled / maxf(_speed, 1.0)
+	return start + CrawlerRules.FUS_EXPAND * size * age
 
 
 func _world_probe_radius() -> float:
@@ -616,70 +533,78 @@ func _world_probe_radius() -> float:
 func _aim_cone() -> void:
 	if is_instance_valid(_shock):
 		_shock.visible = false
-	if not is_instance_valid(_cone_beam):
+	if is_instance_valid(_cone_beam):
+		_cone_beam.visible = false
+	if not is_instance_valid(_ring):
 		return
 	if not _cone_origin.is_finite():
 		_cone_origin = global_position
-	_cone_beam.set_tint(EnergyVfx.TINT_WHITE)
-	_cone_beam.place_beam(
-		_cone_origin, global_position,
-		clampf(_cone_radius() * 0.06, 0.14, 0.36))
+	var forward := _velocity.normalized() \
+		if _velocity.length_squared() > 0.001 else _along
+	if forward.length_squared() < 0.001:
+		return
+	var radius := _cone_radius()
+	var thick := maxf(
+		float(stats.get("projectile_radius", CrawlerRules.FUS_PROJECTILE_RADIUS)),
+		0.28)
+	_ring.scale = Vector3(radius, radius, clampf(thick / 0.15, 0.7, 4.0))
+	var up := _flight_up()
+	if absf(forward.dot(up)) > 0.98:
+		up = Vector3.RIGHT if absf(forward.x) < 0.9 else Vector3.FORWARD
+	_ring.global_position = global_position
+	_ring.look_at(global_position + forward, up)
+	_ring.visible = true
+	if is_instance_valid(_ring_light):
+		_ring_light.omni_range = maxf(radius * 1.8, 3.0)
+		_ring_light.light_energy = 2.4 + minf(radius * 0.08, 1.6)
 
 
 func _pierce_cone() -> void:
 	if not authoritative or not _is_energy_cone() or not is_inside_tree():
 		return
-	var radius := _cone_radius()
-	var at := global_position
-	var along := _velocity.normalized() \
+	var forward := _velocity.normalized() \
 		if _velocity.length_squared() > 0.001 else _along
-	for node_variant: Variant in get_tree().get_nodes_in_group(
-			DamageHit.COMBATANT_GROUP):
-		var combatant := node_variant as Node
-		if combatant == null or combatant == shooter:
-			continue
-		if not combatant.has_method(&"apply_damage") \
-				or not combatant.has_method(&"combat_faction"):
-			continue
-		if int(combatant.call(&"combat_faction")) != DamageHit.Faction.ENEMY:
-			continue
-		if combatant.has_method(&"is_alive") \
-				and not bool(combatant.call(&"is_alive")):
-			continue
-		if combatant.has_method(&"is_dead") and bool(combatant.call(&"is_dead")):
+	if forward.length_squared() < 0.001:
+		return
+	var radius := _cone_radius()
+	var thick := maxf(
+		float(stats.get("projectile_radius", CrawlerRules.FUS_PROJECTILE_RADIUS)),
+		0.35)
+	var depth := maxf(thick * 1.15, 0.55)
+	var at := global_position
+	CombatantSense.ensure(self)
+	for combatant in CombatantSense.collect(self, shooter):
+		if not combatant.has_method(&"apply_damage"):
 			continue
 		var key := combatant.get_instance_id()
 		if _pierced.has(key):
 			continue
-		var point := _combat_position(combatant)
-		var bounds := 0.4
-		if combatant.has_method(&"combat_radius"):
-			bounds = float(combatant.call(&"combat_radius"))
-		if point.distance_to(at) > radius + bounds:
+		var point := CombatantSense.point_of(combatant)
+		var bounds := CombatantSense.radius_of(combatant)
+		var offset := point - at
+		var along := offset.dot(forward)
+		if absf(along) > depth + bounds:
+			continue
+		var out := offset - forward * along
+		var radial := out.length()
+		if radial > radius + thick + bounds:
 			continue
 		_pierced[key] = true
+		var shove := forward
+		if out.length_squared() > 0.0001:
+			shove = (forward * 0.72 + out.normalized() * 0.55).normalized()
+		var blow := stats.duplicate(true)
+		blow["radius"] = maxf(radius + thick, 0.8)
 		AbilityImpact.strike_force(
-			shooter, definition, at, along, stats, combatant)
-
-
-func _append_combatant_rids(node: Node, exclude: Array[RID]) -> void:
-	if node is CollisionObject3D:
-		var rid := (node as CollisionObject3D).get_rid()
-		if rid.is_valid() and not exclude.has(rid):
-			exclude.append(rid)
-	for child: Node in node.get_children():
-		_append_combatant_rids(child, exclude)
+			shooter, definition, at, shove, blow, combatant)
 
 
 func _trace_exclude() -> Array[RID]:
 	var exclude := DamageHit.rid_list(_shooter_rid)
 	if not _is_energy_cone() or not is_inside_tree():
 		return exclude
-	for node_variant: Variant in get_tree().get_nodes_in_group(
-			DamageHit.COMBATANT_GROUP):
-		var node := node_variant as Node
-		if node != null:
-			_append_combatant_rids(node, exclude)
+	CombatantSense.ensure(self)
+	CombatantSense.append_collision_rids(exclude)
 	return exclude
 
 

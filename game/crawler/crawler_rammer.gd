@@ -53,6 +53,7 @@ func _ready() -> void:
 	_base_speed = 12.0
 	_faces_motion = true
 	super._ready()
+	collision_layer = 0
 	_cruise = 0.0
 	velocity = Vector3.ZERO
 	_ready_soar()
@@ -77,10 +78,14 @@ func combat_display_name() -> String:
 
 
 func combat_position() -> Vector3:
+	if _hit_ready:
+		return super.combat_position()
 	return global_position
 
 
 func combat_radius() -> float:
+	if _hit_ready:
+		return super.combat_radius()
 	return RADIUS
 
 
@@ -98,6 +103,14 @@ func flyer_ceiling() -> float:
 	if _phase == Phase.RAM:
 		return STAGE_CEILING
 	return SOAR_CEILING
+
+
+func _stage_top_speed(player: Node) -> float:
+	return CrawlerRules.rammer_top_speed(_player_speed(player), threat_level)
+
+
+func _ram_top_speed(player: Node) -> float:
+	return CrawlerRules.rammer_top_speed(_player_speed(player), threat_level)
 
 
 func staging() -> bool:
@@ -137,21 +150,50 @@ func _tick_ai(delta: float) -> void:
 	if player == null:
 		_tick_idle(delta)
 		return
+	if _try_detonate(player):
+		return
+	if hunt_stance == CrawlerHunt.Stance.PURSUE:
+		_phase = Phase.STAGE
+		_update_stage(player, delta)
+		if _ready_to_ram(player):
+			_begin_ram(player)
+			_update_ram(player, delta)
+		return
 	if _phase == Phase.RAM:
 		_update_ram(player, delta)
 		return
-	_phase = Phase.STAGE
-	_update_stage(player, delta)
-	if _ready_to_ram(player):
-		_begin_ram(player)
-		_update_ram(player, delta)
+	_begin_ram(player)
+	_update_ram(player, delta)
+
+
+func _tick_far(delta: float) -> void:
+	var player := _nearest_player()
+	if player != null and tick_agro(player, delta):
+		_tick_ai(delta)
+		return
+	_tick_idle(delta)
+
+
+func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
+	if _movement_locked():
+		velocity = Vector3.ZERO
+		return
+	var step := maxf(delta, 0.0)
+	if player != null and _apply_agro(player, step, in_city):
+		if _try_detonate(player):
+			return
+		_tick_ai(step)
+	else:
+		_tick_idle(step)
+	if flies():
+		_director_climb()
 
 
 func _update_stage(player: Node, delta: float) -> void:
 	var at := _combat_position_of(player)
 	var offset := at - global_position
 	var distance := offset.length()
-	var top := CrawlerRules.rammer_top_speed(_player_speed(player), threat_level)
+	var top := _stage_top_speed(player)
 	_match_speed(top, delta, 0.34, CrawlerMobs.number(
 		"rammer", threat_level, "ram_accel", CrawlerRules.RAMMER_ACCEL))
 	if _blast_reaches(player, offset, distance):
@@ -184,7 +226,7 @@ func _update_ram(player: Node, delta: float) -> void:
 		_ram_heading = Vector3.ZERO
 		_update_stage(player, delta)
 		return
-	var top := CrawlerRules.rammer_top_speed(_player_speed(player), threat_level)
+	var top := _ram_top_speed(player)
 	_match_speed(top, delta, 0.22, CrawlerMobs.number(
 		"rammer", threat_level, "ram_accel", CrawlerRules.RAMMER_ACCEL))
 	if _blast_reaches(player, offset, distance):
@@ -216,7 +258,7 @@ func _ready_to_ram(player: Node) -> bool:
 func _ram_along(player: Node) -> Vector3:
 	var at := _combat_position_of(player)
 	var distance := global_position.distance_to(at)
-	var top := CrawlerRules.rammer_top_speed(_player_speed(player), threat_level)
+	var top := _ram_top_speed(player)
 	var flight := distance / maxf(top, 8.0)
 	var intercept := at + _player_velocity(player) * clampf(flight, 0.0, 0.85)
 	var along := intercept - global_position
@@ -410,6 +452,16 @@ func _soar_circle(delta: float) -> void:
 	tangent = tangent.normalized() * _soar_sign
 	var spring := (goal - global_position) * 0.55
 	_steer_toward(tangent * _cruise + spring, delta, 7.5)
+
+
+func _try_detonate(player: Node) -> bool:
+	if player == null or not _alive:
+		return false
+	var offset := _combat_position_of(player) - global_position
+	if not _blast_reaches(player, offset, offset.length()):
+		return false
+	_detonate(player)
+	return true
 
 
 func _blast_reaches(player: Node, offset: Vector3, distance: float) -> bool:

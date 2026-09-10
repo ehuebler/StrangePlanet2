@@ -33,8 +33,8 @@ const RESPAWN_SPACING := 14.0
 ## Metres above the nearest city's pad when holding Respawn in the Tab menu.
 const CITY_RESPAWN_CLEARANCE := 96.0
 
-@onready var spawn_points: Node3D = $SpawnPoints
-@onready var celestial_cycle: CelestialCycle = $CelestialCycle
+@onready var spawn_points: Node3D = get_node_or_null("SpawnPoints")
+@onready var celestial_cycle: CelestialCycle = get_node_or_null("CelestialCycle")
 
 var _spawned_players: Dictionary = {}
 ## On the server these are the authoritative finite world records. Clients keep
@@ -170,6 +170,24 @@ func training_snapshot() -> Dictionary:
 
 func planet() -> Planet:
 	return get_node_or_null("Planet") as Planet
+
+
+func _aim_planet_at_player(player: OnlinePlayer) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	if player.peer_id != multiplayer.get_unique_id():
+		return
+	var host := planet()
+	if host == null:
+		return
+	host.viewer = player
+	host.clear_aim()
+
+
+func _release_planet_viewer(player: OnlinePlayer) -> void:
+	var host := planet()
+	if host != null and host.viewer == player:
+		host.viewer = null
 
 
 ## Stable ids are allocated only by the host and then carried by the caster's
@@ -400,7 +418,7 @@ func request_colony_respawn() -> void:
 	var player := _spawned_players.get(sender) as OnlinePlayer
 	if not is_instance_valid(player) or not player.is_dead():
 		return
-	if CrawlerRules.active():
+	if CrawlerRules.active() and not CrawlerRules.crawler_free_respawn():
 		var progress := player.crawler_progress
 		if progress == null:
 			return
@@ -537,6 +555,7 @@ func _seed_crawler_cities(tries := 0) -> void:
 		if tries < 8:
 			call_deferred(&"_seed_crawler_cities", tries + 1)
 		return
+	CrawlerRun.ensure_session()
 	if CrawlerRun.active():
 		var layout := CrawlerRunLayout.ensure(self)
 		if layout != null:
@@ -769,6 +788,8 @@ func _ensure_crawler_start_site() -> void:
 	if not CrawlerRules.active():
 		return
 	_ensure_crawler_spawn_pad()
+	if CrawlerRun.active():
+		return
 	if _crawler_start_site() != null:
 		return
 	var at := _crawler_start_transform()
@@ -804,7 +825,9 @@ func _crawler_start_site() -> CrawlerSite:
 
 
 func _apply_crawler_site_progress() -> void:
-	if CrawlerProgress.session_payload.is_empty() or not is_inside_tree():
+	if not is_inside_tree():
+		return
+	if CrawlerProgress.session_payload.is_empty():
 		return
 	var ledger := CrawlerProgress.new()
 	ledger.from_dict(CrawlerProgress.session_payload)
@@ -1217,6 +1240,39 @@ func _begin_session() -> void:
 		call_deferred(&"_seed_crawler_cities", 0)
 		call_deferred(&"_ensure_crawler_horde")
 		call_deferred(&"_ensure_crawler_statues", 0)
+		call_deferred(&"_kick_in_game_warmup")
+
+
+func _kick_in_game_warmup() -> void:
+	if not CrawlerRules.active() or CrawlerMeta._test_payload != null:
+		return
+	if DisplayServer.get_name() == "headless":
+		return
+	if get_node_or_null("WorldWarmup") != null:
+		return
+	var warmup := WorldWarmup.new()
+	warmup.name = "WorldWarmup"
+	add_child(warmup)
+	var camera := _in_game_warmup_camera()
+	var tries := 0
+	while camera == null and tries < 90:
+		await get_tree().process_frame
+		if not is_inside_tree() or not is_instance_valid(warmup):
+			return
+		camera = _in_game_warmup_camera()
+		tries += 1
+	if camera != null and is_instance_valid(warmup):
+		await warmup.run_graphics(self, camera)
+	if is_instance_valid(warmup):
+		warmup.queue_free()
+
+
+func _in_game_warmup_camera() -> Camera3D:
+	var player := local_player()
+	if player != null and is_instance_valid(player) and player.camera != null:
+		return player.camera
+	var found := find_children("*", "Camera3D", true, false)
+	return found[0] as Camera3D if not found.is_empty() else null
 
 
 func _begin_saved_session(payload: Dictionary) -> void:
@@ -1247,6 +1303,7 @@ func _begin_saved_session(payload: Dictionary) -> void:
 		call_deferred(&"_seed_crawler_cities", 0)
 		call_deferred(&"_ensure_crawler_horde")
 		call_deferred(&"_ensure_crawler_statues", 0)
+		call_deferred(&"_kick_in_game_warmup")
 	call_deferred(&"_finish_saved_world", 0)
 
 
@@ -1999,13 +2056,94 @@ func locally_paused() -> bool:
 
 
 ## Drop the session and go back to the home screen. Reached from GameMenu's
-## HOLD LEAVE action; the menu raises it rather than doing it, because what a
-## world is is this node's business.
+## HOLD LEAVE action and GAME OVER HOME; the menu raises it rather than doing
+## it, because what a world is is this node's business.
 func leave_session() -> void:
 	set_local_pause(false)
 	NetworkManager.leave_game()
 	if NetworkManager.menu_scene_path.is_empty():
 		queue_free()
+
+
+## Put the title overlay back on this world without reloading the planet.
+## [method NetworkManager.leave_game] defers this so a Home click can finish
+## before the local body is despawned.
+func return_to_home() -> void:
+	if not is_inside_tree() or is_queued_for_deletion():
+		return
+	set_local_pause(false)
+	if get_tree() != null:
+		get_tree().paused = false
+	if Engine.time_scale <= 0.0:
+		Engine.time_scale = _time_scale_before_pause if _time_scale_before_pause > 0.0 else 1.0
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	if LagTracker != null:
+		LagTracker.set_frozen(false)
+	_release_play_view()
+	_teardown_play_session()
+	if is_instance_valid(_home_screen):
+		var old := _home_screen
+		_home_screen = null
+		old.free()
+	_open_home_screen()
+
+
+func _release_play_view() -> void:
+	for peer_id: Variant in _spawned_players.keys():
+		var player := _spawned_players.get(peer_id) as OnlinePlayer
+		if not is_instance_valid(player):
+			continue
+		player.controls_enabled = false
+		if player.hud != null:
+			player.hud.visible = false
+		if player.camera != null:
+			player.camera.current = false
+
+
+func _teardown_play_session() -> void:
+	_session_open = false
+	_duel_active = false
+	_training_active = false
+	_has_spawn_override = false
+	_force_spawn_override = false
+	_has_look_override = false
+	_restore_payload = {}
+	_crawler_city_queue.clear()
+	_crawler_city_gift_id = 0
+	_crawler_city_gift_claimed = false
+	_peer_spawns.clear()
+	_duel_returns.clear()
+	_training_returns.clear()
+	var peer_ids: Array = _spawned_players.keys()
+	for peer_id: Variant in peer_ids:
+		_despawn_player(int(peer_id))
+	_clear_live_pickups()
+	_clear_ability_constructs()
+	CrawlerRun.clear()
+	_free_named_session_node("CrawlerHorde")
+	_free_named_session_node("CrawlerRunLayout")
+	_free_named_session_node("WorldWarmup")
+	_free_named_session_node("CrawlerStartSite")
+	_free_named_session_node("CrawlerSpawnPad")
+	var host := planet()
+	if host != null:
+		_free_child_named(host, "CrawlerStartSite")
+		_free_child_named(host, "CrawlerSpawnPad")
+	for child: Node in get_children():
+		if child is CrawlerCityRing or str(child.name).begins_with("CrawlerRing_"):
+			child.queue_free()
+
+
+func _free_named_session_node(node_name: String) -> void:
+	_free_child_named(self, node_name)
+
+
+func _free_child_named(parent: Node, node_name: String) -> void:
+	if parent == null:
+		return
+	var node := parent.get_node_or_null(node_name)
+	if node != null and is_instance_valid(node):
+		node.queue_free()
 
 
 ## Public red-menu entry point. A client sends only the source claim; the server
@@ -2624,6 +2762,7 @@ func _spawn_pickup_local(
 	add_child(dropped, true)
 	dropped.global_transform = at_transform
 	dropped.reset_physics_interpolation()
+	dropped.begin_settle()
 	_pickup_nodes[pickup_id] = dropped
 
 
@@ -2805,6 +2944,7 @@ func _spawn_player(peer_id: int, metadata: Dictionary, at_transform: Transform3D
 	if in_flight:
 		player.start_flying()
 	_spawned_players[peer_id] = player
+	_aim_planet_at_player(player)
 	if CrawlerRules.active() and player.has_method(&"play_spawn_arrival"):
 		player.call(&"play_spawn_arrival")
 	LagTracker.note("spawn", "player %d '%s' in %d ms" % [
@@ -2817,6 +2957,7 @@ func _despawn_player(peer_id: int) -> void:
 	_spawned_players.erase(peer_id)
 	_respawn_sequence.erase(peer_id)
 	if is_instance_valid(player):
+		_release_planet_viewer(player)
 		LagTracker.note("spawn", "despawn player %d" % peer_id)
 		player.queue_free()
 
@@ -2932,6 +3073,8 @@ func _spawn_transform(peer_id: int) -> Transform3D:
 			return crawler
 	if _has_spawn_override and peer_id == multiplayer.get_unique_id():
 		return _spawn_override
+	if spawn_points == null:
+		return Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0))
 	var points := spawn_points.get_children()
 	if points.is_empty():
 		return Transform3D(Basis.IDENTITY, Vector3(0.0, 2.0, 0.0))

@@ -111,6 +111,22 @@ func _tick_far(delta: float) -> void:
 	_tick_idle(delta)
 
 
+func director_cold_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and (chase or hunting()):
+		steer = true
+		step = maxf(step, delta)
+	super.director_cold_tick(delta, step, steer, player, in_city)
+
+
+func director_warm_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and (chase or hunting()):
+		steer = true
+		step = maxf(step, delta)
+	super.director_warm_tick(delta, step, steer, player, in_city)
+
+
 func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
 	if _movement_locked():
 		velocity = Vector3.ZERO
@@ -125,25 +141,35 @@ func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
 		_director_climb()
 
 
-func _pursue(player: Node, delta: float, think: bool) -> void:
-	var running := CrawlerRules.gloam_running(_player_speed(player))
-	var gap := global_position.distance_to(_combat_position_of(player))
-	if running or (_airborne and (running or gap > 3.4)):
-		if not _airborne:
-			_takeoff()
+func _pursue(player: Node, delta: float, _think: bool) -> void:
+	var at := _combat_position_of(player)
+	var rise := (at - global_position).dot(_up())
+	var cut := hunt_stance == CrawlerHunt.Stance.PURSUE \
+		or rise > 2.8 \
+		or _player_fleeing(player)
+	if cut:
+		_hunt_set_air(true)
 		_chase_air(player, delta)
 		return
-	if _airborne:
-		_land()
-	if think:
-		snap_to_ground()
+	_hunt_set_air(false)
 	_chase_ground(player, delta)
+
+
+func _hunt_set_air(on: bool) -> void:
+	if _hunt_airborne == on and _airborne == on:
+		return
+	_hunt_airborne = on
+	if on:
+		_takeoff()
+	else:
+		_land()
 
 
 func _roam(delta: float) -> void:
 	if _airborne:
 		_land()
-	snap_to_ground()
+	if _director_lod == CrawlerRules.MOB_LOD_HOT:
+		snap_to_ground()
 	_match_speed(move_speed() * 0.42, delta, 1.1, 6.0)
 	_patrol_left -= delta
 	if _patrol_left <= 0.0 or global_position.distance_to(_patrol_goal) < 2.4:
@@ -159,10 +185,10 @@ func _roam(delta: float) -> void:
 func _chase_ground(player: Node, delta: float) -> void:
 	var at := _combat_position_of(player)
 	var gap := global_position.distance_to(at)
-	_match_speed(move_speed(), delta, 0.45, 8.0)
+	_match_speed(move_speed(), delta, 0.45, 18.0)
 	var along := _tangent_toward(at)
 	if along.length_squared() > 0.0001:
-		_steer_toward(along.normalized() * _cruise, delta, 11.0)
+		_steer_toward(along.normalized() * _cruise, delta, 14.0)
 	var reach := CrawlerRules.GLOAM_BITE_REACH
 	if player != null and player.has_method(&"combat_radius"):
 		reach += float(player.call(&"combat_radius"))
@@ -267,7 +293,9 @@ func _flock_wander() -> Vector3:
 	var yaw := rng.randf() * TAU
 	var reach := rng.randf_range(5.0, 16.0)
 	var at := hang_origin + (east * cos(yaw) + north * sin(yaw)) * reach
-	var surface := ground_surface(at)
+	var surface := mesh_surface(at)
+	if not surface.is_finite():
+		surface = ground_surface(at)
 	if surface.is_finite():
 		if _planet != null:
 			up = _planet.up_at(surface)

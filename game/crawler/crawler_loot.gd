@@ -3,17 +3,17 @@ extends RefCounted
 
 ## Kill-loot rolls for crawler abilities, modifiers, and basic city hats.
 ##
-## Each kind drops at 10%. Luck cannot push a kind past that cap.
+## Each kind drops at 2%. Luck cannot push a kind past that cap.
 
 const KIND_ABILITY := "ability"
 const KIND_MOD := "mod"
 const KIND_HAT := "hat"
-const CHANCE_CAP := 0.10
+const CHANCE_CAP := 0.02
 const LUCK_RATE := 0.20
 const BASE_CHANCE := {
-	KIND_ABILITY: 0.10,
-	KIND_MOD: 0.10,
-	KIND_HAT: 0.10,
+	KIND_ABILITY: 0.02,
+	KIND_MOD: 0.02,
+	KIND_HAT: 0.02,
 }
 
 

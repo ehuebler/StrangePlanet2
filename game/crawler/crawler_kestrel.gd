@@ -47,18 +47,70 @@ func _wander_point() -> Vector3:
 	return _clamp_flyer_band(at)
 
 
+func director_cold_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and (chase or hunting()):
+		steer = true
+		step = maxf(step, delta)
+	super.director_cold_tick(delta, step, steer, player, in_city)
+
+
+func director_warm_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and (chase or hunting()):
+		steer = true
+		step = maxf(step, delta)
+	super.director_warm_tick(delta, step, steer, player, in_city)
+
+
+func _track_hold_min() -> float:
+	return CrawlerMobs.number(wild_kind(), threat_level, "standoff_min", 24.0)
+
+
+func _track_hold_max() -> float:
+	return CrawlerMobs.number(wild_kind(), threat_level, "standoff_max", 42.0)
+
+
 func _tick_idle(delta: float) -> void:
 	_act = ""
 	_patrol(delta, 0.58)
 
 
 func _tick_ai(delta: float) -> void:
-	_fire_left = maxf(_fire_left - delta, 0.0)
 	var player := _hunt_target(delta)
 	if player == null:
+		_fire_left = maxf(_fire_left - delta, 0.0)
 		_tick_idle(delta)
 		return
-	_flyer_track(player, delta)
+	_fight(player, delta)
+
+
+func _tick_far(delta: float) -> void:
+	var player := _nearest_player()
+	if player != null and tick_agro(player, delta):
+		_fight(player, delta)
+		return
+	_fire_left = maxf(_fire_left - delta, 0.0)
+	_tick_idle(delta)
+
+
+func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
+	if _movement_locked():
+		velocity = Vector3.ZERO
+		return
+	var step := maxf(delta, 0.0)
+	if player != null and _apply_agro(player, step, in_city):
+		_fight(player, step)
+	else:
+		_fire_left = maxf(_fire_left - step, 0.0)
+		_tick_idle(step)
+	if flies():
+		_director_climb()
+
+
+func _fight(player: Node, delta: float) -> void:
+	_fire_left = maxf(_fire_left - delta, 0.0)
+	_tick_hunt_motion(player, delta)
 	_try_burst(player, _combat_position_of(player), _flat_gap(player))
 
 
@@ -66,10 +118,8 @@ func _try_burst(player: Node, at: Vector3, hold: float) -> void:
 	if _fire_left > 0.0:
 		return
 	var gap := _flat_gap(player) if player != null else hold
-	var near := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_min", CrawlerRules.RANGER_ENGAGE_MIN)
-	var far := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_max", CrawlerRules.RANGER_ENGAGE_MAX)
+	var near := CrawlerHunt.shot_min(wild_kind(), threat_level)
+	var far := CrawlerHunt.shot_max(wild_kind(), threat_level)
 	if gap < near or gap > far:
 		return
 	if not _begin_attack(BURST_WIND + float(BURST) * BURST_GAP):
@@ -81,7 +131,7 @@ func _try_burst(player: Node, at: Vector3, hold: float) -> void:
 		_spawn_laser(
 			heading, BURST_WIND + float(shot) * BURST_GAP,
 			EnergyVfx.TINT_DARK_RED, EnergyVfx.TINT_DARK_RED.lightened(0.28),
-			"crawler_kestrel_laser")
+			"crawler_kestrel_laser", player)
 
 
 func _burst_heading(player: Node, at: Vector3) -> Vector3:

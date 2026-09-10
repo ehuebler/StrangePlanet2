@@ -267,7 +267,7 @@ func _shot_game_over() -> void:
 	screen.present_crawler(
 		"Killed by Rhino: Meteor Strike",
 		"23 MOBS KILLED\n2 SITES DISCOVERED\nTIDE MARGIN\nCRESCENT MARKET\n54 GEMS EARNED",
-		false,
+		true,
 		{
 			"achievements": [
 				{
@@ -304,7 +304,8 @@ func _shot_game_over() -> void:
 	screen._fit_plate()
 	await _wait(PAGE_WAIT)
 	_report_named("game_over", screen, [
-		"Plate", "Title", "Notice", "Summary", "HomeButton", "RunRecapScroll",
+		"Plate", "Title", "Notice", "Summary", "HomeButton", "RespawnButton",
+		"RunRecapScroll",
 	])
 	_report_centered("game_over", screen.find_child("Plate", true, false) as Control)
 	_report_button_on_plate(screen)
@@ -362,23 +363,26 @@ func _report_centered(page: String, control: Control) -> void:
 
 
 func _report_button_on_plate(screen: DeathScreen) -> void:
-	var button := screen.respawn_button()
 	var plate := screen.find_child("Plate", true, false) as Control
-	if button == null or plate == null:
-		_fail("game_over is missing HOME or the plate")
+	if plate == null:
+		_fail("game_over is missing the plate")
 		return
-	var btn := CrtType.screen_rect(button)
 	var box := CrtType.screen_rect(plate)
-	var on := btn.position.y >= box.position.y - 1.0 \
-			and btn.end.y <= box.end.y + 2.0 \
-			and btn.position.x >= box.position.x - 1.0 \
-			and btn.end.x <= box.end.x + 2.0
-	print("crawler_ui_shot: game_over HOME on_plate=%s btn=%.0f,%.0f-%.0f,%.0f plate=%.0f,%.0f-%.0f,%.0f" % [
-		on, btn.position.x, btn.position.y, btn.end.x, btn.end.y,
-		box.position.x, box.position.y, box.end.x, box.end.y,
-	])
-	if not on:
-		_fail("game_over HOME is cut off by the plate")
+	for button: Button in [screen.home_button(), screen.respawn_button()]:
+		if button == null or not button.visible:
+			_fail("game_over is missing HOME or RESPAWN")
+			return
+		var btn := CrtType.screen_rect(button)
+		var on := btn.position.y >= box.position.y - 1.0 \
+				and btn.end.y <= box.end.y + 2.0 \
+				and btn.position.x >= box.position.x - 1.0 \
+				and btn.end.x <= box.end.x + 2.0
+		print("crawler_ui_shot: game_over %s on_plate=%s btn=%.0f,%.0f-%.0f,%.0f plate=%.0f,%.0f-%.0f,%.0f" % [
+			button.text, on, btn.position.x, btn.position.y, btn.end.x, btn.end.y,
+			box.position.x, box.position.y, box.end.x, box.end.y,
+		])
+		if not on:
+			_fail("game_over %s is cut off by the plate" % button.text)
 
 
 func _report_store_tabs(menu: CrawlerFieldMenu) -> void:

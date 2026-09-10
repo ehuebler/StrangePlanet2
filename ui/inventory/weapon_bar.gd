@@ -2,7 +2,7 @@ class_name WeaponBar
 extends Control
 
 ## The four ability slots along the bottom of the HUD, in input order: 1, 2, 3,
-## 4. A cape Q tile and a juke F tile sit to their left when those moves exist.
+## 4. A cape Q tile and a juke RMB tile sit to their left when those moves exist.
 ## Numbered keys and scroll select a numbered tile; click fires the selected one.
 ##
 ## Tiles are ordinary inventory tiles with input turned off: they are a readout
@@ -201,7 +201,7 @@ func _build() -> void:
 	_juke_slot.interactive = false
 	_juke_slot.hud_style = true
 	_juke_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_juke_slot.badge = "F"
+	_juke_slot.badge = "RMB"
 	_hotbar_row.add_child(_juke_slot)
 	var row := HBoxContainer.new()
 	row.name = "HotbarSlots"

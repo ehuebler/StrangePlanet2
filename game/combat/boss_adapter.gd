@@ -16,15 +16,48 @@ const FADE_MARGIN := 20.0
 static func find_in_tree(from: Node) -> Node:
 	if from == null or not from.is_inside_tree():
 		return null
-	var found := _find_group(from, GROUP)
-	if found != null:
-		return found
-	return _find_group(from, CRAWLER_GROUP)
+	var local_world := DamageHit.game_world_of(from)
+	var body := from as Node3D
+	var best: Node = null
+	var best_score := -INF
+	var seen: Dictionary = {}
+	for group: StringName in [GROUP, CRAWLER_GROUP]:
+		for node: Node in from.get_tree().get_nodes_in_group(group):
+			if node == null or not is_instance_valid(node) or seen.has(node):
+				continue
+			if local_world != null and not DamageHit.in_same_world(from, node):
+				continue
+			seen[node] = true
+			var score := _relevance(node, body)
+			if score > best_score:
+				best_score = score
+				best = node
+	return best
+
+
+static func boss_of(node: Node) -> Node:
+	var walk := node
+	while walk != null and is_instance_valid(walk):
+		if walk.is_in_group(GROUP) or walk.is_in_group(CRAWLER_GROUP):
+			return walk
+		walk = walk.get_parent()
+	return null
 
 
 static func is_boss_node(node: Node) -> bool:
-	return node != null and is_instance_valid(node) \
-		and (node.is_in_group(GROUP) or node.is_in_group(CRAWLER_GROUP))
+	return boss_of(node) != null
+
+
+static func _relevance(boss: Node, body: Node3D) -> float:
+	var distance := 0.0 if body == null else arena_distance_to(boss, body)
+	if not is_finite(distance):
+		distance = 1.0e9
+	var score := -distance
+	if is_engaged(boss):
+		score += 1000000.0
+		if distance <= battle_radius(boss):
+			score += 100000.0
+	return score
 
 
 static func display_name(boss: Node) -> String:
@@ -33,16 +66,6 @@ static func display_name(boss: Node) -> String:
 		if not named.is_empty():
 			return named
 	return "Boss"
-
-
-static func _find_group(from: Node, group: StringName) -> Node:
-	var local_world := DamageHit.game_world_of(from)
-	for node: Node in from.get_tree().get_nodes_in_group(group):
-		if node != null and is_instance_valid(node) \
-				and (local_world == null
-					or DamageHit.in_same_world(from, node)):
-			return node
-	return null
 
 
 static func is_engaged(boss: Node) -> bool:

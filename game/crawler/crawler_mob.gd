@@ -4,12 +4,10 @@ extends CharacterBody3D
 ## Shared combatant for crawler siege enemies. Host owns health and motion;
 ## other peers interpolate the compact state the horde publishes.
 ##
-## Unique hunt and fire live in `_tick_ai`. The director only runs that on
-## nearby bodies that still have think budget. Idle roam lives in `_tick_idle`
-## so warm and cold bodies keep walking without planning shots. New kinds
-## should not override `_physics_process` or query the height field every
-## tick. Start a windup with `_begin_attack` so the swarm shares an attack
-## token.
+## Unique fire lives in `_tick_ai`. Field packs share agro, pursue, deagro,
+## and reagro through [CrawlerHunt]. The director only plans shots on nearby
+## bodies that still have think budget. Idle roam lives in `_tick_idle`.
+## Start a windup with `_begin_attack` so the swarm shares an attack token.
 
 signal died
 
@@ -32,6 +30,8 @@ const CLIP_HIT := "HitReact"
 const CLIP_BLEND := 0.12
 const WALK_CLIP_SPEED := 8.0
 const RUN_CLIP_SPEED := 22.0
+## Extra metres around the mesh pill so a grazing laser still counts.
+const HIT_SKIN := 0.22
 
 var mob_id := ""
 var city_id := -1
@@ -41,8 +41,11 @@ var training := false
 var threat_level := 0
 var chase := false
 var ever_chased := false
+var hunt_stance: CrawlerHunt.Stance = CrawlerHunt.Stance.IDLE
 var idle_seconds := 0.0
 var hang_origin := Vector3.ZERO
+var inbound_heading := Vector3.ZERO
+var show_range_tag := false
 var dismissed := false
 var directed_frame := -1
 var director_push := Vector3.ZERO
@@ -99,11 +102,25 @@ var _cached_up := Vector3.ZERO
 var _cached_up_at := Vector3.INF
 var _cached_alt := 0.0
 var _cached_alt_at := Vector3.INF
+var _ground_from := Vector3.INF
+var _ground_hit := Vector3.INF
+var _snap_frame := -1
+var _ground_query: PhysicsRayQueryParameters3D
+var _ground_skip: Array[RID] = []
+var _kind_is_glorb := false
+var _far_view_serial := 0
 var _drift_clock := 0.0
 var _hold_cached := -1.0
+var _hunt_airborne := false
+var _hunt_strafe := Vector3.ZERO
+var _hunt_strafe_left := 0.0
 var _clip_names: Dictionary = {}
 var _last_flash := -1.0
 var _outline_height := 0.0
+## Mesh-local AABB used for the laser/ability pill. Not a physics collider.
+var _hit_local := AABB()
+var _hit_ready := false
+var _stand_height := 0.0
 var _skinned_mats: Array[StandardMaterial3D] = []
 var _skinned_energy: Array[float] = []
 var _skinned_emit: Array[Color] = []
@@ -116,6 +133,8 @@ func configure(id: String, at: Transform3D, level: int, should_chase: bool,
 	threat_level = maxi(level, 0)
 	chase = should_chase
 	ever_chased = should_chase
+	hunt_stance = CrawlerHunt.Stance.AGRO if should_chase \
+		else CrawlerHunt.Stance.IDLE
 	idle_seconds = 0.0
 	_horde = owner
 	city_id = owned_city
@@ -138,6 +157,7 @@ func _ready() -> void:
 	_planet = _find_planet()
 	_apply_threat_stats(false)
 	_build_body()
+	_refresh_hit_bounds()
 	_scale_enemy_outline(_outline_height if _outline_height > 0.01 \
 		else maxf(combat_radius() * 2.0, 1.6))
 	add_to_group(DamageHit.COMBATANT_GROUP)
@@ -147,6 +167,12 @@ func _ready() -> void:
 	if hang_origin == Vector3.ZERO:
 		hang_origin = global_position
 	_patrol_goal = hang_origin
+	_kind_is_glorb = CrawlerRules.is_glorb_kind(wild_kind())
+	if _kind_is_glorb:
+		show_range_tag = true
+		_mount_training_range_tag()
+		set_process(true)
+	_update_clips()
 
 
 func spot(seconds: float) -> void:
@@ -157,28 +183,40 @@ func is_spotted() -> bool:
 	return _spotted_left > 0.0
 
 
+func is_glorb() -> bool:
+	return _kind_is_glorb
+
+
+func _refresh_far_view() -> bool:
+	_far_view_serial += 1
+	return (_far_view_serial & 7) == 0
+
+
 func _process(delta: float) -> void:
 	_flash_left = maxf(_flash_left - delta, 0.0)
 	_spotted_left = maxf(_spotted_left - delta, 0.0)
 	_update_flash()
-	_update_clips()
-	if training:
-		_update_training_range_tag()
-	if _director_lod == CrawlerRules.MOB_LOD_COLD \
-			and _flash_left <= 0.0 and _spotted_left <= 0.0 and not training:
+	var cold := _director_lod == CrawlerRules.MOB_LOD_COLD
+	if not cold or _refresh_far_view():
+		_update_clips()
+		if training or show_range_tag:
+			_update_training_range_tag()
+	if cold and _flash_left <= 0.0 and _spotted_left <= 0.0 \
+			and not training and not show_range_tag and _animator == null:
 		set_process(false)
 
 
 func _physics_process(delta: float) -> void:
 	if not _is_host():
 		_follow_network(delta)
-		if training:
+		if training or show_range_tag:
 			_update_training_range_tag()
 		return
 	if training:
 		_tick_statuses(delta)
 		velocity = Vector3.ZERO
 		chase = false
+		hunt_stance = CrawlerHunt.Stance.IDLE
 		_update_training_range_tag()
 		if _alive:
 			_publish_state(delta)
@@ -186,7 +224,9 @@ func _physics_process(delta: float) -> void:
 	if not _alive:
 		return
 	var clock := Time.get_ticks_usec()
-	var lod := MobSense.lod_at(global_position)
+	var lod := _director_lod
+	if directed_frame != Engine.get_physics_frames() or lod < 0:
+		lod = MobSense.lod_at(global_position)
 	if lod == CrawlerRules.MOB_LOD_COLD:
 		var directed := MobSense.was_directed(self)
 		if directed:
@@ -212,16 +252,24 @@ func _physics_process(delta: float) -> void:
 	var thought := false
 	if _movement_locked():
 		velocity = Vector3.ZERO
-	elif hot and MobSense.take_think(self, chase or is_charmed()):
-		var think_clock := Time.get_ticks_usec()
-		_tick_ai(delta)
-		MobSense.note_think_usec(Time.get_ticks_usec() - think_clock)
-		thought = true
-		var field_slow := MobSense.field_slow(self, global_position)
-		if field_slow < 0.999:
-			velocity *= field_slow
-	elif not MobSense.was_directed(self):
-		_tick_far(delta)
+	else:
+		# Director marks every hot body directed, then only a few get a
+		# think token. Idle walkers used to skip both the planner and the
+		# far tick, so a gray next to the player kept patrolling.
+		if hot and not chase and not is_charmed():
+			var prey := _nearest_player()
+			if prey != null:
+				tick_agro(prey, delta)
+		if hot and MobSense.take_think(self, chase or is_charmed()):
+			var think_clock := Time.get_ticks_usec()
+			_tick_ai(delta)
+			MobSense.note_think_usec(Time.get_ticks_usec() - think_clock)
+			thought = true
+			var field_slow := MobSense.field_slow(self, global_position)
+			if field_slow < 0.999:
+				velocity *= field_slow
+		else:
+			_tick_far(delta)
 	if thought:
 		_respect_flyer_ceiling(delta)
 		_keep_clear_of_terrain(false)
@@ -231,14 +279,19 @@ func _physics_process(delta: float) -> void:
 	if director_push.length_squared() > 0.0001 and not _movement_locked():
 		velocity += director_push
 		director_push = Vector3.ZERO
-	if (thought or lod == CrawlerRules.MOB_LOD_WARM) \
-			and _faces_motion and not _movement_locked():
-		_face_motion(delta)
+	if not _movement_locked() and (
+			thought or lod == CrawlerRules.MOB_LOD_WARM or hunting()):
+		if hunt_stance == CrawlerHunt.Stance.AGRO:
+			_face_combat_player(delta)
+		elif _faces_motion:
+			_face_motion(delta)
 	# Mask is 0, so move_and_slide would not collide. Integrate the same way
 	# far and near so a crowd does not pay a physics-server slide each tick.
 	if velocity.length_squared() > 0.0001:
 		global_position += velocity * delta
-	if thought:
+	# Walkers have no collision mask. Snap every move so a slope cannot
+	# swallow them or leave them walking the cycle in the air.
+	if thought or not flies():
 		_keep_clear_of_terrain(true)
 	_publish_state(delta)
 	MobSense.note_tick(
@@ -250,10 +303,14 @@ func _tick_ai(_delta: float) -> void:
 
 
 func _tick_idle(delta: float) -> void:
+	if _maybe_glorb_inbound(delta):
+		return
 	_patrol(delta)
 
 
 func _tick_far(delta: float) -> void:
+	if _maybe_glorb_inbound(delta):
+		return
 	var player := _nearest_player()
 	if player != null and tick_agro(player, delta):
 		var along := _seek_along(player)
@@ -276,6 +333,8 @@ func _tick_cold(delta: float, steer := true) -> void:
 		return
 	if not steer:
 		return
+	if _maybe_glorb_inbound(delta):
+		return
 	var player := _nearest_player()
 	if player != null and tick_agro(player, delta):
 		var along := _seek_along(player)
@@ -286,15 +345,31 @@ func _tick_cold(delta: float, steer := true) -> void:
 	_tick_idle(delta)
 
 
-func _integrate_director(delta: float) -> void:
+func _integrate_director(delta: float, snap := true) -> void:
 	var frozen := _movement_locked()
 	if director_push.length_squared() > 0.0001 and not frozen:
 		velocity += director_push
 	director_push = Vector3.ZERO
-	if not frozen and not flies():
+	if snap and not frozen and not flies():
 		_director_climb()
 	if not frozen and velocity.length_squared() > 0.0001:
 		global_position += velocity * delta
+	if snap and not frozen and not flies():
+		_keep_clear_of_terrain(true)
+
+
+func _coast_director(delta: float) -> void:
+	var frozen := _movement_locked()
+	if director_push.length_squared() > 0.0001 and not frozen:
+		velocity += director_push
+	director_push = Vector3.ZERO
+	if frozen or velocity.length_squared() < 0.0001:
+		return
+	global_position += velocity * delta
+	if flies():
+		_keep_flyer_loft()
+	elif _director_lod == CrawlerRules.MOB_LOD_HOT:
+		_keep_clear_of_terrain(true)
 
 
 func _movement_locked() -> bool:
@@ -523,6 +598,93 @@ func _exit_tree() -> void:
 	MobSense.note_gone(self)
 
 
+func set_inbound(heading: Vector3) -> void:
+	inbound_heading = heading
+	if inbound_heading.length_squared() > 0.0001:
+		inbound_heading = inbound_heading.normalized()
+	if CrawlerRules.is_glorb_kind(wild_kind()):
+		show_range_tag = true
+		_mount_training_range_tag()
+		set_process(true)
+
+
+func glorb_inbound() -> bool:
+	return _kind_is_glorb and not chase and not hunting() \
+		and inbound_heading.length_squared() > 0.0001
+
+
+func _maybe_glorb_inbound(delta: float) -> bool:
+	if not _kind_is_glorb or chase or hunting():
+		return false
+	if _director_lod == CrawlerRules.MOB_LOD_HOT:
+		var player := _nearest_player()
+		if player != null:
+			tick_agro(player, delta)
+		if chase or hunting():
+			return false
+	if inbound_heading.length_squared() < 0.0001:
+		return false
+	_run_glorb_inbound(delta)
+	return true
+
+
+func _run_glorb_inbound(delta: float) -> void:
+	var up := _up()
+	var heading := inbound_heading - up * inbound_heading.dot(up)
+	if heading.length_squared() < 0.0001:
+		heading = inbound_heading
+	heading = heading.normalized()
+	inbound_heading = heading
+	var lag := CrawlerRules.GLORB_FLYER_INBOUND_LAG \
+		if CrawlerRules.is_glorb_soft_flyer(wild_kind()) else 1.6
+	var floor_rate := CrawlerRules.GLORB_FLYER_INBOUND_FLOOR \
+		if CrawlerRules.is_glorb_soft_flyer(wild_kind()) else 12.0
+	var steer := CrawlerRules.GLORB_FLYER_INBOUND_STEER \
+		if CrawlerRules.is_glorb_soft_flyer(wild_kind()) else 8.0
+	_match_speed(move_speed(), delta, lag, floor_rate)
+	_steer_toward(heading * _cruise, delta, steer)
+	var keep := velocity
+	velocity = heading * maxf(keep.length(), 1.2)
+	_face_motion(delta)
+	velocity = keep
+
+
+func _paint_glorb_white() -> void:
+	for material in _materials:
+		if material == null:
+			continue
+		material.set_shader_parameter(&"albedo", Color.WHITE)
+		material.set_shader_parameter(&"paint_mix", 0.0)
+		material.set_shader_parameter(&"vertex_mix", 0.0)
+		material.set_shader_parameter(&"emit_color", Color(0, 0, 0, 1))
+		material.set_shader_parameter(&"emit_energy", 0.0)
+
+
+func _apply_glorb_ethereal() -> void:
+	_materials.clear()
+	var creature := get_node_or_null("Creature") as Node
+	if creature == null:
+		return
+	for node_variant: Variant in creature.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node_variant as MeshInstance3D
+		if mesh == null:
+			continue
+		var material := ShaderMaterial.new()
+		material.shader = CrawlerGlorb.SKIN_SHADER
+		material.set_shader_parameter(&"rim_strength", 0.0)
+		material.set_shader_parameter(&"flash", 0.0)
+		mesh.material_override = material
+		if mesh.mesh != null:
+			for surface in mesh.mesh.get_surface_count():
+				mesh.set_surface_override_material(surface, null)
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_materials.append(material)
+		_material = material
+		if _visual == null:
+			_visual = mesh
+	_scale_enemy_outline(CrawlerGlorb.height(wild_kind()))
+
+
 func dismiss() -> void:
 	if dismissed:
 		return
@@ -602,9 +764,9 @@ func _mount_training_range_tag() -> void:
 		return
 	var tag := Label3D.new()
 	tag.name = "TrainingRange"
-	tag.pixel_size = 0.012
-	tag.font_size = 28
-	tag.outline_size = 10
+	tag.pixel_size = 0.022
+	tag.font_size = 64
+	tag.outline_size = 18
 	tag.modulate = Color("f4f6ff")
 	tag.outline_modulate = Color(0.04, 0.03, 0.08, 0.92)
 	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -617,12 +779,16 @@ func _update_training_range_tag() -> void:
 	var tag := get_node_or_null("TrainingRange") as Label3D
 	if tag == null:
 		return
-	tag.position = Vector3(0.0, maxf(ground_clearance() * 2.15 + 0.55, 2.2), 0.0)
+	var lift := 3.8 if show_range_tag and not training else 2.2
+	tag.position = Vector3(0.0, maxf(ground_clearance() * 2.8 + 1.2, lift), 0.0)
 	var metres := 0
 	if is_inside_tree():
 		var player := _local_player()
 		if player != null:
 			metres = roundi(global_position.distance_to(player.global_position))
+	if show_range_tag and not training:
+		tag.text = "%d m" % metres
+		return
 	tag.text = "%s\n%d m" % [
 		CrawlerMobs.title(wild_kind(), threat_level),
 		metres,
@@ -655,7 +821,13 @@ func flyer_floor() -> float:
 
 
 func ground_clearance() -> float:
-	return maxf(combat_radius(), 0.55)
+	if _kind_is_glorb and not flies():
+		return CrawlerGlorb.height(wild_kind()) * 0.5
+	if _stand_height > 0.2:
+		return _stand_height * 0.5
+	if has_method("body_height"):
+		return maxf(float(call("body_height")) * 0.5, 0.55)
+	return 0.85
 
 
 func mesh_surface(at := Vector3.INF) -> Vector3:
@@ -670,6 +842,10 @@ func mesh_surface(at := Vector3.INF) -> Vector3:
 
 func ground_surface(at := Vector3.INF) -> Vector3:
 	var point := at if at.is_finite() else global_position
+	if not _should_probe_ground():
+		var mesh := mesh_surface(point)
+		if mesh.is_finite():
+			return mesh
 	var hit := _probe_ground(point)
 	if hit.is_finite():
 		return hit
@@ -677,16 +853,25 @@ func ground_surface(at := Vector3.INF) -> Vector3:
 
 
 func snap_to_ground() -> void:
+	var frame := Engine.get_physics_frames()
+	if frame == _snap_frame \
+			and global_position.distance_squared_to(_cached_alt_at) < 0.04:
+		return
 	var surface := ground_surface()
 	if not surface.is_finite():
 		return
 	var up := _up()
 	if _planet != null:
 		up = _planet.up_at(surface)
-	global_position = surface + up * ground_clearance()
+	# Only the radial. Assigning `surface + up * clearance` rewinds a walker
+	# when the probe cache still holds last frame's hit, which is why a
+	# gloam flock played the run cycle without closing.
+	var height := (global_position - surface).dot(up)
+	global_position += up * (ground_clearance() - height)
 	velocity -= up * velocity.dot(up)
 	_cached_alt = ground_clearance()
 	_cached_alt_at = global_position
+	_snap_frame = frame
 
 
 func surface_altitude(at := Vector3.INF) -> float:
@@ -706,7 +891,22 @@ func surface_altitude(at := Vector3.INF) -> float:
 	return altitude
 
 
+func _should_probe_ground() -> bool:
+	return _director_lod != CrawlerRules.MOB_LOD_WARM \
+		and _director_lod != CrawlerRules.MOB_LOD_COLD
+
+
 func _probe_ground(from: Vector3) -> Vector3:
+	# 12 cm matches one walk frame at field speed, so a runner does not
+	# recast every physics tick. Shared cells reuse a neighbour's hit in
+	# a pile-up without changing the snap plane those bodies already share.
+	if from.distance_squared_to(_ground_from) <= 0.0144 and _ground_hit.is_finite():
+		return _ground_hit
+	var shared := MobSense.peek_ground(from)
+	if shared.is_finite():
+		_ground_from = from
+		_ground_hit = shared
+		return shared
 	if not is_inside_tree() or get_world_3d() == null:
 		return Vector3.INF
 	var space := get_world_3d().direct_space_state
@@ -715,39 +915,136 @@ func _probe_ground(from: Vector3) -> Vector3:
 	var up := _up()
 	if _planet != null:
 		up = _planet.up_at(from)
-	# Start just above the body. An 8 m start hits roofs, trees, and
-	# battlements first and snaps walkers into the air.
+	var skip: Array[RID] = []
+	_append_collider_rids(self, skip)
+	if _ground_query == null:
+		_ground_query = PhysicsRayQueryParameters3D.new()
+		_ground_query.collide_with_areas = false
+	var at := Vector3.INF
+	var hint := mesh_surface(from)
+	if _planet != null and hint.is_finite():
+		at = _probe_hint_band(space, from, hint, up, skip)
+	else:
+		at = _probe_near_body(space, from, up, skip)
+	if not at.is_finite():
+		return Vector3.INF
+	_ground_from = from
+	_ground_hit = at
+	MobSense.store_ground(from, at)
+	return at
+
+
+func _probe_hint_band(
+		space: PhysicsDirectSpaceState3D, from: Vector3, hint: Vector3,
+		up: Vector3, skip: Array[RID]) -> Vector3:
+	# The band-limited mesh is the hill the player walks. Cast from above
+	# that hint so a walker already inside the slope still sees the top.
+	# Hits far above the hint are roofs and trees; skip those.
+	var high := from
+	if (hint - from).dot(up) > 0.0:
+		high = hint
+	var above := maxf(ground_clearance() + 2.6, 3.4)
+	if flies():
+		above = maxf(8.0, flyer_floor() + 2.0)
+	var start := high + up * above
+	var stop := hint - up * 8.0
+	var tries := 0
+	while tries < 8:
+		tries += 1
+		_ground_query.from = start
+		_ground_query.to = stop
+		_ground_query.exclude = skip
+		var hit := space.intersect_ray(_ground_query)
+		if hit.is_empty():
+			return hint
+		var collider := hit.get("collider") as Object
+		if _ignore_ground_collider(collider):
+			if collider is CollisionObject3D:
+				var body := collider as CollisionObject3D
+				var rid := body.get_rid()
+				if rid.is_valid() and not skip.has(rid):
+					skip.append(rid)
+			continue
+		var at: Vector3 = hit.get("position", Vector3.INF)
+		if not at.is_finite():
+			return hint
+		if not flies() and (at - hint).dot(up) > 2.4:
+			start = at - up * 0.18
+			continue
+		return at
+	return hint
+
+
+func _probe_near_body(
+		space: PhysicsDirectSpaceState3D, from: Vector3, up: Vector3,
+		skip: Array[RID]) -> Vector3:
+	# No planet mesh to compare. Start just above the body so a roof in
+	# the siege pad test is skipped and the floor under it is kept.
 	var probe := maxf(ground_clearance() + 0.55, 1.5)
 	if flies():
 		probe = maxf(8.0, flyer_floor() + 2.0)
-	var skip: Array[RID] = []
-	skip.append(get_rid())
 	var start := from + up * probe
 	var stop := from - up * 80.0
 	var tries := 0
-	while tries < 6:
+	while tries < 8:
 		tries += 1
-		var query := PhysicsRayQueryParameters3D.create(start, stop)
-		query.exclude = skip
-		query.collide_with_areas = false
-		var hit := space.intersect_ray(query)
+		_ground_query.from = start
+		_ground_query.to = stop
+		_ground_query.exclude = skip
+		var hit := space.intersect_ray(_ground_query)
 		if hit.is_empty():
 			return Vector3.INF
 		var collider := hit.get("collider") as Object
-		if collider is CharacterBody3D:
-			var body := collider as CollisionObject3D
-			skip.append(body.get_rid())
+		if _ignore_ground_collider(collider):
+			if collider is CollisionObject3D:
+				var body := collider as CollisionObject3D
+				var rid := body.get_rid()
+				if rid.is_valid() and not skip.has(rid):
+					skip.append(rid)
 			continue
 		var at: Vector3 = hit.get("position", Vector3.INF)
 		if not at.is_finite():
 			return Vector3.INF
-		# Roofs, branches, and ceilings sit on the same body as the floor.
-		# Skip hits above the walker and keep casting down.
 		if not flies() and (at - from).dot(up) > 0.4:
 			start = at - up * 0.18
 			continue
 		return at
 	return Vector3.INF
+
+
+func _append_collider_rids(node: Node, skip: Array[RID]) -> void:
+	if node == self:
+		if _ground_skip.is_empty():
+			_collect_collider_rids(self, _ground_skip)
+		for rid: RID in _ground_skip:
+			if rid.is_valid() and not skip.has(rid):
+				skip.append(rid)
+		return
+	_collect_collider_rids(node, skip)
+
+
+func _collect_collider_rids(node: Node, skip: Array[RID]) -> void:
+	if node is CollisionObject3D:
+		var rid := (node as CollisionObject3D).get_rid()
+		if rid.is_valid() and not skip.has(rid):
+			skip.append(rid)
+	if node == null:
+		return
+	for child: Node in node.get_children():
+		_collect_collider_rids(child, skip)
+
+
+func _ignore_ground_collider(collider: Object) -> bool:
+	if collider is CharacterBody3D:
+		return true
+	var walk := collider as Node
+	while walk != null:
+		if walk is CrawlerMob or walk is OnlinePlayer:
+			return true
+		if walk.is_in_group(DamageHit.COMBATANT_GROUP):
+			return true
+		walk = walk.get_parent()
+	return false
 
 
 func _clamp_below_ceiling(at: Vector3) -> Vector3:
@@ -850,10 +1147,15 @@ func combat_display_name() -> String:
 
 
 func combat_position() -> Vector3:
+	if _hit_ready:
+		return to_global(_hit_local.position + _hit_local.size * 0.5)
 	return global_position + _up() * 0.6
 
 
 func combat_radius() -> float:
+	if _hit_ready:
+		var pill := _pill_from_local(_hit_local)
+		return maxf(float(pill.get("radius", 0.7)), 0.22)
 	return 0.7
 
 
@@ -864,6 +1166,9 @@ func recycle_to(at: Vector3) -> void:
 	director_push = Vector3.ZERO
 	director_sep = Vector3.ZERO
 	_director_lod = -1
+	_ground_from = Vector3.INF
+	_ground_hit = Vector3.INF
+	_snap_frame = -1
 	if at.is_finite():
 		hang_origin = at
 		_patrol_goal = at
@@ -878,20 +1183,22 @@ func set_director_lod(lod: int) -> void:
 	_director_lod = lod
 	set_physics_process(lod == CrawlerRules.MOB_LOD_HOT)
 	set_process(lod != CrawlerRules.MOB_LOD_COLD \
-		or _flash_left > 0.0 or _spotted_left > 0.0)
+		or _flash_left > 0.0 or _spotted_left > 0.0 \
+		or training or show_range_tag or _animator != null)
 
 
 func director_cold_tick(delta: float, step: float, steer: bool, player: Node3D,
 		in_city := false) -> void:
 	var clock := Time.get_ticks_usec()
+	director_push = director_sep
 	if steer:
 		director_far_steer(step, player, in_city)
-	director_push = director_sep
-	_integrate_director(delta)
-	if step > 0.0:
+		_integrate_director(delta, true)
 		_attack_left = maxf(_attack_left - step, 0.0)
 		_tick_statuses(step)
 		_publish_state(delta)
+	else:
+		_coast_director(delta)
 	MobSense.note_tick(
 		self, Time.get_ticks_usec() - clock, CrawlerRules.MOB_LOD_COLD, false, _attacking())
 
@@ -901,13 +1208,18 @@ func director_warm_tick(delta: float, step: float, steer: bool, player: Node3D,
 	var clock := Time.get_ticks_usec()
 	_attack_left = maxf(_attack_left - delta, 0.0)
 	_tick_statuses(delta)
+	director_push = director_sep
 	if steer:
 		director_far_steer(step, player, in_city)
-	director_push = director_sep
-	if _faces_motion and not _movement_locked():
-		_face_motion(delta)
-	_integrate_director(delta)
-	_publish_state(delta)
+		if not _movement_locked():
+			if hunt_stance == CrawlerHunt.Stance.AGRO:
+				_face_combat_player(delta)
+			elif _faces_motion:
+				_face_motion(delta)
+		_integrate_director(delta, true)
+		_publish_state(delta)
+	else:
+		_coast_director(delta)
 	MobSense.note_tick(
 		self, Time.get_ticks_usec() - clock, CrawlerRules.MOB_LOD_WARM, false, _attacking())
 
@@ -917,11 +1229,18 @@ func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
 		velocity = Vector3.ZERO
 		return
 	var step := maxf(delta, 0.0)
+	if _maybe_glorb_inbound(step):
+		if flies():
+			_director_climb()
+		return
 	if player != null and _apply_agro(player, step, in_city):
-		var along := _seek_along(player)
-		if along.length_squared() >= 0.04:
-			_match_speed(move_speed(), step, 1.2, 16.0)
-			_steer_toward(along.normalized() * _cruise, step, 10.0)
+		if CrawlerHunt.uses_hunt(wild_kind()):
+			_tick_hunt_motion(player, step)
+		else:
+			var along := _seek_along(player)
+			if along.length_squared() >= 0.04:
+				_match_speed(move_speed(), step, 1.2, 16.0)
+				_steer_toward(along.normalized() * _cruise, step, 10.0)
 	else:
 		_tick_idle(step)
 	if flies():
@@ -988,17 +1307,49 @@ func _track_rank() -> int:
 
 
 func _track_hold_min() -> float:
+	if CrawlerHunt.uses_hunt(wild_kind()):
+		return CrawlerHunt.hold_min(wild_kind())
 	return CrawlerMobs.number(
 		wild_kind(), _track_rank(), "standoff_min", CrawlerRules.RANGER_STANDOFF_MIN)
 
 
 func _track_hold_max() -> float:
+	if CrawlerHunt.uses_hunt(wild_kind()):
+		return CrawlerHunt.hold_max(wild_kind())
 	return CrawlerMobs.number(
 		wild_kind(), _track_rank(), "standoff_max",
 		CrawlerRules.RANGER_STANDOFF_MAX)
 
 
+func _flyer_match_lag() -> float:
+	if CrawlerRules.is_glorb_soft_flyer(wild_kind()):
+		return CrawlerRules.GLORB_FLYER_MATCH_LAG
+	return CrawlerRules.ranger_match_lag(_track_rank())
+
+
+func _flyer_match_floor() -> float:
+	if CrawlerRules.is_glorb_soft_flyer(wild_kind()):
+		return CrawlerRules.GLORB_FLYER_MATCH_FLOOR
+	return CrawlerRules.ranger_match_floor(_track_rank())
+
+
+func _flyer_match_lock() -> float:
+	if CrawlerRules.is_glorb_soft_flyer(wild_kind()):
+		return CrawlerRules.GLORB_FLYER_MATCH_LOCK
+	return CrawlerRules.ranger_match_lock(_track_rank())
+
+
+func _flyer_close_steer() -> float:
+	if CrawlerRules.is_glorb_soft_flyer(wild_kind()):
+		return CrawlerRules.GLORB_FLYER_CLOSE_STEER
+	return 15.0
+
+
 func _flyer_track(player: Node, delta: float) -> void:
+	if CrawlerRules.is_glorb_soft_flyer(wild_kind()):
+		_ring_track(player, delta)
+		_keep_off_crown(player)
+		return
 	var at := _combat_position_of(player)
 	var distance := global_position.distance_to(at)
 	var player_speed := _player_speed(player)
@@ -1029,6 +1380,8 @@ func _flat_gap(player: Node) -> float:
 
 
 func _hover_hold(at: Vector3, hold: float) -> Vector3:
+	if CrawlerRules.is_glorb_soft_flyer(wild_kind()):
+		return _ring_hold(at, hold)
 	var up := _loft_axis()
 	var reach := maxf(hold, CrawlerRules.RANGER_CROWN_CLEAR)
 	var along := global_position - at
@@ -1053,6 +1406,92 @@ func _hover_hold(at: Vector3, hold: float) -> Vector3:
 	if out.length_squared() < 0.0001:
 		return desired
 	return _clamp_flyer_band(at + out.normalized() * reach + up * rise)
+
+
+func _ring_seed() -> float:
+	return (float(hash(mob_id) & 0xffff) / 65535.0) * TAU
+
+
+func _ring_spin() -> float:
+	var sign := -1.0 if ((hash(mob_id) >> 3) & 1) == 0 else 1.0
+	return CrawlerRules.GLORB_RING_STRAFE * sign
+
+
+func _ring_angle() -> float:
+	return _ring_seed() + _drift_clock * _ring_spin()
+
+
+func _ring_axis(up: Vector3) -> Vector3:
+	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
+	var east := lift.cross(Vector3.RIGHT)
+	if east.length_squared() < 0.01:
+		east = lift.cross(Vector3.FORWARD)
+	if east.length_squared() < 0.0001:
+		return Vector3.FORWARD
+	return east.normalized()
+
+
+func _ring_dir(up: Vector3) -> Vector3:
+	var lift := up.normalized() if up.length_squared() > 0.0001 else Vector3.UP
+	var east := _ring_axis(lift)
+	var north := lift.cross(east)
+	if north.length_squared() < 0.0001:
+		return east
+	north = north.normalized()
+	var yaw := _ring_angle()
+	return east * cos(yaw) + north * sin(yaw)
+
+
+func _ring_hold(at: Vector3, hold: float) -> Vector3:
+	var up := _loft_axis()
+	var reach := maxf(hold, CrawlerHunt.CROWN_CLEAR)
+	var bias := _ring_dir(up)
+	if bias.length_squared() < 0.0001:
+		bias = Vector3.FORWARD
+	return _clamp_flyer_band(at + bias.normalized() * reach)
+
+
+func _ring_track(player: Node, delta: float) -> void:
+	var step := maxf(delta, 0.0)
+	_drift_clock += step
+	var at := _combat_position_of(player)
+	var hold := lerpf(_track_hold_min(), _track_hold_max(), _hold_share())
+	var desired := _ring_hold(at, hold)
+	var gap := global_position.distance_to(desired)
+	if gap <= 5.5:
+		_ring_ride(player, at, desired, hold, step)
+		return
+	_ring_close(player, desired, gap, step)
+
+
+func _ring_close(player: Node, desired: Vector3, gap: float, delta: float) -> void:
+	var player_speed := _player_speed(player)
+	var extra := clampf(gap * 0.42, 6.0, CrawlerRules.GLORB_RING_CATCH)
+	var wanted := maxf(player_speed + extra, move_speed())
+	_match_speed(wanted, delta, _flyer_match_lag(), _flyer_match_floor())
+	var intercept := desired + _player_velocity(player) * 0.22
+	var along := intercept - global_position
+	var up := _loft_axis()
+	along -= up * along.dot(up) * 0.15
+	var heading := along.normalized() if along.length_squared() > 0.04 \
+		else _ring_dir(up)
+	_steer_toward(heading * _cruise, delta, 12.0)
+
+
+func _ring_ride(player: Node, at: Vector3, desired: Vector3, hold: float, delta: float) -> void:
+	var frame := _player_velocity(player)
+	_match_speed(frame.length(), delta, _flyer_match_lag(), _flyer_match_floor())
+	var up := _loft_axis()
+	var radial := desired - at
+	radial -= up * radial.dot(up)
+	var tangent := Vector3.ZERO
+	if radial.length_squared() > 0.04:
+		tangent = up.cross(radial.normalized()) * _ring_spin() * maxf(hold, 1.0)
+	var spring := (desired - global_position) * 2.6
+	var ride := frame + tangent + spring
+	velocity = velocity.lerp(
+		ride, clampf(CrawlerRules.GLORB_RING_LOCK * delta, 0.0, 1.0))
+	_push_off_terrain(player, desired)
 
 
 func _is_matched(player: Node, player_speed: float, gap: float, hold: float) -> bool:
@@ -1084,8 +1523,8 @@ func _close_on(
 		move_speed())
 	_match_speed(
 		wanted_speed, delta,
-		CrawlerRules.ranger_match_lag(rank),
-		CrawlerRules.ranger_match_floor(rank))
+		_flyer_match_lag(),
+		_flyer_match_floor())
 	var along := desired - global_position
 	var to_player := _combat_position_of(player) - global_position
 	var up := _loft_axis()
@@ -1098,7 +1537,7 @@ func _close_on(
 			along -= up * along.dot(up)
 	var heading := along.normalized() if along.length_squared() > 0.04 \
 		else _orbit_bias()
-	_steer_toward(heading * _cruise, delta, 15.0)
+	_steer_toward(heading * _cruise, delta, _flyer_close_steer())
 
 
 func _drift_in_frame(player: Node, desired: Vector3, delta: float) -> void:
@@ -1107,8 +1546,8 @@ func _drift_in_frame(player: Node, desired: Vector3, delta: float) -> void:
 	_match_speed(
 		CrawlerRules.ranger_chase_speed(player_speed, rank, false),
 		delta,
-		CrawlerRules.ranger_match_lag(rank),
-		CrawlerRules.ranger_match_floor(rank))
+		_flyer_match_lag(),
+		_flyer_match_floor())
 	_drift_clock += delta
 	var frame := _player_velocity(player)
 	var up := _up()
@@ -1124,13 +1563,11 @@ func _drift_in_frame(player: Node, desired: Vector3, delta: float) -> void:
 		side = up.cross(Vector3.FORWARD)
 	side = side.normalized()
 	var sway := maxf(_cruise * 0.09, 11.0)
-	var phase := _hold_share() * TAU
-	var bob := ahead * sin(_drift_clock * 1.28 + phase) * sway \
-		+ side * sin(_drift_clock * 0.84 + phase * 1.7) * (sway * 1.15)
+	var bob := _hunt_strafe_offset(player, ahead, side, up, sway, delta)
 	var spring := (desired - global_position) * 1.15
 	var ride := frame + bob + spring
 	velocity = velocity.lerp(
-		ride, clampf(CrawlerRules.ranger_match_lock(rank) * delta, 0.0, 1.0))
+		ride, clampf(_flyer_match_lock() * delta, 0.0, 1.0))
 	_push_off_terrain(player, desired)
 
 
@@ -1159,7 +1596,8 @@ func _keep_off_crown(player: Node) -> void:
 	var along := global_position - at
 	var rise := along.dot(up)
 	var flat := along - up * rise
-	var clear := CrawlerRules.RANGER_CROWN_CLEAR
+	var clear := CrawlerHunt.CROWN_CLEAR if CrawlerHunt.uses_hunt(wild_kind()) \
+		else CrawlerRules.RANGER_CROWN_CLEAR
 	if flat.length() >= clear:
 		return
 	var out := flat
@@ -1180,9 +1618,16 @@ func _guess_altitude() -> float:
 	if not _cached_alt_at.is_finite() \
 			or global_position.distance_squared_to(_cached_alt_at) > 64.0:
 		return surface_altitude()
-	if global_position.distance_squared_to(_cached_alt_at) < 0.04:
-		return _cached_alt
-	return _cached_alt + (global_position - _cached_alt_at).dot(_up())
+	var guessed := _cached_alt
+	if global_position.distance_squared_to(_cached_alt_at) >= 0.04:
+		guessed = _cached_alt + (global_position - _cached_alt_at).dot(_up())
+	if not flies() and _snap_frame != Engine.get_physics_frames():
+		var mesh := mesh_surface()
+		if mesh.is_finite():
+			var mesh_alt := (global_position - mesh).dot(_up())
+			if absf(mesh_alt - guessed) > 0.6:
+				return surface_altitude()
+	return guessed
 
 
 func _keep_flyer_loft() -> void:
@@ -1227,9 +1672,125 @@ func warp_to(at: Vector3) -> void:
 
 
 func combat_aabb() -> AABB:
+	if _hit_ready:
+		var a := to_global(_hit_local.position)
+		var b := to_global(_hit_local.end)
+		var lo := Vector3(minf(a.x, b.x), minf(a.y, b.y), minf(a.z, b.z))
+		var hi := Vector3(maxf(a.x, b.x), maxf(a.y, b.y), maxf(a.z, b.z))
+		return AABB(lo, hi - lo).grow(HIT_SKIN)
 	var half := combat_radius()
 	var at := combat_position()
 	return AABB(at - Vector3.ONE * half, Vector3.ONE * (half * 2.0))
+
+
+func combat_capsule() -> Dictionary:
+	if _hit_ready:
+		return _pill_from_local(_hit_local)
+	var at := combat_position()
+	return {"a": at, "b": at, "radius": combat_radius()}
+
+
+func _refresh_hit_bounds() -> void:
+	if not is_inside_tree():
+		_hit_ready = false
+		return
+	var root := find_child("Creature", false, false) as Node3D
+	if root == null:
+		_hit_ready = false
+		return
+	var bounds := _posed_bounds(root, self)
+	if bounds.size.length() < 0.08:
+		_hit_ready = false
+		return
+	_hit_local = bounds
+	_hit_ready = true
+
+
+func _posed_bounds(root: Node3D, space: Node3D = null, grow := 0.18) -> AABB:
+	if root == null or not root.is_inside_tree():
+		return AABB()
+	var frame := space if space != null else self
+	var inverse := frame.global_transform.affine_inverse()
+	var bounds := AABB()
+	var started := false
+	for node_variant: Variant in root.find_children("*", "Skeleton3D", true, false):
+		var skeleton := node_variant as Skeleton3D
+		if skeleton == null:
+			continue
+		var box := _skeleton_aabb(skeleton, grow)
+		if box.size.length() < 0.05:
+			continue
+		box = inverse * skeleton.global_transform * box
+		if started:
+			bounds = bounds.merge(box)
+		else:
+			bounds = box
+			started = true
+	if started:
+		return bounds
+	for node_variant: Variant in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := node_variant as MeshInstance3D
+		if mesh == null or mesh.mesh == null or _skips_hit_mesh(mesh):
+			continue
+		var box := inverse * mesh.global_transform * mesh.get_aabb()
+		if started:
+			bounds = bounds.merge(box)
+		else:
+			bounds = box
+			started = true
+	return bounds
+
+
+func _skeleton_aabb(skeleton: Skeleton3D, grow := 0.18) -> AABB:
+	var bounds := AABB()
+	var started := false
+	for bone in skeleton.get_bone_count():
+		var at := skeleton.get_bone_global_pose(bone).origin
+		if started:
+			bounds = bounds.expand(at)
+		else:
+			bounds = AABB(at, Vector3.ZERO)
+			started = true
+	if started:
+		return bounds.grow(grow) if grow > 0.0 else bounds
+	return AABB()
+
+
+func _skips_hit_mesh(mesh: Node) -> bool:
+	var folded := str(mesh.name).to_lower()
+	return folded.contains("energy") or folded.contains("beam") \
+		or folded.contains("glow") or folded.contains("vfx") \
+		or folded.contains("shock")
+
+
+func _pill_from_local(box: AABB) -> Dictionary:
+	var center := box.position + box.size * 0.5
+	var size := box.size
+	var axis := 0
+	if size.y >= size.x and size.y >= size.z:
+		axis = 1
+	elif size.z >= size.x:
+		axis = 2
+	var half_long := size[axis] * 0.5
+	var cross := size.x
+	if axis == 0:
+		cross = maxf(size.y, size.z)
+	elif axis == 1:
+		cross = maxf(size.x, size.z)
+	else:
+		cross = maxf(size.x, size.y)
+	var radius := maxf(cross * 0.5, 0.18) + HIT_SKIN
+	var span := half_long - radius
+	var step := Vector3.ZERO
+	step[axis] = 1.0
+	var a := center
+	var b := center
+	if span >= 0.08:
+		a = center - step * span
+		b = center + step * span
+	else:
+		radius = maxf(half_long, radius)
+	return {"a": to_global(a), "b": to_global(b), "radius": radius}
 
 
 func health() -> float:
@@ -1418,15 +1979,12 @@ func tick_agro(player: Node3D, delta: float) -> bool:
 func _tree_boss_shields(player: Node) -> bool:
 	if player == null or not player.is_inside_tree():
 		return false
-	for node_variant: Variant in player.get_tree().get_nodes_in_group(&"crawler_boss"):
-		var boss := node_variant as Node
-		if boss != null and boss.has_method(&"protects") \
-				and bool(boss.call(&"protects", player)):
-			return true
-	return false
+	return MobSense.boss_protects(player)
 
 
 func _apply_agro(player: Node3D, delta: float, in_city: bool) -> bool:
+	if CrawlerHunt.uses_hunt(wild_kind()):
+		return _apply_hunt(player, delta, in_city)
 	_pull_row()
 	var blocked := in_city or MobSense.player_on_spawn_pad(player)
 	var gap := INF
@@ -1451,6 +2009,336 @@ func _apply_agro(player: Node3D, delta: float, in_city: bool) -> bool:
 		if was_chasing and not chase:
 			hang_origin = global_position
 	return chase
+
+
+func hunting() -> bool:
+	return CrawlerHunt.hunting(hunt_stance)
+
+
+func _apply_hunt(player: Node3D, delta: float, in_city: bool) -> bool:
+	_pull_row()
+	var blocked := in_city or MobSense.player_on_spawn_pad(player)
+	var gap := INF
+	if player != null:
+		gap = global_position.distance_to(player.global_position)
+	var was_chasing := chase
+	var was := hunt_stance
+	var drop := _hunt_drop()
+	var rewake := _hunt_rewake()
+	if player == null or blocked:
+		hunt_stance = CrawlerHunt.Stance.DEAGRO if ever_chased \
+			else CrawlerHunt.Stance.IDLE
+	else:
+		if chase and hunt_stance == CrawlerHunt.Stance.IDLE:
+			hunt_stance = CrawlerHunt.Stance.AGRO
+		match hunt_stance:
+			CrawlerHunt.Stance.IDLE:
+				if _should_first_agro(gap):
+					hunt_stance = CrawlerHunt.Stance.AGRO
+			CrawlerHunt.Stance.DEAGRO:
+				if gap <= rewake:
+					hunt_stance = CrawlerHunt.Stance.REAGRO
+			CrawlerHunt.Stance.REAGRO:
+				if gap > drop:
+					hunt_stance = CrawlerHunt.Stance.DEAGRO
+				else:
+					hunt_stance = CrawlerHunt.Stance.AGRO
+			CrawlerHunt.Stance.AGRO:
+				if gap > drop:
+					hunt_stance = CrawlerHunt.Stance.DEAGRO
+				elif _should_pursue(player, gap):
+					hunt_stance = CrawlerHunt.Stance.PURSUE
+			CrawlerHunt.Stance.PURSUE:
+				if gap > drop:
+					hunt_stance = CrawlerHunt.Stance.DEAGRO
+				elif _pursue_settled(player, gap):
+					hunt_stance = CrawlerHunt.Stance.AGRO
+		if hunt_stance == CrawlerHunt.Stance.REAGRO:
+			hunt_stance = CrawlerHunt.Stance.AGRO if gap <= drop \
+				else CrawlerHunt.Stance.DEAGRO
+		if hunt_stance == CrawlerHunt.Stance.AGRO and _should_pursue(player, gap):
+			hunt_stance = CrawlerHunt.Stance.PURSUE
+	chase = CrawlerHunt.hunting(hunt_stance)
+	if chase:
+		ever_chased = true
+		idle_seconds = 0.0
+		if not was_chasing or was != CrawlerHunt.Stance.AGRO \
+				and hunt_stance == CrawlerHunt.Stance.AGRO:
+			if hunt_stance == CrawlerHunt.Stance.AGRO:
+				_on_agro_started()
+	elif ever_chased:
+		idle_seconds += maxf(delta, 0.0)
+		if was_chasing and not chase:
+			hang_origin = global_position
+			_hunt_set_air(false)
+			if CrawlerRules.is_glorb_kind(wild_kind()):
+				dismiss()
+	return chase
+
+
+func _hunt_drop() -> float:
+	_pull_row()
+	if CrawlerRules.is_glorb_kind(wild_kind()):
+		return CrawlerRules.GLORB_DROP
+	return CrawlerHunt.drop_gap(wild_kind(), _row_deagro)
+
+
+func _hunt_wake() -> float:
+	_pull_row()
+	return CrawlerHunt.wake_gap(wild_kind(), _row_agro)
+
+
+func _hunt_rewake() -> float:
+	_pull_row()
+	return CrawlerHunt.rewake_gap(wild_kind(), _row_agro)
+
+
+func _should_first_agro(gap: float) -> bool:
+	if _row_agro_mode == "calm":
+		return false
+	if CrawlerRules.is_glorb_kind(wild_kind()):
+		return gap <= CrawlerRules.GLORB_AGRO
+	if CrawlerHunt.role(wild_kind()) == CrawlerHunt.Role.FLY_RANGE \
+			or wild_kind() == "bastion":
+		return gap <= _hunt_wake()
+	if CrawlerRules.field_ring_of(gap) == CrawlerRules.FIELD_RING_CLOSE:
+		return true
+	return gap <= maxf(_hunt_wake(), CrawlerHunt.FIRST_AGRO)
+
+
+func _should_pursue(player: Node, gap: float) -> bool:
+	var kind := wild_kind()
+	if kind == CrawlerGlorb.KIND_SPIDER:
+		return gap > CrawlerGlorbSpider.SHOT_RANGE
+	if CrawlerRules.is_glorb_kind(kind):
+		if CrawlerHunt.role(kind) == CrawlerHunt.Role.FLY_RANGE:
+			return gap < CrawlerHunt.shot_min(kind, threat_level) \
+				or gap > CrawlerHunt.shot_max(kind, threat_level) \
+				or _player_fleeing(player)
+		return _player_fleeing(player)
+	match CrawlerHunt.role(kind):
+		CrawlerHunt.Role.MELEE:
+			return _player_fleeing(player)
+		CrawlerHunt.Role.FLY_RANGE:
+			return gap < CrawlerHunt.shot_min(kind, threat_level) \
+				or gap > CrawlerHunt.shot_max(kind, threat_level)
+		CrawlerHunt.Role.GROUND_RANGE:
+			return kind == "rhino" and _player_fleeing(player)
+	return false
+
+
+func _pursue_settled(player: Node, gap: float) -> bool:
+	var kind := wild_kind()
+	match CrawlerHunt.role(kind):
+		CrawlerHunt.Role.MELEE:
+			return not _player_fleeing(player) \
+				and gap <= CrawlerHunt.PURSUIT_LEAD + 4.0 \
+				and (not _hunt_airborne or _near_hunt_perch(player))
+		CrawlerHunt.Role.FLY_RANGE:
+			return gap >= CrawlerHunt.shot_min(kind, threat_level) \
+				and gap <= CrawlerHunt.shot_max(kind, threat_level)
+		CrawlerHunt.Role.GROUND_RANGE:
+			if kind == CrawlerGlorb.KIND_SPIDER:
+				return gap <= CrawlerGlorbSpider.STOP_RANGE
+			return kind == "rhino" and not _player_fleeing(player) \
+				and gap <= CrawlerHunt.hold_max(kind)
+	return true
+
+
+func _player_fleeing(player: Node) -> bool:
+	if player == null:
+		return false
+	var away := _combat_position_of(player) - global_position
+	var up := _up()
+	away -= up * away.dot(up)
+	var motion := _player_velocity(player)
+	motion -= up * motion.dot(up)
+	if away.length_squared() < 0.04:
+		return motion.length() > move_speed() + 1.0
+	var recede := motion.dot(away.normalized())
+	return recede > move_speed() + 1.0
+
+
+func _near_hunt_perch(player: Node) -> bool:
+	return global_position.distance_to(_hunt_ahead_perch(player)) \
+		<= CrawlerHunt.MELEE_LAND
+
+
+func _tick_hunt_motion(player: Node, delta: float) -> void:
+	if player == null:
+		return
+	match CrawlerHunt.role(wild_kind()):
+		CrawlerHunt.Role.MELEE:
+			if hunt_stance == CrawlerHunt.Stance.PURSUE:
+				_hunt_cut_ahead(player, delta)
+			else:
+				_hunt_charge(player, delta)
+		CrawlerHunt.Role.FLY_RANGE:
+			_flyer_track(player, delta)
+		CrawlerHunt.Role.GROUND_RANGE:
+			if hunt_stance == CrawlerHunt.Stance.PURSUE and wild_kind() == "rhino":
+				_hunt_ground_catchup(player, delta)
+			else:
+				_hunt_ground_hold(player, delta)
+
+
+func _hunt_charge(player: Node, delta: float) -> void:
+	_hunt_set_air(false)
+	var at := _combat_position_of(player)
+	var along := at - global_position
+	var up := _up()
+	if not flies():
+		along -= up * along.dot(up)
+	_match_speed(move_speed(), delta, 0.45, 12.0)
+	if along.length_squared() > 0.0001:
+		_steer_toward(along.normalized() * _cruise, delta, 14.0)
+
+
+func _hunt_cut_ahead(player: Node, delta: float) -> void:
+	var perch := _hunt_ahead_perch(player)
+	var loft := _need_hunt_lift(perch)
+	if loft:
+		_hunt_set_air(true)
+	var wanted := CrawlerHunt.pursuit_speed(
+		wild_kind(), _player_speed(player), move_speed())
+	_match_speed(wanted, delta, 1.8, 22.0)
+	var along := perch - global_position
+	if along.length_squared() > 0.0001:
+		_steer_toward(along.normalized() * _cruise, delta, 13.0)
+	if global_position.distance_to(perch) <= CrawlerHunt.MELEE_LAND:
+		_hunt_set_air(false)
+
+
+func _need_hunt_lift(perch: Vector3) -> bool:
+	return (perch - global_position).dot(_up()) > 1.2
+
+
+func _hunt_ahead_perch(player: Node) -> Vector3:
+	var at := _combat_position_of(player)
+	var up := _loft_axis()
+	var look := _player_velocity(player)
+	look -= up * look.dot(up)
+	if look.length_squared() < 0.36 and player != null \
+			and player.has_method(&"look_direction"):
+		var facing: Variant = player.call(&"look_direction")
+		if facing is Vector3:
+			look = (facing as Vector3)
+			look -= up * look.dot(up)
+	if look.length_squared() < 0.0001:
+		look = at - global_position
+		look -= up * look.dot(up)
+	if look.length_squared() < 0.0001:
+		look = Vector3.FORWARD
+	look = look.normalized()
+	var right := look.cross(up)
+	if right.length_squared() < 0.0001:
+		right = up.cross(Vector3.RIGHT)
+	right = right.normalized()
+	var flank := -1.0 if (hash(mob_id) & 1) == 0 else 1.0
+	var perch := at + look * CrawlerHunt.PURSUIT_LEAD \
+		+ up * CrawlerHunt.PURSUIT_EYE + right * flank * 2.4
+	var surface := ground_surface(perch)
+	if surface.is_finite() and _planet != null:
+		up = _planet.up_at(surface)
+		perch = surface + up * CrawlerHunt.PURSUIT_EYE
+	return perch
+
+
+func _hunt_ground_hold(player: Node, delta: float) -> void:
+	var at := _combat_position_of(player)
+	var hold := lerpf(
+		CrawlerHunt.hold_min(wild_kind()),
+		CrawlerHunt.hold_max(wild_kind()),
+		_hold_share())
+	var along := global_position - at
+	var up := _up()
+	along -= up * along.dot(up)
+	if along.length_squared() < 0.2:
+		along = _orbit_bias()
+		along -= up * along.dot(up)
+	if along.length_squared() < 0.0001:
+		along = Vector3.FORWARD
+	along = along.normalized()
+	var desired := at + along * hold
+	var pace := move_speed() * (0.55 + _hold_share() * 0.7)
+	_match_speed(pace, delta, 1.1, 10.0)
+	var heading := desired - global_position
+	heading -= up * heading.dot(up)
+	if heading.length_squared() < 0.12:
+		velocity = velocity.move_toward(Vector3.ZERO, 10.0 * delta)
+		return
+	_steer_toward(heading.normalized() * _cruise, delta, 11.0)
+
+
+func _hunt_ground_catchup(player: Node, delta: float) -> void:
+	var perch := _hunt_ahead_perch(player)
+	var along := perch - global_position
+	along -= _up() * along.dot(_up())
+	var wanted := CrawlerHunt.pursuit_speed(
+		wild_kind(), _player_speed(player), move_speed())
+	_match_speed(wanted, delta, 1.4, 14.0)
+	if along.length_squared() > 0.0001:
+		_steer_toward(along.normalized() * _cruise, delta, 12.0)
+
+
+func _hunt_set_air(on: bool) -> void:
+	if _hunt_airborne == on:
+		return
+	var was_flying := flies()
+	_hunt_airborne = on
+	if on and not was_flying:
+		global_position += _up() * 1.2
+		return
+	if not on and not flies():
+		snap_to_ground()
+		velocity -= _up() * velocity.dot(_up())
+
+
+func _hunt_strafe_offset(
+		_player: Node, ahead: Vector3, side: Vector3, up: Vector3,
+		sway: float, delta: float
+	) -> Vector3:
+	_hunt_strafe_left = maxf(_hunt_strafe_left - delta, 0.0)
+	if _hunt_strafe_left <= 0.0 or _hunt_strafe.length_squared() < 0.0001:
+		_hunt_strafe_left = CrawlerHunt.STRAFE_SECONDS \
+			+ _hold_share() * 0.8
+		var pick := posmod(hash(mob_id) + int(_drift_clock * 3.0), 3)
+		if pick == 0:
+			_hunt_strafe = side
+		elif pick == 1:
+			_hunt_strafe = up
+		else:
+			_hunt_strafe = (side + up).normalized()
+	var phase := _hold_share() * TAU
+	return _hunt_strafe * sin(_drift_clock * 1.1 + phase) * sway \
+		+ ahead * sin(_drift_clock * 0.62 + phase) * (sway * 0.35)
+
+
+func _face_combat_player(delta: float) -> void:
+	var player := _nearest_player()
+	if player == null:
+		return
+	var ahead := _combat_position_of(player) - global_position
+	var up := _up()
+	if not flies():
+		ahead -= up * ahead.dot(up)
+	if ahead.length_squared() < 0.0001:
+		return
+	var desired := _look_basis(ahead.normalized(), up)
+	if desired.determinant() < 0.0:
+		desired.x = -desired.x
+	if absf(desired.determinant()) < 0.01:
+		return
+	var current := global_transform.basis.orthonormalized()
+	if current.determinant() < 0.0:
+		current.x = -current.x
+	if absf(current.determinant()) < 0.01:
+		global_transform.basis = desired
+		return
+	global_transform.basis = Basis(
+		current.get_rotation_quaternion().slerp(
+			desired.get_rotation_quaternion(),
+			clampf(delta * 9.0, 0.0, 1.0))).orthonormalized()
 
 
 func _on_agro_started() -> void:
@@ -1513,6 +2401,9 @@ func _patrol(delta: float, pace := 0.38) -> void:
 		_patrol_left = PATROL_RETARGET + float(_patrol_serial % 7) * 0.35
 		_patrol_goal = _wander_point()
 	var along := _patrol_goal - global_position
+	if not flies():
+		var up := _up()
+		along -= up * along.dot(up)
 	if along.length_squared() < 0.2:
 		velocity = velocity.move_toward(Vector3.ZERO, 8.0 * delta)
 		return
@@ -1531,10 +2422,20 @@ func _wander_point() -> Vector3:
 	var yaw := rng.randf() * TAU
 	var lift := rng.randf_range(-0.18, 0.28)
 	var reach := rng.randf_range(CrawlerRules.PATROL_RADIUS * 0.35, CrawlerRules.PATROL_RADIUS)
-	var dir := east * cos(yaw) + north * sin(yaw) + up * lift
+	var dir := east * cos(yaw) + north * sin(yaw)
+	if flies():
+		dir += up * lift
 	if dir.length_squared() < 0.0001:
 		dir = east
-	return _clamp_flyer_band(hang_origin + dir.normalized() * reach)
+	var at := hang_origin + dir.normalized() * reach
+	if not flies():
+		var surface := ground_surface(at)
+		if surface.is_finite():
+			var rise := _up()
+			if _planet != null:
+				rise = _planet.up_at(surface)
+			return surface + rise * ground_clearance()
+	return _clamp_flyer_band(at)
 
 
 func _orbit_bias() -> Vector3:
@@ -1573,6 +2474,7 @@ func _attach_creature(scene: PackedScene, paint: Texture2D, authored_height: flo
 	root.add_child(model)
 	var scale := visual_height / maxf(authored_height, 0.01)
 	root.scale = Vector3.ONE * scale
+	_stand_height = visual_height
 	_plant_visual(root, visual_height)
 	for node_variant: Variant in model.find_children("*", "MeshInstance3D", true, false):
 		var mesh_instance := node_variant as MeshInstance3D
@@ -1593,7 +2495,11 @@ func _attach_skinned(scene: PackedScene, visual_height: float) -> Node3D:
 	add_child(root)
 	var model := scene.instantiate()
 	root.add_child(model)
+	_stand_height = visual_height
 	_fit_visual(root, visual_height)
+	if CrawlerRules.is_glorb_kind(wild_kind()):
+		_bind_animator(model)
+		return root
 	_collect_skinned_materials(model)
 	_scale_enemy_outline(visual_height)
 	_bind_animator(model)
@@ -1601,37 +2507,39 @@ func _attach_skinned(scene: PackedScene, visual_height: float) -> Node3D:
 
 
 func _fit_visual(root: Node3D, visual_height: float) -> void:
+	var planted := _posed_bounds(root, root, 0.0)
 	var bounds := _model_bounds(root)
+	if planted.size.y <= 0.05:
+		planted = bounds
 	var scale := visual_height / maxf(bounds.size.y, 0.01)
 	root.scale = Vector3.ONE * scale
-	root.position.y = -visual_height * 0.5 - bounds.position.y * scale
+	var mid := planted.position + planted.size * 0.5
+	if CrawlerRules.is_glorb_kind(wild_kind()):
+		root.position.x = -mid.x * scale
+		root.position.z = -mid.z * scale
+		if flies():
+			root.position.y = -mid.y * scale
+		else:
+			root.position.y = -ground_clearance() - planted.position.y * scale
+		return
+	root.position.y = -visual_height * 0.5 - planted.position.y * scale
 
 
 func _plant_visual(root: Node3D, visual_height: float) -> void:
 	var saved := root.scale
 	root.scale = Vector3.ONE
-	var bounds := _model_bounds(root)
+	var planted := _posed_bounds(root, root, 0.0)
+	if planted.size.y <= 0.05:
+		planted = _model_bounds(root)
 	root.scale = saved
-	root.position.y = -visual_height * 0.5 - bounds.position.y * saved.y
+	root.position.y = -visual_height * 0.5 - planted.position.y * saved.y
 
 
 func _model_bounds(root: Node3D) -> AABB:
 	if root == null or not root.is_inside_tree():
 		return AABB(Vector3.ZERO, Vector3(0.0, 1.8, 0.0))
-	var bounds := AABB()
-	var started := false
-	var inverse := root.global_transform.affine_inverse()
-	for node_variant: Variant in root.find_children("*", "MeshInstance3D", true, false):
-		var mesh := node_variant as MeshInstance3D
-		if mesh == null or mesh.mesh == null:
-			continue
-		var box := inverse * mesh.global_transform * mesh.get_aabb()
-		if started:
-			bounds = bounds.merge(box)
-		else:
-			bounds = box
-			started = true
-	if not started or bounds.size.y <= 0.05:
+	var bounds := _posed_bounds(root, root)
+	if bounds.size.y <= 0.05:
 		return AABB(Vector3.ZERO, Vector3(0.0, 1.8, 0.0))
 	return bounds
 
@@ -1747,11 +2655,14 @@ func _bind_animator(model: Node) -> void:
 	_animator = model.find_child("AnimationPlayer", true, false) as AnimationPlayer
 	if _animator == null:
 		return
+	_animator.active = true
+	_animator.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
 	_animator.playback_default_blend_time = CLIP_BLEND
 	for clip in [CLIP_IDLE, CLIP_WALK, CLIP_RUN, CLIP_FLY]:
 		var resolved := _resolve_clip(clip)
 		if not resolved.is_empty() and _animator.has_animation(resolved):
 			_animator.get_animation(resolved).loop_mode = Animation.LOOP_LINEAR
+	_update_clips()
 
 
 func _resolve_clip(clip: String) -> String:
@@ -1778,22 +2689,58 @@ func _clip_aliases(clip: String) -> PackedStringArray:
 		CLIP_HIT:
 			return PackedStringArray([CLIP_HIT, "Hit", "HitReact"])
 		CLIP_FLY:
-			return PackedStringArray([CLIP_FLY, CLIP_RUN])
+			return PackedStringArray([CLIP_FLY, CLIP_RUN, "Hover"])
+		CLIP_WALK:
+			return PackedStringArray([CLIP_WALK, "Walk", "walking"])
+		CLIP_RUN:
+			return PackedStringArray([CLIP_RUN, "Run", "running"])
 		CLIP_IDLE:
-			return PackedStringArray([CLIP_IDLE, "Idle"])
+			return PackedStringArray([CLIP_IDLE, "Idle", "Hover"])
 	return PackedStringArray([clip])
 
 
 func _match_clip_name(need: String) -> String:
-	if _animator.has_animation(need):
-		return need
+	if _animator == null or need.is_empty():
+		return ""
 	var folded := need.to_lower()
+	var exact := ""
+	var best := ""
+	var best_len := 0.2
 	for listed: String in _animator.get_animation_list():
+		if not _clip_name_matches(listed, folded):
+			continue
+		var animation := _animator.get_animation(listed)
+		if animation == null:
+			continue
+		var length := animation.length
+		var keys := 0
+		for track in animation.get_track_count():
+			keys = maxi(keys, animation.track_get_key_count(track))
+		if keys < 3:
+			continue
 		var tail := listed.get_file().to_lower()
-		if tail == folded or tail.ends_with("/" + folded) \
-				or tail.ends_with("__" + folded) or tail.ends_with("|" + folded):
-			return listed
-	return ""
+		if tail == folded and length > 0.2:
+			exact = listed
+		if length > best_len:
+			best_len = length
+			best = listed
+	if not exact.is_empty():
+		return exact
+	return best
+
+
+func _clip_name_matches(listed: String, folded: String) -> bool:
+	var tail := listed.get_file().to_lower()
+	if _clip_tail_matches(tail, folded):
+		return true
+	var stem := tail.rstrip("0123456789").rstrip("_-")
+	return stem != tail and _clip_tail_matches(stem, folded)
+
+
+func _clip_tail_matches(tail: String, folded: String) -> bool:
+	return tail == folded or tail.ends_with("/" + folded) \
+		or tail.ends_with("__" + folded) or tail.ends_with("|" + folded) \
+		or tail.ends_with("_" + folded)
 
 
 func _begin_attack(seconds: float) -> bool:
@@ -1808,7 +2755,7 @@ func _attacking() -> bool:
 
 
 func current_clip() -> String:
-	return _desired_clip()
+	return _glorb_travel_clip(_desired_clip())
 
 
 func _desired_clip() -> String:
@@ -1826,11 +2773,31 @@ func _desired_clip() -> String:
 	return CLIP_IDLE
 
 
+func _glorb_travel_clip(clip: String) -> String:
+	if not CrawlerRules.is_glorb_kind(wild_kind()):
+		return clip
+	if clip != CLIP_IDLE and clip != CLIP_WALK and clip != CLIP_RUN \
+			and clip != CLIP_FLY:
+		return clip
+	var speed := velocity.length()
+	if speed < 0.55 and inbound_heading.length_squared() < 0.0001:
+		return clip
+	if flies():
+		return CLIP_FLY if speed >= RUN_CLIP_SPEED * 0.35 else (
+			CLIP_WALK if speed >= 0.55 or glorb_inbound() else CLIP_IDLE)
+	if speed >= maxf(move_speed() * 1.15, RUN_CLIP_SPEED * 0.55):
+		return CLIP_RUN
+	if speed >= 0.55 or glorb_inbound():
+		return CLIP_WALK
+	return CLIP_IDLE
+
+
 func _update_clips() -> void:
 	if _animator == null:
 		return
 	var clip := _network_clip if not _is_host() and not _network_clip.is_empty() \
 		else _desired_clip()
+	clip = _glorb_travel_clip(clip)
 	var resolved := _resolve_clip(clip)
 	if resolved.is_empty():
 		return
@@ -1839,7 +2806,7 @@ func _update_clips() -> void:
 		rate = clampf(velocity.length() / WALK_CLIP_SPEED, 0.55, 1.8)
 	elif clip == CLIP_RUN:
 		rate = clampf(velocity.length() / RUN_CLIP_SPEED, 0.55, 1.8)
-	if resolved != _current_clip:
+	if resolved != _current_clip or not _animator.is_playing():
 		_current_clip = resolved
 		_animator.play(resolved, CLIP_BLEND)
 	var scale := maxf(rate, 0.05)

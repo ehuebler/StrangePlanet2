@@ -1377,6 +1377,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			and event.physical_keycode == KEY_T:
 		if _try_place_enemy_creator():
 			get_viewport().set_input_as_handled()
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_M:
+		if _try_open_glorb_spawn_menu():
+			get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("parry"):
 		request_parry()
 	elif event.is_action_pressed("aim") and not _weapon_can_aim():
@@ -1603,14 +1607,14 @@ func _on_died(_source_peer: int, cause: String) -> void:
 			_present_crawler_death(cause)
 		else:
 			_death_screen.set_notice(cause)
+		_bind_death_screen_actions()
 		return
 	_death_screen = DeathScreen.new()
 	if CrawlerRules.active():
 		_present_crawler_death(cause)
-		_death_screen.home_requested.connect(_on_leave_requested)
 	else:
 		_death_screen.set_notice(cause)
-	_death_screen.respawn_requested.connect(_on_respawn_requested)
+	_bind_death_screen_actions()
 	open_menu()
 	hud.add_child(_death_screen)
 
@@ -1640,10 +1644,23 @@ func _on_respawn_requested() -> void:
 		world.request_colony_respawn()
 
 
+func _bind_death_screen_actions() -> void:
+	if not is_instance_valid(_death_screen):
+		return
+	if not _death_screen.home_requested.is_connected(_on_leave_requested):
+		_death_screen.home_requested.connect(_on_leave_requested)
+	if not _death_screen.respawn_requested.is_connected(_on_respawn_requested):
+		_death_screen.respawn_requested.connect(_on_respawn_requested)
+
+
 func _on_leave_requested() -> void:
-	var world := NetworkManager.active_world as GameWorld
+	var world := DamageHit.game_world_of(self)
+	if world == null:
+		world = NetworkManager.active_world as GameWorld
 	if world != null:
 		world.leave_session()
+		return
+	NetworkManager.leave_game()
 
 
 func _on_city_respawn_requested() -> void:
@@ -2347,6 +2364,20 @@ func _open_crawler_field_menu() -> void:
 		world.set_local_pause(true)
 
 
+func _try_open_glorb_spawn_menu() -> bool:
+	if _menu_open or _dead or hud == null or not CrawlerRules.active():
+		return false
+	if hud.get_node_or_null("CrawlerGlorbSpawnMenu") != null:
+		return false
+	var menu = load("res://ui/menu/crawler_glorb_spawn_menu.gd").new()
+	if menu.has_method(&"configure"):
+		menu.configure(self)
+	menu.closed.connect(_on_game_menu_closed)
+	open_menu()
+	hud.add_child(menu)
+	return true
+
+
 func _restore_crawler_progress() -> void:
 	if crawler_progress == null:
 		return
@@ -2972,6 +3003,10 @@ func crawler_owned_capes() -> PackedStringArray:
 
 func crawler_damage_scale() -> float:
 	return crawler_progress.damage_scale() if crawler_progress != null else 1.0
+
+
+func crawler_base_damage() -> float:
+	return CrawlerRules.player_hit_damage(self)
 
 
 func crawler_knockback_scale() -> float:
@@ -3962,13 +3997,14 @@ func eye_points() -> Array[Vector3]:
 			var middle := rest.origin + Vector3(0.0, offset.y, offset.z)
 			var side := Vector3(offset.x, 0.0, 0.0)
 			return [frame * (middle - side), frame * (middle + side)]
-	# No rig, or a body exported without a head joint. The camera's eye line is
-	# a worse origin but it is never a wrong one, and a missing bone should cost
-	# a little accuracy rather than the whole ability. No `y`: the camera is at
-	# eye height already, which is the one thing this fallback does know.
-	var eye := camera.global_position \
-		+ camera.global_basis * Vector3(0.0, 0.0, offset.z)
-	var side_step := camera.global_basis.x * offset.x
+	# No rig, or a body exported without a head joint. Do not use the camera:
+	# in third person it sits behind the skull, and a beam that starts there
+	# leaves the back of the head. The body's facing and the camera pivot
+	# height keep the sockets on the face instead.
+	var eye := global_position \
+		+ global_basis.y * head.position.y \
+		+ global_basis * Vector3(0.0, 0.0, offset.z)
+	var side_step := global_basis.x * offset.x
 	return [eye - side_step, eye + side_step]
 
 
@@ -4444,6 +4480,7 @@ func refresh_crawler_death_overlay() -> void:
 	if not is_instance_valid(_death_screen):
 		return
 	_present_crawler_death(_death_cause)
+	_bind_death_screen_actions()
 
 
 func _present_crawler_death(cause: String) -> void:
@@ -4454,13 +4491,14 @@ func _present_crawler_death(cause: String) -> void:
 		return
 	var progress := crawler_progress
 	var can_ticket := CrawlerRules.crawler_has_respawn_ticket()
+	var can_respawn := can_ticket or CrawlerRules.crawler_free_respawn()
 	var recap := {}
 	if progress != null and not can_ticket:
 		recap = CrawlerMeta.settle_run(progress, journal)
 	_death_screen.present_crawler(
 		cause,
 		progress.run_summary() if progress != null else "",
-		can_ticket,
+		can_respawn,
 		recap
 	)
 
@@ -4680,6 +4718,7 @@ func apply_damage(hit: DamageHit) -> float:
 	if hit == null or _dead or not _is_host_authority():
 		return 0.0
 	if CrawlerRules.sandbox_invincible() and not training_enemy:
+		_preview_incoming_hit(hit)
 		return 0.0
 	if training_enemy:
 		if hit.faction != DamageHit.Faction.PLAYER:
@@ -4712,10 +4751,8 @@ func apply_damage(hit: DamageHit) -> float:
 		return 0.0
 
 	var before := stats.health()
-	var authored_amount := hit.amount if is_finite(hit.amount) else 0.0
-	if authored_amount > 0.0:
-		authored_amount *= 1.0 - crawler_defense_share()
-	var actual := minf(maxf(authored_amount, 0.0), before)
+	var authored_amount := _incoming_hit_amount(hit)
+	var actual := minf(authored_amount, before)
 	if actual > 0.0:
 		stats.set_health(before - actual)
 	var status_impact := CrawlerElements.apply_to_combatant(self, hit)
@@ -5040,26 +5077,25 @@ func _server_accept_cape_ability(request_sequence: int, sender: int) -> bool:
 
 
 func _juke_wish_direction() -> Vector3:
-	var left := _steer_held(&"move_left")
-	var right := _steer_held(&"move_right")
-	var along := look_direction()
-	if left != right:
-		var side := camera.global_basis.x
-		if _stance != Stance.FLY:
-			side = _flat(side)
-		if side.length_squared() < 0.0001:
-			side = global_basis.x
-		along = -side.normalized() if left else side.normalized()
+	var input := _steer_vector()
+	var airborne := _stance == Stance.FLY or _stance == Stance.SWIM
+	var along := Vector3.ZERO
+	if input.length_squared() > 0.0001:
+		# Same WASD frame walking and flying already use, so W jukes the
+		# way the body already runs and S is the only back dash.
+		if airborne:
+			along = camera.global_basis * Vector3(input.x, 0.0, input.y)
+		else:
+			along = _flat(global_basis * Vector3(input.x, 0.0, input.y))
 	else:
-		# Default and S both dash back. W is the only way to dash toward the look.
-		if _stance != Stance.FLY and _stance != Stance.SWIM:
+		# No steer key: dash toward the look, not back through the camera.
+		along = look_direction()
+		if not airborne:
 			along = _flat(along)
 			if along.length_squared() < 0.0001:
 				along = _flat(-global_basis.z)
-		if not _steer_held(&"move_forward") or _steer_held(&"move_backward"):
-			along = -along
 	if along.length_squared() < 0.0001:
-		along = -global_basis.z
+		along = look_direction() if airborne else -global_basis.z
 	return along.normalized()
 
 
@@ -5137,6 +5173,26 @@ func _server_accept_parry(request_sequence: int, sender: int) -> bool:
 		_apply_parry_state(
 			_parry_event_sequence, window, perfect, cooldown)
 	return true
+
+
+func _incoming_hit_amount(hit: DamageHit) -> float:
+	if hit == null or not is_finite(hit.amount):
+		return 0.0
+	var authored := maxf(hit.amount, 0.0)
+	if authored <= 0.0:
+		return 0.0
+	return authored * (1.0 - crawler_defense_share())
+
+
+func _preview_incoming_hit(hit: DamageHit) -> void:
+	var shown := _incoming_hit_amount(hit)
+	if shown <= 0.0:
+		return
+	_broadcast_combat_state(shown, hit, false, false, false)
+
+
+func _incoming_popup_at() -> Vector3:
+	return combat_position() + _up() * 0.55
 
 
 func _broadcast_combat_state(actual_damage: float, hit: DamageHit,
@@ -9682,7 +9738,7 @@ func _apply_hero_punch(event_sequence: int, id: String, variant: int,
 	var radius := maxf(float(stats.get("radius", 1.15)), 0.2)
 	var damage := maxf(float(stats.get("damage", 0.0)), 0.0)
 	if CrawlerRules.active():
-		damage *= crawler_damage_scale()
+		damage = CrawlerRules.paired_hit_damage(self, damage)
 	var knockback := maxf(float(stats.get("knockback", 0.0)), 0.0)
 	if CrawlerRules.active():
 		knockback *= crawler_knockback_scale()
@@ -9981,9 +10037,7 @@ func _apply_combat_state(event_sequence: int, snapshot: Dictionary,
 	if peer_id != multiplayer.get_unique_id() or _combat_feedback == null:
 		return
 	var actual := maxf(float(effect.get("actual_damage", 0.0)), 0.0)
-	var at_variant: Variant = effect.get("at", combat_position())
-	var at := at_variant as Vector3 if at_variant is Vector3 \
-		else combat_position()
+	var at := _incoming_popup_at()
 	if bool(effect.get("dodged", false)):
 		_combat_feedback.dodge_feedback(at)
 	elif actual > 0.0:

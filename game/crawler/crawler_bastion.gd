@@ -1,18 +1,17 @@
 class_name CrawlerBastion
 extends CrawlerRobot
 
-## Slow grid emplacement. Does not chase. When the player runs by it lobs
-## one high shell with a teleport-style trail, then can despawn. The body
-## stays a beat after death, glows red, and bursts.
+## Slow office walker. Aims from the mid ring with the shared hunt
+## stance. Any number can agro. One high trailed shell, then a red fuse.
 
-const HEIGHT := 6.6
-const WIDTH := 2.62
+const HEIGHT := 1.72
+const WIDTH := 0.86
 const SHELL := preload("res://game/crawler/crawler_bastion_shell.gd")
 const FUSE_HOLD := 1.0
 const FUSE_GLOW := 0.75
-const BURST_RADIUS := 8.5
-const CRATER_RADIUS := 6.2
-const CRATER_DEPTH := 2.0
+const BURST_RADIUS := 5.4
+const CRATER_RADIUS := 4.0
+const CRATER_DEPTH := 1.6
 const BURST_TINT := Color(1.0, 0.18, 0.08)
 
 
@@ -27,7 +26,7 @@ func _ready() -> void:
 	_base_damage = 11.0
 	_base_speed = 1.8
 	super._ready()
-	_faces_motion = false
+	_faces_motion = true
 
 
 func wild_kind() -> String:
@@ -85,38 +84,24 @@ func _tick_idle(delta: float) -> void:
 func _tick_ai(delta: float) -> void:
 	if _fusing:
 		return
-	_fire_left = maxf(_fire_left - delta, 0.0)
-	_leave_left = maxf(_leave_left - delta, 0.0)
-	snap_to_ground()
-	if _attacking():
-		velocity = velocity.move_toward(Vector3.ZERO, 16.0 * delta)
-		return
-	var player := _nearest_player()
+	var player := _hunt_target(delta)
 	if player == null:
+		_fire_left = maxf(_fire_left - delta, 0.0)
+		_leave_left = maxf(_leave_left - delta, 0.0)
 		_shuffle(delta)
 		return
-	var gap := _flat_toward(_combat_position_of(player)).length()
-	var far := CrawlerMobs.number(wild_kind(), threat_level, "engage_max", 40.0)
-	if _spent_shot and gap > far and _leave_left <= 0.0:
-		dismiss()
-		return
-	if gap <= far:
-		_hold_and_lob(player, delta)
-		return
-	_shuffle(delta)
+	_fight(player, delta)
 
 
 func _tick_far(delta: float) -> void:
 	if _fusing:
 		return
-	_leave_left = maxf(_leave_left - delta, 0.0)
 	var player := _nearest_player()
-	if player != null:
-		var gap := _flat_toward(_combat_position_of(player)).length()
-		var far := CrawlerMobs.number(wild_kind(), threat_level, "engage_max", 40.0)
-		if _spent_shot and gap > far and _leave_left <= 0.0:
-			dismiss()
-			return
+	if player != null and tick_agro(player, delta):
+		_fight(player, delta)
+		return
+	_fire_left = maxf(_fire_left - delta, 0.0)
+	_leave_left = maxf(_leave_left - delta, 0.0)
 	_shuffle(delta)
 
 
@@ -126,18 +111,45 @@ func _tick_cold(delta: float, _steer := true) -> void:
 	super._tick_cold(delta, false)
 
 
-func director_far_steer(delta: float, player: Node3D, _in_city := false) -> void:
+func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
 	if _fusing or _movement_locked():
 		velocity = Vector3.ZERO
 		return
-	_leave_left = maxf(_leave_left - maxf(delta, 0.0), 0.0)
-	if _spent_shot and player != null and _leave_left <= 0.0:
-		var gap := _flat_toward(_combat_position_of(player)).length()
-		var far := CrawlerMobs.number(wild_kind(), threat_level, "engage_max", 40.0)
-		if gap > far:
-			dismiss()
-			return
-	_shuffle(maxf(delta, 0.0))
+	var step := maxf(delta, 0.0)
+	if player != null and _apply_agro(player, step, in_city):
+		_fight(player, step)
+		return
+	_fire_left = maxf(_fire_left - step, 0.0)
+	_leave_left = maxf(_leave_left - step, 0.0)
+	_shuffle(step)
+
+
+func _fight(player: Node, delta: float) -> void:
+	_fire_left = maxf(_fire_left - delta, 0.0)
+	_leave_left = maxf(_leave_left - delta, 0.0)
+	snap_to_ground()
+	if _attacking():
+		velocity = velocity.move_toward(Vector3.ZERO, 16.0 * delta)
+		_face_player(player)
+		return
+	_face_player(player)
+	_tick_hunt_motion(player, delta)
+	var gap := _flat_toward(_combat_position_of(player)).length()
+	var far := CrawlerHunt.shot_max(wild_kind(), threat_level)
+	if _spent_shot and gap > far and _leave_left <= 0.0:
+		dismiss()
+		return
+	if gap <= far:
+		_hold_and_lob(player, delta)
+
+
+func _face_player(player: Node) -> void:
+	if player == null:
+		return
+	var look := _flat_toward(_combat_position_of(player))
+	if look.length_squared() < 0.0001:
+		return
+	global_transform.basis = _look_basis(look.normalized(), _up())
 
 
 func _shuffle(delta: float) -> void:
@@ -194,6 +206,7 @@ func _try_mortar(player: Node) -> void:
 	ball.hit_radius = CrawlerMobs.number(
 		wild_kind(), threat_level, "shot_hit", 2.2)
 	ball.ability_id = "crawler_bastion_mortar"
+	ball.lift = _up()
 	var impact := CrawlerRules.high_lob_intercept(
 		from, target, _player_velocity(player), shot_speed,
 		CrawlerRules.BASTION_GRAVITY, _up(), CrawlerRules.BASTION_LOFT)

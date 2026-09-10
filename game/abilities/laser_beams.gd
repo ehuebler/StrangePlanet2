@@ -33,12 +33,19 @@ const CORE_SHARE := 0.3
 const HOLD := 0.16
 const FOLLOW_EYES := 0
 const FOLLOW_HANDS_MERGED := 1
+## How far the drawn muzzle sits past the socket. The glow is additive and
+## blooms; starting it on the face lights the whole skull, and from a shoulder
+## camera that reads as the beam leaving the back of the head. First person
+## also needs the start past the near clip, or the same glow fills the view
+## from inside the cranium.
+const MUZZLE_CLEARANCE := 0.12
+const CAMERA_NEAR_PAD := 0.08
 
 ## How many short stretches make a wobbling beam. Straight beams use the first
 ## one only. The wave is drawn along the shot, not by swinging the whole line.
 const WAVE_SEGS := 8
 ## Homing and bounce paths can carry more corners than a wobble. Cap so a
-## curved shot does not spawn a GLB for every authored point.
+## curved shot does not spawn a cylinder for every authored point.
 const PATH_SEGS_MAX := 12
 
 ## One EnergyVfx chain per eye-and-target. Each entry is a chain of segments.
@@ -65,11 +72,11 @@ var _twist := PackedFloat32Array([0.0, 0.0])
 var _cycles := PackedFloat32Array([3.6, 4.1])
 var _spin := PackedFloat32Array([12.0, -10.5])
 var _far_cast := 0.0
+var _layers: Dictionary = {}
 
 
 func _ready() -> void:
-	# Authored core-beam GLB already has the white-hot blade and the glow
-	# sheath. One instance per segment; straight shots only ever light the
+	# One fiery cylinder chain per eye. Straight shots only ever light the
 	# first of each chain.
 	for _eye in 2:
 		_beams.append([])
@@ -104,45 +111,93 @@ func aim(left_eye: Vector3, right_eye: Vector3, at: Vector3,
 func aim_many(left_eye: Vector3, right_eye: Vector3, targets: PackedVector3Array,
 		colour: Color = COLOR, width_scale := 1.0, wobble := 0.0,
 		follow := FOLLOW_EYES, far_cast := 0.0, paths: Array = [],
-		invert := false) -> void:
+		invert := false, layer := -1) -> void:
 	if _beams.is_empty():
 		return
-	_from_left = left_eye
-	_from_right = right_eye
-	_targets = PackedVector3Array()
+	var cleaned := PackedVector3Array()
 	for at: Vector3 in targets:
 		if at.is_finite():
-			_targets.append(at)
-	if _targets.is_empty():
+			cleaned.append(at)
+	if cleaned.is_empty():
 		return
-	_paths.clear()
+	var traces: Array[PackedVector3Array] = []
 	for path_variant: Variant in paths:
 		if path_variant is PackedVector3Array \
 				and (path_variant as PackedVector3Array).size() >= 2:
-			_paths.append(path_variant)
-	if _paths.size() != _targets.size():
-		_paths.clear()
+			traces.append(path_variant)
+	if traces.size() != cleaned.size():
+		traces.clear()
+	var row := {
+		"left": left_eye,
+		"right": right_eye,
+		"targets": cleaned,
+		"paths": traces,
+		"colour": colour,
+		"width": width_scale,
+		"wobble": wobble,
+		"follow": follow,
+		"far": far_cast,
+		"invert": invert,
+	}
+	if layer < 0:
+		_layers.clear()
+		_layers[-1] = row
+	else:
+		_layers.erase(-1)
+		_layers[layer] = row
+	_show_layers()
+
+
+func _show_layers() -> void:
+	var merged := PackedVector3Array()
+	var traces: Array[PackedVector3Array] = []
+	var keep_paths := true
+	var last: Dictionary = {}
+	for key: Variant in _layers:
+		var row: Dictionary = _layers[key]
+		if row.is_empty():
+			continue
+		last = row
+		var layer_targets: PackedVector3Array = row.get(
+			"targets", PackedVector3Array())
+		var layer_paths: Array = row.get("paths", [])
+		if layer_paths.size() != layer_targets.size():
+			keep_paths = false
+		for at: Vector3 in layer_targets:
+			merged.append(at)
+		for path_variant: Variant in layer_paths:
+			if path_variant is PackedVector3Array:
+				traces.append(path_variant)
+	if merged.is_empty() or last.is_empty():
+		return
+	_from_left = last.get("left", Vector3.ZERO)
+	_from_right = last.get("right", Vector3.ZERO)
+	_targets = merged
+	_paths.clear()
+	if keep_paths and traces.size() == merged.size():
+		_paths.append_array(traces)
 	_target = _targets[int(_targets.size() / 2)]
 	_ensure_pairs(_targets.size())
-	_follow = follow
-	_far_cast = maxf(far_cast, 0.0)
-	_wobble = maxf(wobble, 0.0)
+	_follow = int(last.get("follow", FOLLOW_EYES))
+	_far_cast = maxf(float(last.get("far", 0.0)), 0.0)
+	_wobble = maxf(float(last.get("wobble", 0.0)), 0.0)
 	if _wobble > 0.0:
 		if not _wobble_rolled:
 			_roll_wobble()
 	else:
 		_wobble_rolled = false
-	_set_colour(colour, invert)
+	_set_colour(last.get("colour", COLOR), bool(last.get("invert", false)))
 	# World radius is [constant RADIUS] times this scale. Kame passes
 	# combat radius / RADIUS so the drawn cylinder matches the hit.
 	# A hard 4.5 cap used to freeze a boosted kame at basketball size
 	# while the trench and mob capsule kept growing.
-	_width_scale = clampf(width_scale, 0.2, 200.0)
+	_width_scale = clampf(float(last.get("width", 1.0)), 0.2, 200.0)
 	_draw_now()
-	_lamp.global_position = _target
-	_lamp.visible = true
-	_lamp.omni_range = 5.5 * _width_scale
-	_lamp.light_energy = (3.4 if colour == COLOR else 2.0) * _width_scale
+	if _lamp != null and is_inside_tree():
+		_lamp.global_position = _target
+		_lamp.visible = true
+		_lamp.omni_range = 5.5 * _width_scale
+		_lamp.light_energy = (3.4 if _colour == COLOR else 2.0) * _width_scale
 	_alive = HOLD
 	set_process(true)
 
@@ -163,8 +218,24 @@ func _set_colour(colour: Color, invert := false) -> void:
 		_lamp.light_energy = 3.4 if colour == COLOR else 2.0
 
 
+func is_lit() -> bool:
+	return _alive > 0.0
+
+
+func pair_count() -> int:
+	return _targets.size()
+
+
 ## Takes the beams down now, for the firing player letting go.
-func stop() -> void:
+## A non-negative [param layer] drops only that slot's pair so two Laser
+## Eyes can share the drawer.
+func stop(layer := -1) -> void:
+	if layer >= 0 and is_inside_tree():
+		_layers.erase(layer)
+		if not _layers.is_empty():
+			_show_layers()
+			return
+	_layers.clear()
 	_alive = 0.0
 	_wobble_rolled = false
 	_scorch_at = Vector3.INF
@@ -196,13 +267,13 @@ func path_points(eye := 0, toward := Vector3.INF) -> PackedVector3Array:
 		path = _paths[0]
 	if path.size() >= 2:
 		var bounced := PackedVector3Array()
-		bounced.append(from)
+		bounced.append(_clear_muzzle(from, path[1]))
 		for index in range(1, path.size()):
 			bounced.append(path[index])
 		return bounced
 	if _wobble <= 0.001:
-		return PackedVector3Array([from, to])
-	return _wave_points(from, to, eye & 1)
+		return PackedVector3Array([_clear_muzzle(from, to), to])
+	return _wave_points(_clear_muzzle(from, to), to, eye & 1)
 
 
 ## True when a new soot mark should be laid at [param at]. Held still, the
@@ -294,6 +365,8 @@ func _draw_path(eye: int, from: Vector3, path: PackedVector3Array,
 	points.append(from)
 	for index in range(1, path.size()):
 		points.append(path[index])
+	if points.size() >= 2:
+		points[0] = _clear_muzzle(points[0], points[1])
 	var segs := points.size() - 1
 	if segs <= 1:
 		_draw_eye(eye, from, points[points.size() - 1] if points.size() > 1 \
@@ -324,6 +397,7 @@ func _draw_eye(eye: int, from: Vector3, to: Vector3, slot := -1) -> void:
 	if chain < 0 or chain >= _beams.size():
 		return
 	var beams: Array = _beams[chain]
+	from = _clear_muzzle(from, to)
 	if _wobble <= 0.001:
 		_ensure_chain(beams, 1)
 		_place(beams[0], from, to)
@@ -390,9 +464,28 @@ func _roll_wobble() -> void:
 	_wobble_rolled = true
 
 
+func _clear_muzzle(from: Vector3, to: Vector3) -> Vector3:
+	var along := to - from
+	var span := along.length()
+	if span < 0.05:
+		return from
+	var dir := along / span
+	var inset := MUZZLE_CLEARANCE
+	var shooter := get_parent() as OnlinePlayer
+	if shooter != null and shooter.camera != null and shooter.camera.current:
+		var cam := shooter.camera
+		var cam_forward := -cam.global_basis.z
+		var toward := dir.dot(cam_forward)
+		if toward > 0.05:
+			var need := cam.near + CAMERA_NEAR_PAD \
+				- (from - cam.global_position).dot(cam_forward)
+			inset = maxf(inset, need / toward)
+	return from + dir * clampf(inset, 0.0, span * 0.35)
+
+
 ## Stretches one authored core-beam between two points. The GLB stands along
-## its own +Y at a fixed length, so the placement scales that axis to the
-## span and never fattens the glow as the shot gets longer.
+## its own +Y from the muzzle, so the placement scales that axis to the span
+## and never fattens the glow as the shot gets longer.
 func _place(beam: EnergyVfx, from: Vector3, to: Vector3) -> void:
 	if beam == null:
 		return

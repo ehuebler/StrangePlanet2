@@ -22,7 +22,9 @@ const LINGER_GROUP := &"crawler_lingers"
 const MONUMENT_GROUP := &"patch_monuments"
 const OVERLAY_GROUP := &"land_patch_overlay"
 const PAD_GROUP := &"crawler_spawn_pads"
+const BOSS_GROUP := &"crawler_boss"
 const THINK_LOG_GAP := 1.5
+const GROUND_SHARE := 0.22
 
 static var _physics_frame := -1
 static var _players: Array = []
@@ -34,6 +36,7 @@ static var _fields: Array = []
 static var _clouds: Array = []
 static var _monuments: Array = []
 static var _spawn_pads: Array = []
+static var _bosses: Array = []
 static var _overlay: Node
 static var _ticked := 0
 static var _chasing := 0
@@ -89,8 +92,12 @@ static var _directed_frame := -1
 static var _static_frame := -1
 static var _city_frame := -1
 static var _pad_frame := -1
+static var _keep_frame := -1
 static var _player_city := {}
 static var _player_pad := {}
+static var _player_keep := {}
+static var _ground_share_frame := -1
+static var _ground_share: Dictionary = {}
 
 
 static func begin_frame(tree: SceneTree) -> void:
@@ -132,9 +139,14 @@ static func invalidate() -> void:
 	_static_frame = -1
 	_city_frame = -1
 	_pad_frame = -1
+	_keep_frame = -1
 	_player_city.clear()
 	_player_pad.clear()
+	_player_keep.clear()
+	_ground_share_frame = -1
+	_ground_share.clear()
 	_reset_think_window(-1.0)
+	CombatantSense.invalidate()
 
 
 static func players() -> Array[Node3D]:
@@ -162,7 +174,18 @@ static func nearest_player(from: Node3D) -> Node3D:
 
 
 static func player_in_castle_keep(player: Node3D) -> bool:
-	return player != null and CrawlerRules.in_castle_keep(player.global_position)
+	if player == null or not is_instance_valid(player):
+		return false
+	var frame := Engine.get_physics_frames()
+	if frame != _keep_frame:
+		_keep_frame = frame
+		_player_keep.clear()
+	var id := player.get_instance_id()
+	if _player_keep.has(id):
+		return bool(_player_keep[id])
+	var inside := CrawlerRules.in_castle_keep(player.global_position)
+	_player_keep[id] = inside
+	return inside
 
 
 static func player_in_city(player: Node3D) -> bool:
@@ -206,11 +229,30 @@ static func player_on_spawn_pad(player: Node3D) -> bool:
 	var inside := false
 	for item: Variant in _spawn_pads:
 		var pad := _spawn_pad(item)
-		if pad != null and pad.holds_standing(player.global_position):
+		if pad != null and pad.shelters_standing(player.global_position):
 			inside = true
 			break
 	_player_pad[id] = inside
 	return inside
+
+
+static func pad_holds_field() -> bool:
+	for item: Variant in _spawn_pads:
+		var pad := _spawn_pad(item)
+		if pad != null and pad.holds_field():
+			return true
+	return false
+
+
+static func boss_protects(player: Node) -> bool:
+	if not _living(player):
+		return false
+	for item: Variant in _bosses:
+		var boss := _node(item)
+		if boss != null and boss.has_method(&"protects") \
+				and bool(boss.call(&"protects", player)):
+			return true
+	return false
 
 
 static func nearest_charmed(from: Node) -> Node:
@@ -229,21 +271,36 @@ static func nearest_other(from: Node) -> Node:
 	return _nearest_from(from, _live_mobs, false)
 
 
-static func field_slow(from: Node, at: Vector3) -> float:
+static func field_scale(from: Node, at: Vector3) -> float:
 	if not _living(from) or not from.is_inside_tree() or not at.is_finite():
 		return 1.0
-	ensure_frame(from.get_tree())
-	var field_scale := 1.0
-	var linger_scale := 1.0
+	var tree := from.get_tree()
+	ensure_frame(tree)
+	_sync_fields(tree)
+	var scale := 1.0
 	for item: Variant in _fields:
 		var field := _field(item)
 		if field != null and field.contains(at):
-			field_scale = minf(field_scale, field.speed_mul())
+			scale = minf(scale, field.speed_mul())
+	return scale
+
+
+static func linger_scale(from: Node, at: Vector3) -> float:
+	if not _living(from) or not from.is_inside_tree() or not at.is_finite():
+		return 1.0
+	var tree := from.get_tree()
+	ensure_frame(tree)
+	_sync_clouds(tree)
+	var scale := 1.0
 	for item: Variant in _clouds:
 		var cloud := _cloud(item)
 		if cloud != null and cloud.contains(at):
-			linger_scale = minf(linger_scale, cloud.speed_mul())
-	return field_scale * linger_scale
+			scale = minf(scale, cloud.speed_mul())
+	return scale
+
+
+static func field_slow(from: Node, at: Vector3) -> float:
+	return field_scale(from, at) * linger_scale(from, at)
 
 
 static func keepout_blocks(from: Node, at: Vector3) -> bool:
@@ -387,7 +444,33 @@ static func lod_of(from: Node3D) -> int:
 
 
 static func lod_at(at: Vector3) -> int:
-	return CrawlerRules.mob_lod(at.distance_to(_player_at))
+	return CrawlerRules.mob_lod_gap2(at.distance_squared_to(_player_at))
+
+
+static func peek_ground(from: Vector3) -> Vector3:
+	if not from.is_finite():
+		return Vector3.INF
+	var frame := Engine.get_physics_frames()
+	if frame != _ground_share_frame:
+		_ground_share_frame = frame
+		_ground_share.clear()
+	return _ground_share.get(_ground_key(from), Vector3.INF)
+
+
+static func store_ground(from: Vector3, hit: Vector3) -> void:
+	if not from.is_finite() or not hit.is_finite():
+		return
+	var frame := Engine.get_physics_frames()
+	if frame != _ground_share_frame:
+		_ground_share_frame = frame
+		_ground_share.clear()
+	_ground_share[_ground_key(from)] = hit
+
+
+static func _ground_key(from: Vector3) -> Vector3i:
+	var span := GROUND_SHARE
+	return Vector3i(
+		floori(from.x / span), floori(from.y / span), floori(from.z / span))
 
 
 static func take_think(mob: Node, chasing: bool) -> bool:
@@ -416,15 +499,20 @@ static func shot_targets(charmed: bool) -> Array:
 
 
 static func any_chasing_kind(kind: String, except: Node = null) -> bool:
+	return chasing_kind_count(kind, except) > 0
+
+
+static func chasing_kind_count(kind: String, except: Node = null) -> int:
 	if kind.is_empty():
-		return false
+		return 0
+	var count := 0
 	for item: Variant in _live_mobs:
 		var mob := _node(item) as CrawlerMob
 		if mob == null or mob == except or not mob.is_alive():
 			continue
 		if mob.wild_kind() == kind and mob.chase:
-			return true
-	return false
+			count += 1
+	return count
 
 
 static func rouse_kinds(kinds: PackedStringArray, except: Node = null) -> void:
@@ -478,19 +566,24 @@ static func direct_horde(delta: float) -> void:
 	var stride := maxi(CrawlerRules.MOB_COLD_STRIDE, 1)
 	var warm_stride := maxi(CrawlerRules.MOB_WARM_STRIDE, 1)
 	var hunt := _nearest_cached_player(_player_at)
+	var hunt_at := hunt.global_position if hunt != null else _player_at
 	var hunt_city := hunt != null and (
 		player_in_city(hunt) or player_on_spawn_pad(hunt))
 	var reach := CrawlerRules.HORDE_SEPARATION
 	var reach2 := reach * reach
+	var sep_cap := CrawlerRules.HORDE_SEPARATION_CAP
+	var sep_cap2 := sep_cap * sep_cap
+	var sep_push := CrawlerRules.HORDE_SEPARATION_PUSH
 	for mob in pack:
-		var lod := lod_at(mob.global_position)
+		var at := mob.global_position
+		var lod := CrawlerRules.mob_lod_gap2(at.distance_squared_to(_player_at))
 		var slot := _directed_frame + mob.get_instance_id()
 		var need_sep := lod == CrawlerRules.MOB_LOD_HOT \
 			or (lod == CrawlerRules.MOB_LOD_WARM and slot % warm_stride == 0) \
 			or (lod == CrawlerRules.MOB_LOD_COLD and slot % stride == 0)
 		if need_sep:
 			var push := Vector3.ZERO
-			var here := _horde_cell(mob.global_position)
+			var here := _horde_cell(at)
 			for ox in range(-1, 2):
 				for oy in range(-1, 2):
 					for oz in range(-1, 2):
@@ -503,33 +596,53 @@ static func direct_horde(delta: float) -> void:
 							var other := other_variant as CrawlerMob
 							if other == null or other == mob:
 								continue
-							var along := mob.global_position - other.global_position
+							var along := at - other.global_position
 							var away2 := along.length_squared()
 							if away2 < 0.0001 or away2 > reach2:
 								continue
 							var away := sqrt(away2)
-							push += along / away * (reach - away)
-			var separate := push * CrawlerRules.HORDE_SEPARATION_PUSH
-			if separate.length() > CrawlerRules.HORDE_SEPARATION_CAP:
-				separate = separate.normalized() * CrawlerRules.HORDE_SEPARATION_CAP
+							push += along * ((reach - away) / away)
+			var separate := push * sep_push
+			if separate.length_squared() > sep_cap2:
+				separate = separate.normalized() * sep_cap
 			mob.director_sep = separate
 		mob.director_push = mob.director_sep
 		mob.directed_frame = _directed_frame
 		mob.set_director_lod(lod)
+		if hunt != null and not hunt_city and not mob.chase \
+				and not mob.persistent:
+			var gap2 := at.distance_squared_to(hunt_at)
+			if CrawlerRules.field_ring_should_engage_gap2(gap2, mob.wild_kind()):
+				mob.chase = true
+				mob.ever_chased = true
+				mob.idle_seconds = 0.0
+				if mob.hunt_stance == CrawlerHunt.Stance.IDLE \
+						or mob.hunt_stance == CrawlerHunt.Stance.DEAGRO:
+					mob.hunt_stance = CrawlerHunt.Stance.AGRO
 		if lod == CrawlerRules.MOB_LOD_COLD:
-			var period := stride if mob.chase else stride * 2
-			var step := 0.0
+			var inbound := mob.is_glorb() and not mob.chase \
+				and mob.inbound_heading.length_squared() > 0.0001
+			var period := stride if (mob.chase or inbound) else stride * 2
 			var steer := slot % period == 0
-			if steer:
-				step = delta * float(period)
+			if inbound and mob.velocity.length_squared() < 0.25:
+				steer = true
+			if not steer and mob.velocity.length_squared() < 0.010 \
+					and mob.director_sep.length_squared() < 0.0001:
+				continue
+			var step := delta * float(period) if steer else 0.0
 			mob.director_cold_tick(delta, step, steer, hunt, hunt_city)
 			continue
 		if lod == CrawlerRules.MOB_LOD_WARM:
-			var warm_period := warm_stride if mob.chase else warm_stride * 2
-			var warm_step := 0.0
+			var inbound := mob.is_glorb() and not mob.chase \
+				and mob.inbound_heading.length_squared() > 0.0001
+			var warm_period := warm_stride if (mob.chase or inbound) else warm_stride * 2
 			var warm_steer := slot % warm_period == 0
-			if warm_steer:
-				warm_step = delta * float(warm_period)
+			if inbound and mob.velocity.length_squared() < 0.25:
+				warm_steer = true
+			if not warm_steer and mob.velocity.length_squared() < 0.010 \
+					and mob.director_sep.length_squared() < 0.0001:
+				continue
+			var warm_step := delta * float(warm_period) if warm_steer else 0.0
 			mob.director_warm_tick(delta, warm_step, warm_steer, hunt, hunt_city)
 			continue
 
@@ -559,6 +672,15 @@ static func _nearest_cached_player(from: Vector3) -> Node3D:
 
 
 static func take_attack(kind: String = "") -> bool:
+	# Bite tokens only pace the close swarm. Rangers, vespers, and guns
+	# are few enough that a gloam flock must not eat their windup.
+	var role := CrawlerHunt.role(kind)
+	if role == CrawlerHunt.Role.FLY_RANGE \
+			or role == CrawlerHunt.Role.GROUND_RANGE:
+		_frame_attack_ok += 1
+		_window_attack_ok += 1
+		_count_kind(_attack_kinds, kind)
+		return true
 	if _attack_left <= 0:
 		_frame_attack_denied += 1
 		_window_attack_denied += 1
@@ -633,6 +755,30 @@ static func _nearest_from(from: Node, pack: Array, charmed_only: bool) -> Node:
 	return nearest
 
 
+static func _sync_fields(tree: SceneTree) -> void:
+	if tree == null:
+		return
+	if tree.get_node_count_in_group(FIELD_GROUP) == _fields.size():
+		return
+	_fields.clear()
+	for field_variant: Variant in tree.get_nodes_in_group(FIELD_GROUP):
+		var field := _field(field_variant)
+		if field != null:
+			_fields.append(field)
+
+
+static func _sync_clouds(tree: SceneTree) -> void:
+	if tree == null:
+		return
+	if tree.get_node_count_in_group(LINGER_GROUP) == _clouds.size():
+		return
+	_clouds.clear()
+	for cloud_variant: Variant in tree.get_nodes_in_group(LINGER_GROUP):
+		var cloud := _cloud(cloud_variant)
+		if cloud != null:
+			_clouds.append(cloud)
+
+
 static func _refresh(tree: SceneTree, rescan := false, frame := -1) -> void:
 	_players.clear()
 	_fields.clear()
@@ -664,6 +810,12 @@ static func _refresh(tree: SceneTree, rescan := false, frame := -1) -> void:
 		_rescan_mobs(tree)
 	else:
 		_prune_mobs()
+	_spawn_pads.clear()
+	for pad_variant: Variant in tree.get_nodes_in_group(PAD_GROUP):
+		var pad := _spawn_pad(pad_variant)
+		if pad != null:
+			_spawn_pads.append(pad)
+	_watch_spawn_pads()
 
 
 static func _anchor_players() -> void:
@@ -687,6 +839,7 @@ static func _refresh_static(tree: SceneTree) -> void:
 	_city_rings.clear()
 	_monuments.clear()
 	_spawn_pads.clear()
+	_bosses.clear()
 	_overlay = null
 	for zone_variant: Variant in tree.get_nodes_in_group(SAFE_GROUP):
 		var zone := _safe_box(zone_variant)
@@ -704,6 +857,10 @@ static func _refresh_static(tree: SceneTree) -> void:
 		var pad := _spawn_pad(pad_variant)
 		if pad != null:
 			_spawn_pads.append(pad)
+	for boss_variant: Variant in tree.get_nodes_in_group(BOSS_GROUP):
+		var boss := _node(boss_variant)
+		if boss != null:
+			_bosses.append(boss)
 	var overlay_variant: Variant = tree.get_first_node_in_group(OVERLAY_GROUP)
 	_overlay = _node(overlay_variant)
 
@@ -797,6 +954,19 @@ static func _spawn_pad(node: Variant) -> CrawlerSpawnPad:
 	if not _living(node):
 		return null
 	return node as CrawlerSpawnPad
+
+
+static func _watch_spawn_pads() -> void:
+	if _spawn_pads.is_empty():
+		return
+	for item: Variant in _spawn_pads:
+		var pad := _spawn_pad(item)
+		if pad == null or not pad.holds_field():
+			continue
+		for player_item: Variant in _players:
+			var player := _node3d(player_item)
+			if player != null:
+				pad.notice_player(player.global_position)
 
 
 static func _overlay_node() -> LandPatchOverlay:

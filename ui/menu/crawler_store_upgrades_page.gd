@@ -376,11 +376,10 @@ func _add_upgrade_tile(card: CrawlerCard, stat_id: String, gold: int) -> void:
 	copy.add_child(spacer)
 	var button := Button.new()
 	button.name = "UpgradeAct_%s" % stat_id
-	button.clip_text = true
-	button.clip_contents = true
-	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	button.custom_minimum_size = Vector2(0.0, 18.0)
-	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	button.clip_text = false
+	button.clip_contents = false
+	button.custom_minimum_size = Vector2(64.0, 22.0)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.size_flags_vertical = Control.SIZE_SHRINK_END
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	if at_max:
@@ -552,11 +551,23 @@ func _clamp_upgrade_tile(tile: Control, cell: Vector2) -> void:
 		var button := child as Button
 		if button == null:
 			continue
-		button.clip_contents = true
-		button.custom_minimum_size.x = mini(
-			int(round(button.get_combined_minimum_size().x)),
-			int(round(inner.x))
-		)
+		button.clip_text = false
+		button.clip_contents = false
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.custom_minimum_size.y = maxf(button.custom_minimum_size.y, 22.0)
+		button.custom_minimum_size.x = minf(
+			maxf(button.custom_minimum_size.x, 64.0), inner.x)
+		var host := CrtType.host_of(button)
+		if host != null:
+			host.clip_contents = false
+			host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var host_min := Vector2(
+				minf(maxf(host.custom_minimum_size.x, 64.0), inner.x),
+				maxf(host.custom_minimum_size.y, 22.0)
+			)
+			host.custom_minimum_size = host_min
+			host._adopted_min = host_min
+			host.update_minimum_size()
 
 
 func _request_icons() -> void:
@@ -648,7 +659,7 @@ func _label(
 func _style_action(button: Button, enabled: bool) -> void:
 	var accent := GREEN if enabled else Color(RED, 0.55)
 	var fill := Color(0.0, 0.15, 0.045, 0.82) if enabled else Color(0.08, 0.02, 0.02, 0.9)
-	button.clip_contents = true
+	button.clip_contents = false
 	var type_size := 8 if button.text.length() > 8 else 9
 	button.add_theme_font_size_override(&"font_size", type_size)
 	button.add_theme_color_override(&"font_color", accent)

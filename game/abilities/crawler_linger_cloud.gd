@@ -56,15 +56,7 @@ static func spawn(world: Node, source: OnlinePlayer, recipe: Dictionary,
 
 
 static func speed_scale_at(anywhere: Node, at: Vector3) -> float:
-	var scale := 1.0
-	if anywhere == null or not anywhere.is_inside_tree() or not at.is_finite():
-		return scale
-	for node_variant: Variant in anywhere.get_tree().get_nodes_in_group(GROUP):
-		var cloud := node_variant as CrawlerLingerCloud
-		if cloud == null or not cloud.contains(at):
-			continue
-		scale = minf(scale, cloud.speed_mul())
-	return scale
+	return CrawlerMobSense.linger_scale(anywhere, at)
 
 
 static func wash_at(anywhere: Node, at: Vector3) -> Color:
@@ -87,7 +79,7 @@ func _ready() -> void:
 	top_level = true
 	add_to_group(GROUP)
 	set_process(true)
-	set_physics_process(true)
+	CrawlerShotSense.watch(self)
 	if DisplayServer.get_name() == "headless":
 		return
 	_material = ShaderMaterial.new()
@@ -117,7 +109,15 @@ func _process(delta: float) -> void:
 		queue_free()
 
 
+func _exit_tree() -> void:
+	CrawlerShotSense.drop(self)
+
+
 func _physics_process(delta: float) -> void:
+	shot_tick(delta)
+
+
+func shot_tick(delta: float) -> void:
 	_chase(delta)
 	if not authoritative:
 		return
@@ -178,27 +178,11 @@ func _tick_inside() -> void:
 	if shooter == null or not shooter.is_inside_tree():
 		return
 	var seen: Dictionary = {}
-	for node_variant: Variant in shooter.get_tree().get_nodes_in_group(
-			DamageHit.COMBATANT_GROUP):
-		var combatant := node_variant as Node
-		if combatant == null or combatant == shooter:
+	for combatant in CombatantSense.collect(self, shooter):
+		if not combatant.has_method(&"apply_damage"):
 			continue
-		if not combatant.has_method(&"apply_damage") \
-				or not combatant.has_method(&"combat_faction"):
-			continue
-		if int(combatant.call(&"combat_faction")) != DamageHit.Faction.ENEMY:
-			continue
-		if combatant.has_method(&"is_alive") \
-				and not bool(combatant.call(&"is_alive")):
-			continue
-		var point := global_position
-		if combatant.has_method(&"combat_position"):
-			point = combatant.call(&"combat_position")
-		elif combatant is Node3D:
-			point = (combatant as Node3D).global_position
-		var bounds := 0.4
-		if combatant.has_method(&"combat_radius"):
-			bounds = float(combatant.call(&"combat_radius"))
+		var point := CombatantSense.point_of(combatant)
+		var bounds := CombatantSense.radius_of(combatant)
 		var key := combatant.get_instance_id()
 		if not contains(point, bounds):
 			_inside.erase(key)

@@ -108,7 +108,8 @@ func _sample_mesh(root: Node3D, mesh_i: MeshInstance3D) -> Dictionary:
 		return {}
 	var folded := String(mesh_i.name).to_lower()
 	if folded.contains("colonly") \
-			or folded == BuildingFoundation.SKIRT_NAME.to_lower():
+			or folded == BuildingFoundation.SKIRT_NAME.to_lower() \
+			or folded == BuildingFoundation.PATH_SKIRT_NAME.to_lower():
 		return {}
 	var colour := Color.BLACK
 	var strength := 0.0

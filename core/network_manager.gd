@@ -39,8 +39,8 @@ var is_host := false
 var session_options: Dictionary = {}
 var players: Dictionary = {}
 var local_player_name := "Player"
-## Leaving a game reloads the world with no session in it, which is the home
-## screen: there is no separate menu scene to go back to.
+## Leaving a game returns the loaded world to its home overlay. There is no
+## separate menu scene; this path is only used when no world is in the tree.
 var menu_scene_path := WORLD_SCENE
 ## The world in the tree, which registers itself. Asking it directly rather than
 ## reading `current_scene` also answers for a harness, which loads the world as a
@@ -630,8 +630,35 @@ func _reset_session(return_to_menu: bool, reset_online_page := false) -> void:
 		lobby_left.emit()
 	get_tree().paused = false
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	if return_to_menu and not menu_scene_path.is_empty() and ResourceLoader.exists(menu_scene_path):
-		get_tree().change_scene_to_file(menu_scene_path)
+	if return_to_menu:
+		_return_to_menu()
+
+
+## The title lives inside the loaded world. Reloading `world.tscn` from a
+## GAME OVER / HOLD LEAVE click would instantiate a second planet while the
+## first is still in memory, then yank the current scene out from under the
+## button. Prefer handing the live world back to its home overlay; only load
+## the scene when there is no world left to return to.
+func _return_to_menu() -> void:
+	var world := active_world as GameWorld
+	if world == null or not is_instance_valid(world) or not world.is_inside_tree():
+		var scene := get_tree().current_scene if get_tree() != null else null
+		if scene is GameWorld:
+			world = scene as GameWorld
+	if world != null and is_instance_valid(world) and world.is_inside_tree() \
+			and world.has_method(&"return_to_home"):
+		world.call_deferred(&"return_to_home")
+		return
+	if menu_scene_path.is_empty() or not ResourceLoader.exists(menu_scene_path):
+		return
+	var tree := get_tree()
+	if tree == null:
+		return
+	if tree.current_scene != null \
+			and str(tree.current_scene.scene_file_path) == menu_scene_path:
+		tree.reload_current_scene.call_deferred()
+		return
+	tree.change_scene_to_file.bind(menu_scene_path).call_deferred()
 
 
 func _lobby_metadata() -> Dictionary:

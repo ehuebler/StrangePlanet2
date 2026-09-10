@@ -47,6 +47,43 @@ func begin_drop() -> void:
 	set_physics_process(true)
 
 
+func set_director_lod(lod: int) -> void:
+	super.set_director_lod(lod)
+	if _dropping:
+		set_physics_process(true)
+
+
+func _physics_process(delta: float) -> void:
+	if _dropping and _is_host() and _alive:
+		_tick_statuses(delta)
+		if not _alive:
+			return
+		_fall(delta)
+		if velocity.length_squared() > 0.0001:
+			global_position += velocity * delta
+		_face_combat_target()
+		_publish_state(delta)
+		return
+	super._physics_process(delta)
+	_face_combat_target()
+
+
+func director_cold_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if _dropping:
+		return
+	super.director_cold_tick(delta, step, steer, player, in_city)
+	_face_combat_target()
+
+
+func director_warm_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if _dropping:
+		return
+	super.director_warm_tick(delta, step, steer, player, in_city)
+	_face_combat_target()
+
+
 func _keep_clear_of_terrain(snap: bool) -> void:
 	if _dropping:
 		return
@@ -68,7 +105,9 @@ func _tick_idle(delta: float) -> void:
 		_fall(delta)
 		return
 	_abort_aim()
-	snap_to_ground()
+	_faces_motion = true
+	if _director_lod == CrawlerRules.MOB_LOD_HOT:
+		snap_to_ground()
 	_match_speed(move_speed() * 0.42, delta, 1.4)
 	_patrol_left -= delta
 	if _patrol_left <= 0.0 or _flat_toward(_patrol_goal).length() < 2.2:
@@ -96,7 +135,8 @@ func _tick_ai(delta: float) -> void:
 		_hold_aim(player, delta)
 		_try_fire(player, delta)
 		return
-	_close_and_aim(player, delta)
+	_tick_hunt_motion(player, delta)
+	_try_fire(player, delta)
 
 
 func _tick_far(delta: float) -> void:
@@ -105,7 +145,8 @@ func _tick_far(delta: float) -> void:
 		return
 	var player := _nearest_player()
 	if player != null and tick_agro(player, delta):
-		_close_and_aim(player, delta)
+		_tick_hunt_motion(player, delta)
+		_try_fire(player, delta)
 		return
 	_tick_idle(delta)
 
@@ -119,13 +160,15 @@ func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
 		return
 	var step := maxf(delta, 0.0)
 	if player != null and _apply_agro(player, step, in_city):
-		_close_and_aim(player, step)
+		_tick_hunt_motion(player, step)
+		_try_fire(player, step)
 	else:
 		_tick_idle(step)
 
 
 func _close_and_aim(player: Node, delta: float) -> void:
-	_faces_motion = true
+	_faces_motion = false
+	_face_prey(player)
 	var at := _combat_position_of(player)
 	var along := _flat_toward(at)
 	var gap := along.length()
@@ -147,6 +190,30 @@ func _close_and_aim(player: Node, delta: float) -> void:
 	_try_fire(player, delta)
 
 
+func _on_agro_started() -> void:
+	_faces_motion = false
+	_face_combat_target()
+
+
+func _face_combat_target() -> void:
+	if not chase or _movement_locked():
+		return
+	var player := _nearest_player()
+	if player == null:
+		return
+	_faces_motion = false
+	_face_prey(player)
+
+
+func _face_prey(player: Node) -> void:
+	if player == null:
+		return
+	var look := _flat_toward(_combat_position_of(player))
+	if look.length_squared() < 0.0001:
+		return
+	global_transform.basis = _look_basis(look.normalized(), _up())
+
+
 func _aiming() -> bool:
 	return _aim_left > 0.0
 
@@ -155,7 +222,7 @@ func _abort_aim() -> void:
 	_aim_left = 0.0
 	_pending_shot = false
 	_act = ""
-	_faces_motion = true
+	_faces_motion = not chase
 
 
 func _hold_aim(player: Node, delta: float) -> void:
@@ -180,10 +247,8 @@ func _try_fire(player: Node, delta: float) -> void:
 	if _fire_left > 0.0:
 		return
 	var gap := _flat_gap(player)
-	var near := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_min", 12.0)
-	var far := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_max", 28.0)
+	var near := CrawlerHunt.shot_min(wild_kind(), threat_level)
+	var far := CrawlerHunt.shot_max(wild_kind(), threat_level)
 	if gap < near or gap > far:
 		return
 	var aim := CrawlerMobs.number(
@@ -197,7 +262,7 @@ func _try_fire(player: Node, delta: float) -> void:
 
 func _release_shot(player: Node) -> void:
 	_pending_shot = false
-	_faces_motion = true
+	_faces_motion = not chase
 	_act = ""
 	var from := muzzle_point()
 	var target := _combat_position_of(player)
@@ -241,11 +306,32 @@ func _spawn_shot(
 func _fall(delta: float) -> void:
 	var up := _up()
 	velocity -= up * DROP_GRAVITY * delta
-	var surface := ground_surface(global_position)
+	var surface := _drop_surface()
 	if not surface.is_finite():
 		return
 	if (global_position - surface).dot(up) <= ground_clearance() + 0.35:
-		snap_to_ground()
+		if _planet != null:
+			up = _planet.up_at(surface)
+		global_position = surface + up * ground_clearance()
 		velocity -= up * velocity.dot(up)
+		_cached_alt = ground_clearance()
+		_cached_alt_at = global_position
+		hang_origin = global_position
+		_patrol_goal = global_position
 		_dropping = false
-		_faces_motion = true
+		var prey := _nearest_player()
+		if prey != null:
+			tick_agro(prey, 0.0)
+		_faces_motion = not chase
+		_face_combat_target()
+
+
+func _drop_surface() -> Vector3:
+	var hit := ground_surface()
+	var mesh := mesh_surface()
+	if mesh.is_finite() and hit.is_finite() \
+			and (hit - mesh).dot(_up()) > 4.0:
+		return mesh
+	if hit.is_finite():
+		return hit
+	return mesh

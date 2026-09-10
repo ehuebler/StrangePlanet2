@@ -1,10 +1,11 @@
 class_name EnergyVfx
 extends Node3D
 
-## Instantiates one of the three authored energy GLBs and retints it.
+## A sphere or cylinder wearing [constant SHADER]. Authored energy GLBs are
+## not used: the hull is a Godot primitive and the fire lives in the material.
 ##
-## Beams are authored along +Y at a fixed length. [method place_beam] stretches
-## that axis between two world points. Projectiles scale uniformly.
+## Beams are a unit cylinder on +Y, muzzle at the origin. [method place_beam]
+## maps that span onto [param from] → [param to]. Projectiles scale uniformly.
 
 enum Kind {
 	PROJECTILE,
@@ -12,14 +13,10 @@ enum Kind {
 	BEAM_STREAMS,
 }
 
-const PROJECTILE_SCENE := preload("res://assets/runtime/vfx/energy/energy_projectile.glb")
-const BEAM_CORE_SCENE := preload("res://assets/runtime/vfx/energy/energy_beam_core.glb")
-const BEAM_STREAMS_SCENE := preload("res://assets/runtime/vfx/energy/energy_beam_streams.glb")
-
-const BEAM_LENGTH := 3.2
-const STREAM_LENGTH := 3.4
-const BEAM_WIDTH := 0.18
-const PROJECTILE_RADIUS := 0.42
+const SHADER := preload("res://shaders/vivid/energy_glow.gdshader")
+const BEAM_LENGTH := 1.0
+const BEAM_WIDTH := 0.5
+const PROJECTILE_RADIUS := 0.5
 
 const TINT_RED := Color(1.0, 0.32, 0.22)
 const TINT_DARK_RED := Color(0.46, 0.04, 0.06)
@@ -33,7 +30,12 @@ var kind := Kind.PROJECTILE
 var _visual: Node3D
 var _tint := Color.WHITE
 var _invert := false
-var _painted := false
+var _opacity := 1.0
+var _span_length := BEAM_LENGTH
+var _span_min_y := 0.0
+var _span_width := BEAM_WIDTH
+var _core_mat: ShaderMaterial
+var _glow_mat: ShaderMaterial
 
 
 static func make(kind: Kind, tint := Color.WHITE, invert := false) -> EnergyVfx:
@@ -44,17 +46,53 @@ static func make(kind: Kind, tint := Color.WHITE, invert := false) -> EnergyVfx:
 	return effect
 
 
+static func glow_material(
+		fire: Color,
+		core: Color,
+		shape_beam := false,
+		energy := 3.4,
+		flicker := 0.55,
+		core_size := 0.30,
+		layer := 1.0,
+		invert := false) -> ShaderMaterial:
+	var material := ShaderMaterial.new()
+	material.shader = SHADER
+	material.set_shader_parameter(&"fire_color", fire)
+	material.set_shader_parameter(&"core_color", core)
+	material.set_shader_parameter(&"energy", energy)
+	material.set_shader_parameter(&"flicker", flicker)
+	material.set_shader_parameter(&"core_size", core_size)
+	material.set_shader_parameter(&"shape", 1.0 if shape_beam else 0.0)
+	material.set_shader_parameter(&"layer", layer)
+	material.set_shader_parameter(&"invert", 1.0 if invert else 0.0)
+	material.set_shader_parameter(&"seed", 0.0)
+	material.set_shader_parameter(&"opacity", 1.0)
+	return material
+
+
+static func paint_glow(
+		material: ShaderMaterial,
+		fire: Color,
+		core: Color,
+		invert := false) -> void:
+	if material == null:
+		return
+	material.set_shader_parameter(&"fire_color", fire)
+	material.set_shader_parameter(&"core_color", core)
+	material.set_shader_parameter(&"invert", 1.0 if invert else 0.0)
+
+
 func _ready() -> void:
-	var packed := _scene_for(kind)
-	if packed == null:
-		return
-	_visual = packed.instantiate() as Node3D
-	if _visual == null:
-		return
+	_visual = Node3D.new()
 	_visual.name = "EnergyMesh"
 	add_child(_visual)
-	_loop_animations(_visual)
-	_disable_shadows(_visual)
+	_span_length = BEAM_LENGTH
+	_span_min_y = 0.0
+	_span_width = BEAM_WIDTH
+	if kind == Kind.PROJECTILE:
+		_build_orb()
+	else:
+		_build_beam()
 	_apply_tint(_tint, _invert)
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 
@@ -63,11 +101,23 @@ func current_tint() -> Color:
 	return _tint
 
 
+func uses_glow_shader() -> bool:
+	return _glow_mat != null and _glow_mat.shader == SHADER
+
+
 func set_tint(tint: Color, invert := false) -> void:
 	_tint = Color(tint.r, tint.g, tint.b, 1.0)
 	_invert = invert
-	if _visual != null:
-		_apply_tint(_tint, _invert)
+	_apply_tint(_tint, _invert)
+
+
+func current_opacity() -> float:
+	return _opacity
+
+
+func set_opacity(opacity: float) -> void:
+	_opacity = clampf(opacity, 0.0, 1.0)
+	_paint_opacity()
 
 
 func set_ball_radius(radius: float) -> void:
@@ -86,12 +136,12 @@ func place_beam(from: Vector3, to: Vector3, world_radius := BEAM_WIDTH) -> bool:
 	if side.length_squared() < 0.000001:
 		visible = false
 		return false
-	var width := maxf(world_radius, 0.01) / BEAM_WIDTH
+	var width := maxf(world_radius, 0.01) / _span_width
 	side = side.normalized() * width
+	var scale_y := span / _span_length
 	global_transform = Transform3D(
-		Basis(side, up * (span / _authored_length()),
-			side.cross(up).normalized() * width),
-		from + along * 0.5)
+		Basis(side, up * scale_y, side.cross(up).normalized() * width),
+		from - up * (_span_min_y * scale_y))
 	visible = true
 	reset_physics_interpolation()
 	return true
@@ -107,90 +157,82 @@ func point_along(along: Vector3) -> void:
 	rotate_object_local(Vector3.RIGHT, -PI * 0.5)
 
 
-func _authored_length() -> float:
-	return STREAM_LENGTH if kind == Kind.BEAM_STREAMS else BEAM_LENGTH
+func _build_orb() -> void:
+	_core_mat = glow_material(
+		_tint, _core_colour(_tint, _invert), false,
+		5.4, 0.38, 0.28, 0.0, _invert)
+	_glow_mat = glow_material(
+		_tint, _core_colour(_tint, _invert), false,
+		3.2, 0.62, 0.22, 1.0, _invert)
+	_add_sphere("Core", 0.16, _core_mat)
+	_add_sphere("Glow", 0.50, _glow_mat)
 
 
-static func _scene_for(kind: Kind) -> PackedScene:
-	match kind:
-		Kind.BEAM_CORE:
-			return BEAM_CORE_SCENE
-		Kind.BEAM_STREAMS:
-			return BEAM_STREAMS_SCENE
-		_:
-			return PROJECTILE_SCENE
+func _build_beam() -> void:
+	var streams := kind == Kind.BEAM_STREAMS
+	_core_mat = glow_material(
+		_tint, _core_colour(_tint, _invert), true,
+		4.8, 0.38, 0.26, 0.0, _invert)
+	_glow_mat = glow_material(
+		_tint, _core_colour(_tint, _invert), true,
+		3.0, 0.70 if streams else 0.48, 0.22, 1.0, _invert)
+	_add_cylinder("Core", 0.20, _core_mat)
+	_add_cylinder("Glow", 0.50, _glow_mat)
+
+
+func _add_sphere(mesh_name: String, radius: float, material: Material) -> void:
+	var mesh := SphereMesh.new()
+	mesh.radius = radius
+	mesh.height = radius * 2.0
+	mesh.radial_segments = 20
+	mesh.rings = 12
+	var node := MeshInstance3D.new()
+	node.name = mesh_name
+	node.mesh = mesh
+	node.material_override = material
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_visual.add_child(node)
+
+
+func _add_cylinder(mesh_name: String, radius: float, material: Material) -> void:
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius
+	mesh.bottom_radius = radius
+	mesh.height = BEAM_LENGTH
+	mesh.radial_segments = 14
+	mesh.rings = 1
+	var node := MeshInstance3D.new()
+	node.name = mesh_name
+	node.mesh = mesh
+	node.material_override = material
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Unit cylinder, muzzle at Y=0, tip at Y=1.
+	node.position = Vector3(0.0, BEAM_LENGTH * 0.5, 0.0)
+	_visual.add_child(node)
 
 
 func _apply_tint(tint: Color, invert: bool) -> void:
-	if _visual == null:
-		return
-	for node: Node in _visual.find_children("*", "MeshInstance3D", true, false):
-		var mesh := node as MeshInstance3D
-		if mesh == null:
-			continue
-		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		var core := _is_core_mesh(mesh)
-		var colour := _mesh_colour(tint, invert, core)
-		var material := mesh.material_override as StandardMaterial3D
-		if material == null:
-			material = _copy_material(mesh)
-			mesh.material_override = material
-		if material == null:
-			continue
-		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		material.emission_enabled = true
-		material.albedo_color = Color(colour, material.albedo_color.a if material.albedo_color.a > 0.0 else 1.0)
-		material.emission = colour
-		if invert and core:
-			material.emission_energy_multiplier = maxf(material.emission_energy_multiplier, 2.4)
-		elif core:
-			material.emission_energy_multiplier = maxf(material.emission_energy_multiplier, 5.5)
-		else:
-			material.emission_energy_multiplier = maxf(material.emission_energy_multiplier, 3.2)
-	_painted = true
+	var fire := tint
+	var core := _core_colour(tint, invert)
+	var phase := float(abs(get_instance_id()) % 47)
+	paint_glow(_core_mat, fire, core, invert)
+	paint_glow(_glow_mat, fire, core, invert)
+	if _core_mat != null:
+		_core_mat.set_shader_parameter(&"seed", phase)
+	if _glow_mat != null:
+		_glow_mat.set_shader_parameter(&"seed", phase + 11.0)
+	_paint_opacity()
 
 
-func _mesh_colour(tint: Color, invert: bool, core: bool) -> Color:
+func _paint_opacity() -> void:
+	if _core_mat != null:
+		_core_mat.set_shader_parameter(&"opacity", _opacity)
+	if _glow_mat != null:
+		_glow_mat.set_shader_parameter(&"opacity", _opacity)
+
+
+func _core_colour(tint: Color, invert: bool) -> Color:
 	if invert:
-		if core:
-			return Color(1.0 - tint.r, 1.0 - tint.g, 1.0 - tint.b)
-		return tint
-	if core:
-		return tint.lerp(Color.WHITE, 0.62)
-	return tint
-
-
-func _is_core_mesh(mesh: MeshInstance3D) -> bool:
-	var folded := mesh.name.to_lower()
-	return folded.contains("core") or folded.contains("blade") or folded.contains("hot")
-
-
-func _copy_material(mesh: MeshInstance3D) -> StandardMaterial3D:
-	var source: Material = mesh.material_override
-	if source == null and mesh.mesh != null and mesh.mesh.get_surface_count() > 0:
-		source = mesh.get_active_material(0)
-	if source is StandardMaterial3D:
-		return (source as StandardMaterial3D).duplicate() as StandardMaterial3D
-	var made := StandardMaterial3D.new()
-	made.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	made.emission_enabled = true
-	return made
-
-
-func _loop_animations(root: Node) -> void:
-	for node: Node in root.find_children("*", "AnimationPlayer", true, false):
-		var player := node as AnimationPlayer
-		if player == null or player.get_animation_list().is_empty():
-			continue
-		var name := StringName(player.get_animation_list()[0])
-		var clip := player.get_animation(name)
-		if clip != null:
-			clip.loop_mode = Animation.LOOP_LINEAR
-		player.play(name)
-
-
-func _disable_shadows(root: Node) -> void:
-	for node: Node in root.find_children("*", "GeometryInstance3D", true, false):
-		var geo := node as GeometryInstance3D
-		if geo != null:
-			geo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		return Color(1.0 - tint.r, 1.0 - tint.g, 1.0 - tint.b)
+	# Almost white-hot. A core that is only a pale tint reads as a painted blob.
+	return tint.lerp(Color(1.0, 0.96, 0.84), 0.82)

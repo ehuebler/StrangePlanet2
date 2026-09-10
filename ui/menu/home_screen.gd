@@ -1925,10 +1925,10 @@ func start_saved_game() -> void:
 	NetworkManager.start_saved_game(payload)
 
 
-## Pays for the descent in advance without replacing the menu with a loading
-## screen. [WorldWarmup] draws through its own offscreen viewport, so the meshes
-## that force texture and shader preparation never enter this camera's world.
-## A small red/green bar tracks that work so the still shot does not look hung.
+## Crawler and sandbox only wait here for site and ring assignment. Shader
+## compiles and terrain settle keep going after the session opens. Story still
+## pays the whole bill on this bar. [WorldWarmup] draws through its own
+## offscreen viewport, so those meshes never enter this camera's world.
 func _warm_up(game_mode := "") -> void:
 	_warming = true
 	_hold_preview_still(true)
@@ -1937,7 +1937,10 @@ func _warm_up(game_mode := "") -> void:
 	warmup.name = "WorldWarmup"
 	warmup.progressed.connect(_on_warmup_progressed)
 	_world().add_child(warmup)
-	await warmup.run(_world(), _camera, game_mode)
+	if CrawlerRules.uses_mode(game_mode):
+		await warmup.assign_run(_world(), game_mode, true)
+	else:
+		await warmup.run(_world(), _camera, game_mode)
 	if warmup.progressed.is_connected(_on_warmup_progressed):
 		warmup.progressed.disconnect(_on_warmup_progressed)
 	warmup.queue_free()

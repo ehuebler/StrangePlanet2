@@ -21,13 +21,7 @@ static func range_of(stats: Dictionary) -> float:
 
 
 static func combat_at(node: Node) -> Vector3:
-	if node != null and node.has_method(&"combat_position"):
-		var at: Variant = node.call(&"combat_position")
-		if at is Vector3 and (at as Vector3).is_finite():
-			return at
-	if node is Node3D:
-		return (node as Node3D).global_position
-	return Vector3.ZERO
+	return CombatantSense.aim_point(node)
 
 
 static func is_live(node: Node) -> bool:
@@ -47,38 +41,14 @@ static func nearest(anywhere: Node, from: Vector3, along: Vector3,
 		return null
 	var face := along.normalized() if along.length_squared() > 0.000001 \
 		else Vector3.ZERO
-	var reach := range_of(stats)
-	var best: Node = null
-	var best_span := reach
-	for node in foes(anywhere):
-		var at := combat_at(node)
-		var away := at - from
-		var span := away.length()
-		if span > best_span or span < 0.12:
-			continue
-		if keep > -0.999 and face != Vector3.ZERO:
-			if away.normalized().dot(face) < keep:
-				continue
-		best = node
-		best_span = span
-	return best
+	return CrawlerShotSense.prey(anywhere, from, range_of(stats), anywhere,
+		face, keep, 0.12, true)
 
 
 static func foes(anywhere: Node) -> Array[Node]:
-	var out: Array[Node] = []
 	if anywhere == null or not anywhere.is_inside_tree():
-		return out
-	var shooter := anywhere
-	for node_variant: Variant in anywhere.get_tree().get_nodes_in_group(
-			DamageHit.COMBATANT_GROUP):
-		var node := node_variant as Node
-		if node == null or node == shooter or not is_live(node):
-			continue
-		if node.has_method(&"combat_faction") \
-				and int(node.call(&"combat_faction")) != DamageHit.Faction.ENEMY:
-			continue
-		out.append(node)
-	return out
+		return []
+	return CombatantSense.collect(anywhere, anywhere, DamageHit.Faction.ENEMY)
 
 
 static func aim(from: Vector3, along: Vector3, stats: Dictionary,

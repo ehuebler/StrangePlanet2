@@ -3,7 +3,8 @@ extends Node3D
 
 ## Tide Margin spawn. The Relay 07 teleporter sits at the authored
 ## coordinate-plate reading; the player arrives on its receiver pad.
-## Standing on this deck keeps field packs from agroing.
+## The field stays dark until a player steps off this deck. After that
+## the pad is scenery: packs can walk onto it and never despawn there.
 
 const GROUP := &"crawler_spawn_pads"
 const MODEL := "res://assets/runtime/environment/relay_07_spawn.glb"
@@ -23,6 +24,8 @@ const PANEL_NAMES := [
 
 var force_model := false
 var _model: Node3D
+var _field_open := false
+var _saw_standing := false
 
 
 func configure(at: Transform3D) -> void:
@@ -33,6 +36,22 @@ func _ready() -> void:
 	add_to_group(GROUP)
 	_attach_model()
 	_register_flora()
+	set_physics_process(true)
+
+
+func _physics_process(_delta: float) -> void:
+	if _field_open or not is_inside_tree():
+		set_physics_process(false)
+		return
+	var tree := get_tree()
+	if tree == null:
+		return
+	for node_variant: Variant in tree.get_nodes_in_group("network_players"):
+		var body := node_variant as Node3D
+		if body != null:
+			notice_player(body.global_position)
+		if _field_open:
+			return
 
 
 func _exit_tree() -> void:
@@ -122,11 +141,36 @@ func holds_standing(point: Vector3) -> bool:
 		and local.y >= -12.0 and local.y <= 28.0
 
 
-func blocks_near(point: Vector3) -> bool:
-	var local := to_local(point) if is_inside_tree() else point
-	var radial := Vector2(local.x, local.z).length()
-	return radial <= keepout_radius() \
-		and local.y >= -12.0 and local.y <= 28.0
+## True until a player who stood on the deck walks off. Horde fill waits
+## on this; after it flips the pad is no longer a site.
+func holds_field() -> bool:
+	return not _field_open
+
+
+func shelters_standing(point: Vector3) -> bool:
+	return holds_field() and holds_standing(point)
+
+
+func notice_player(point: Vector3) -> void:
+	if _field_open or not point.is_finite():
+		return
+	if holds_standing(point):
+		_saw_standing = true
+		return
+	if _saw_standing:
+		open_field()
+
+
+func open_field() -> void:
+	if _field_open:
+		return
+	_field_open = true
+	if is_inside_tree():
+		set_physics_process(false)
+
+
+func blocks_near(_point: Vector3) -> bool:
+	return false
 
 
 static func blocks_near_any(tree: SceneTree, point: Vector3) -> bool:

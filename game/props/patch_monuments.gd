@@ -1,18 +1,17 @@
 class_name PatchMonuments
 extends Node3D
 
-## Places the authored tower and castle on their land patches when the planet
-## loads. Collision comes from each GLB's wall, floor, and furniture proxies,
-## not a solid hull. Every session mode sees them; crawler quests only light
-## the waypoints.
+## Places the adobe office and castle on their land patches when the planet
+## loads. House shells keep the visible mesh so doorways stay open. Streets
+## are a box grid. Furniture stays a cheap hull. Crawler runs place their
+## own copies; this host is the session-mode fallback.
 
-const TOWER_MODEL := "res://assets/runtime/environment/meridian_office_tower.glb"
-const CASTLE_MODEL := "res://assets/runtime/environment/stormwatch_castle.glb"
-const NIGHT_LIGHTS := preload("res://game/city/building_night_lights.gd")
-const TIDEKIN_OFFICE := preload("res://game/crawler/crawler_tidekin_office.gd")
-const CASTLE_GARRISON := preload("res://game/crawler/crawler_castle_garrison.gd")
+const TOWER_MODEL := "res://assets/runtime/environment/adobe/adobe_office.glb"
+const CASTLE_MODEL := "res://assets/runtime/environment/adobe/adobe_castle.glb"
 const KEEP_OUT := 180.0
 const TOWER_HALF_SPAN := 52.0
+const WALK_BODY := "WalkBody"
+const PATH_CELL := 1.5
 
 
 func _ready() -> void:
@@ -98,15 +97,13 @@ func _attach_model(site: PatchMonument, model_path: String) -> void:
 		return
 	body.name = "Model"
 	site.add_child(body)
-	wire_interior_collision(body)
-	BuildingFoundation.seat(body, site.planet_host())
-	NIGHT_LIGHTS.bind(body, site.planet_host())
+	CrawlerAdobeSite.prepare(body, site.monument_id, site.planet_host())
 	BuildingFloraClear.register_node(
-		site, body, site.direction, CrawlerRules.SITE_CLEAR_RADIUS, 0.0)
-	if site.monument_id == CrawlerProgress.QUEST_TOWER:
-		TIDEKIN_OFFICE.attach(site, body)
-	elif site.monument_id == CrawlerProgress.QUEST_CASTLE:
-		CASTLE_GARRISON.attach(site, body)
+		site,
+		body,
+		site.direction,
+		CrawlerAdobeSite.footprint_metres(body),
+		CrawlerAdobeSite.FLORA_PAD)
 
 
 static func wire_interior_collision(root: Node) -> void:
@@ -204,7 +201,155 @@ static func _is_colonly(node_name: String) -> bool:
 			or folded.contains("colonly")
 
 
-static func _trimesh_from_mesh(mesh_i: MeshInstance3D) -> void:
+static func wire_visible_collision(root: Node) -> void:
+	_drop_envelope(root)
+	_harden_trimesh(root)
+	if _has_authored_colonly(root):
+		return
+	_clear_walk_body(root)
+	_wire_walk_collision(root)
+	if not _has_walk_shape(root):
+		push_warning("PatchMonuments: %s has no walkable collision" % root.name)
+
+
+static func _has_authored_colonly(root: Node) -> bool:
+	for mesh_i in _mesh_instances(root):
+		if _is_colonly(mesh_i.name):
+			return true
+	return false
+
+
+static func _clear_walk_body(root: Node) -> void:
+	var held := root.get_node_or_null(WALK_BODY)
+	if held != null:
+		held.free()
+
+
+static func _wire_walk_collision(root: Node) -> void:
+	if root == null:
+		return
+	var body := StaticBody3D.new()
+	body.name = WALK_BODY
+	body.collision_layer = 1
+	body.collision_mask = 0
+	root.add_child(body)
+	_add_walk_shapes(root, Transform3D.IDENTITY, body)
+	if body.get_child_count() == 0:
+		body.free()
+
+
+static func _add_walk_shapes(node: Node, xform: Transform3D, body: StaticBody3D) -> void:
+	if node is MeshInstance3D:
+		var mesh_i := node as MeshInstance3D
+		if _use_walk_mesh(mesh_i):
+			if BuildingFoundation.is_path_instance(mesh_i):
+				_add_path_boxes(body, mesh_i.mesh, xform)
+			elif BuildingFoundation.is_shell_mesh(mesh_i.name):
+				_add_trimesh(body, mesh_i.mesh, xform)
+			else:
+				_add_convex(body, mesh_i.mesh, xform)
+	for child in node.get_children():
+		if child == body or child.name == WALK_BODY:
+			continue
+		var next := xform
+		if child is Node3D:
+			next = xform * (child as Node3D).transform
+		_add_walk_shapes(child, next, body)
+
+
+static func _use_walk_mesh(mesh_i: MeshInstance3D) -> bool:
+	if mesh_i.mesh == null or not mesh_i.visible:
+		return false
+	if _is_underfill_proxy(mesh_i.name) or _is_colonly(mesh_i.name):
+		return false
+	var named := String(mesh_i.name)
+	return named != BuildingFoundation.SKIRT_NAME \
+			and named != BuildingFoundation.PATH_SKIRT_NAME
+
+
+static func _add_convex(body: StaticBody3D, mesh: Mesh, xform: Transform3D) -> void:
+	var shape := mesh.create_convex_shape(true, true)
+	if shape == null:
+		shape = mesh.create_convex_shape(true, false)
+	if shape == null:
+		return
+	var collider := CollisionShape3D.new()
+	collider.shape = shape
+	collider.transform = xform
+	body.add_child(collider)
+
+
+static func _add_trimesh(body: StaticBody3D, mesh: Mesh, xform: Transform3D) -> void:
+	var shape := mesh.create_trimesh_shape()
+	if shape == null:
+		return
+	if shape is ConcavePolygonShape3D:
+		(shape as ConcavePolygonShape3D).backface_collision = true
+	var collider := CollisionShape3D.new()
+	collider.shape = shape
+	collider.transform = xform
+	body.add_child(collider)
+
+
+static func _add_path_boxes(body: StaticBody3D, mesh: Mesh, xform: Transform3D) -> void:
+	var cells := {}
+	var tris := PackedVector3Array()
+	BuildingFoundation.collect_floor_tris(mesh, xform, tris)
+	var cursor := 0
+	while cursor + 2 < tris.size():
+		_mark_path_cells(tris[cursor], tris[cursor + 1], tris[cursor + 2], cells)
+		cursor += 3
+	for key_variant: Variant in cells.keys():
+		var key: Vector2i = key_variant
+		var span: Vector2 = cells[key]
+		var thick := maxf(span.y - span.x, 0.45)
+		var box := BoxShape3D.new()
+		box.size = Vector3(PATH_CELL, thick, PATH_CELL)
+		var collider := CollisionShape3D.new()
+		collider.shape = box
+		collider.position = Vector3(
+			(float(key.x) + 0.5) * PATH_CELL,
+			(span.x + span.y) * 0.5,
+			(float(key.y) + 0.5) * PATH_CELL)
+		body.add_child(collider)
+
+
+static func _mark_path_cells(a: Vector3, b: Vector3, c: Vector3, cells: Dictionary) -> void:
+	var min_y := minf(a.y, minf(b.y, c.y))
+	var max_y := maxf(a.y, maxf(b.y, c.y))
+	var x0 := int(floor(minf(a.x, minf(b.x, c.x)) / PATH_CELL))
+	var x1 := int(floor(maxf(a.x, maxf(b.x, c.x)) / PATH_CELL))
+	var z0 := int(floor(minf(a.z, minf(b.z, c.z)) / PATH_CELL))
+	var z1 := int(floor(maxf(a.z, maxf(b.z, c.z)) / PATH_CELL))
+	for x in range(x0, x1 + 1):
+		for z in range(z0, z1 + 1):
+			var key := Vector2i(x, z)
+			if cells.has(key):
+				var held: Vector2 = cells[key]
+				cells[key] = Vector2(minf(held.x, min_y), maxf(held.y, max_y))
+			else:
+				cells[key] = Vector2(min_y, max_y)
+
+
+static func _has_walk_shape(node: Node) -> bool:
+	if node is CollisionShape3D:
+		var collider := node as CollisionShape3D
+		if not collider.disabled and collider.shape != null:
+			return true
+	for child in node.get_children():
+		if _has_walk_shape(child):
+			return true
+	return false
+
+
+static func _already_has_body(mesh_i: MeshInstance3D) -> bool:
+	for child in mesh_i.get_children():
+		if child is StaticBody3D:
+			return true
+	return false
+
+
+static func _trimesh_from_mesh(mesh_i: MeshInstance3D, hide := true) -> void:
 	if mesh_i.mesh == null:
 		return
 	var shape := mesh_i.mesh.create_trimesh_shape()
@@ -212,7 +357,8 @@ static func _trimesh_from_mesh(mesh_i: MeshInstance3D) -> void:
 		return
 	if shape is ConcavePolygonShape3D:
 		(shape as ConcavePolygonShape3D).backface_collision = true
-	mesh_i.visible = false
+	if hide:
+		mesh_i.visible = false
 	var body := StaticBody3D.new()
 	body.name = "%s_Body" % mesh_i.name
 	body.collision_layer = 1

@@ -60,8 +60,8 @@ func _check_containers_and_hud() -> void:
 	var badges := PackedStringArray()
 	for slot in slots:
 		badges.append(slot.badge)
-	_expect(badges == PackedStringArray(["Q", "F", "1", "2", "3", "4"]),
-		"HUD order is Q, F, 1, 2, 3, 4")
+	_expect(badges == PackedStringArray(["Q", "RMB", "1", "2", "3", "4"]),
+		"HUD order is Q, RMB, 1, 2, 3, 4")
 	_expect(slots.size() == 6 and slots[2].container == _player.abilities
 		and slots[5].container == _player.abilities,
 		"HUD binds the numbered tiles to the ability container")

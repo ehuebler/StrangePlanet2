@@ -26,7 +26,7 @@ var _shooter_rid := RID()
 var _shooter: Node
 var _live := 0.0
 var _spark := -1.0
-var _mesh: MeshInstance3D
+var _core: EnergyVfx
 var _lamp: OmniLight3D
 
 
@@ -47,25 +47,9 @@ static func fire(world: Node, from: Vector3, along: Vector3, shooter: CollisionO
 
 
 func _ready() -> void:
-	var capsule := CapsuleMesh.new()
-	capsule.radius = RADIUS
-	capsule.height = LENGTH
-	capsule.radial_segments = 6
-	capsule.rings = 1
-
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = COLOR
-	material.emission_enabled = true
-	material.emission = COLOR
-	material.emission_energy_multiplier = 2.4
-	capsule.material = material
-
-	_mesh = MeshInstance3D.new()
-	_mesh.mesh = capsule
-	# A capsule stands along +Y, and a bolt lies along the way it is going.
-	_mesh.rotation.x = -PI * 0.5
-	add_child(_mesh)
+	_core = EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, COLOR)
+	add_child(_core)
+	_core.set_ball_radius(RADIUS * 2.4)
 
 	# Enough to catch on whatever it passes without washing the shooter cyan.
 	_lamp = OmniLight3D.new()
@@ -100,7 +84,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _land(normal: Vector3) -> void:
-	_mesh.visible = false
+	if is_instance_valid(_core):
+		_core.visible = false
 	_lamp.light_energy = 2.6
 	_lamp.omni_range = 2.6
 	_spark = SPARK_TIME

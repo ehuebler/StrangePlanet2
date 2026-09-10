@@ -30,6 +30,8 @@ func _ready() -> void:
 	add_child(world)
 	await get_tree().process_frame
 	_check_sandbox_matches_crawler(world)
+	await _check_sandbox_reststop()
+	await _check_sandbox_waypoints()
 
 	world.queue_free()
 	await get_tree().process_frame
@@ -72,9 +74,35 @@ func _make_world() -> GameWorld:
 func _check_sandbox_matches_crawler(world: GameWorld) -> void:
 	_expect(CrawlerRules.active() and CrawlerRules.sandbox(),
 		"sandbox hosts crawler rules")
+	var saved_solo := NetworkManager.is_single_player
+	NetworkManager.is_single_player = true
+	_expect(CrawlerRules.crawler_free_respawn(),
+		"sandbox GAME OVER respawns without a ticket")
+	NetworkManager.is_single_player = saved_solo
+	_expect(CrawlerRules.starts_visible(CrawlerRules.CITY_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerRules.START_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerRules.CITY_CRESCENT_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerProgress.QUEST_CASTLE),
+		"sandbox starts with city 1 and waits on the later sites")
+	var held_run := CrawlerRun.payload.duplicate(true)
+	var held_path := CrawlerRun.path
+	CrawlerRun.clear()
+	_expect(CrawlerRun.ensure_session() and CrawlerRun.active(),
+		"sandbox picks a crawler run")
+	_expect(CrawlerRules.starts_visible(CrawlerRun.first_city_id()),
+		"a sandbox run lights city 1 first")
+	_expect(not CrawlerRules.first_city_map_ids().has(CrawlerRules.START_SITE_ID),
+		"a sandbox run does not put Tide Margin on the city map")
+	CrawlerRun.clear()
+	CrawlerRun.payload = held_run
+	CrawlerRun.path = held_path
+	if not held_run.is_empty():
+		CrawlerRun._index()
 	var sandbox_at := world._spawn_transform(1)
 	NetworkManager.session_options["mode"] = "crawler"
-	_expect(CrawlerRules.active() and not CrawlerRules.sandbox(),
+	_expect(CrawlerRules.active() and not CrawlerRules.sandbox()
+			and not CrawlerRules.starts_visible(CrawlerRules.START_SITE_ID)
+			and not CrawlerRules.starts_visible(CrawlerRules.CITY_CRESCENT_SITE_ID),
 		"crawler stays the named crawler mode")
 	var crawler_at := world._spawn_transform(1)
 	_expect(sandbox_at.is_equal_approx(crawler_at),
@@ -103,6 +131,54 @@ func _check_sandbox_matches_crawler(world: GameWorld) -> void:
 			and not CrawlerRules.sandbox_infinite_gold(),
 		"crawler never reads sandbox cheats")
 	CrawlerRules.clear_sandbox_cheats()
+
+
+func _check_sandbox_reststop() -> void:
+	NetworkManager.session_options["mode"] = "sandbox"
+	var store := CrawlerFieldMenu.new()
+	add_child(store)
+	await get_tree().process_frame
+	store._clear_list()
+	store._fill_reststop()
+	var rest_gold := store.find_child("RestAct_gold", true, false) as Button
+	var rest_stores := store.find_child("RestAct_stores", true, false) as Button
+	_expect(rest_gold != null and rest_gold.visible and rest_gold.text == "SET",
+		"sandbox reststop offers infinite gold")
+	_expect(rest_stores != null and rest_stores.visible and rest_stores.text == "SET",
+		"sandbox reststop offers infinite stores")
+	store.queue_free()
+	await get_tree().process_frame
+	NetworkManager.session_options["mode"] = "crawler"
+	var crawler_store := CrawlerFieldMenu.new()
+	add_child(crawler_store)
+	await get_tree().process_frame
+	crawler_store._clear_list()
+	crawler_store._fill_reststop()
+	_expect(crawler_store.find_child("RestAct_gold", true, false) != null
+			and crawler_store.find_child("RestAct_stores", true, false) != null,
+		"crawler reststop still offers infinite gold and stores")
+	crawler_store.queue_free()
+	await get_tree().process_frame
+	NetworkManager.session_options["mode"] = "sandbox"
+
+
+func _check_sandbox_waypoints() -> void:
+	NetworkManager.session_options["mode"] = "sandbox"
+	var spawn := CrawlerSite.new()
+	spawn.site_id = CrawlerRules.START_SITE_ID
+	spawn.title = CrawlerRules.START_SITE_TITLE
+	add_child(spawn)
+	var office := PatchMonument.new()
+	office.monument_id = CrawlerProgress.QUEST_TOWER
+	office.title = "Meridian Tower"
+	office.waypoint = false
+	add_child(office)
+	await get_tree().process_frame
+	_expect(not spawn.waypoint and not office.waypoint,
+		"sandbox leaves the spawn and office dark until they are revealed")
+	spawn.queue_free()
+	office.queue_free()
+	await get_tree().process_frame
 
 
 func _expect(condition: bool, message: String) -> void:

@@ -81,13 +81,7 @@ func _ready() -> void:
 	_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_halo)
 
-	if glow > 0.0:
-		var lamp := OmniLight3D.new()
-		lamp.light_color = tint
-		lamp.light_energy = glow * 0.8
-		lamp.omni_range = maxf(ball_radius * 22.0, 2.0)
-		lamp.shadow_enabled = false
-		add_child(lamp)
+	CrawlerShotSense.watch(self)
 
 
 ## Unshaded and additive: the ball is its own light source, and one that has to
@@ -107,7 +101,27 @@ static func _liquid_material(colour: Color, alpha: float,
 	return material
 
 
+func _exit_tree() -> void:
+	CrawlerShotSense.drop(self)
+
+
+func shot_glow_color() -> Color:
+	return tint
+
+
+func shot_glow_energy() -> float:
+	return glow * 0.8
+
+
+func shot_glow_range() -> float:
+	return maxf(ball_radius * 22.0, 2.0)
+
+
 func _physics_process(delta: float) -> void:
+	shot_tick(delta)
+
+
+func shot_tick(delta: float) -> void:
 	_live += delta
 	if _live >= LIFETIME:
 		queue_free()
@@ -141,21 +155,10 @@ func _physics_process(delta: float) -> void:
 ## same shape the damage is dealt in, so what the ball looks like it hit and what
 ## it hits are the same test.
 func _player_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, hit_radius, 0.0)
-	for player_variant: Variant in get_tree().get_nodes_in_group(
-			&"network_players"):
-		var player := player_variant as Node3D
-		if player == null or player == spitter \
-				or not DamageHit.in_same_world(self, player):
-			continue
-		if player.has_method(&"is_dead") and bool(player.call(&"is_dead")):
-			continue
-		var bounds := 0.4
-		if player.has_method(&"combat_radius"):
-			bounds = float(player.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(player), bounds):
-			return player
-	return null
+	var skip: Node = spitter if is_instance_valid(spitter) else null
+	return CombatantSense.first_along(
+		self, from, to, hit_radius, skip, {}, -1,
+		true, false, true, false)
 
 
 func _strike(player: Node) -> void:
@@ -199,9 +202,7 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(player: Node) -> Vector3:
-	if player.has_method(&"combat_position"):
-		return player.call(&"combat_position")
-	return (player as Node3D).global_position
+	return CombatantSense.point_of(player)
 
 
 func _peer_of(player: Node) -> int:

@@ -93,31 +93,16 @@ func _physics_process(delta: float) -> void:
 
 
 func _victim_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, hit_radius, 0.0)
 	if not is_inside_tree():
 		return null
-	for node in _hurt_targets():
-		if not is_instance_valid(node):
-			continue
-		var bounds := 0.4
-		if node.has_method(&"combat_radius"):
-			bounds = float(node.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(node), bounds):
-			return node
-	return null
+	return CombatantSense.first_shot_along(
+		self, from, to, hit_radius, shooter, _shooter_charmed())
 
 
 func _hurt_targets() -> Array[Node]:
-	var found: Array[Node] = []
 	if not is_inside_tree():
-		return found
-	var charmed := _shooter_charmed()
-	CrawlerMobSense.ensure_frame(get_tree())
-	for node_variant: Variant in CrawlerMobSense.shot_targets(charmed):
-		var node := node_variant as Node
-		if node != null and _should_hurt(node):
-			found.append(node)
-	return found
+		return []
+	return CombatantSense.shot_collect(self, shooter, _shooter_charmed())
 
 
 func _should_hurt(node: Node) -> bool:
@@ -202,12 +187,7 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(player: Node) -> Vector3:
-	if not is_instance_valid(player):
-		return global_position
-	if player.has_method(&"combat_position"):
-		return player.call(&"combat_position")
-	var body := player as Node3D
-	return body.global_position if body != null else global_position
+	return CombatantSense.point_of(player)
 
 
 func _up() -> Vector3:

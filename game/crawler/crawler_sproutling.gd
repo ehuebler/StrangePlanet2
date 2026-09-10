@@ -56,6 +56,12 @@ func configure(
 		_play_walk(false)
 
 
+func rest_now() -> void:
+	_walking = false
+	_idle_left = maxf(_idle_left, 1.0)
+	_play_walk(false)
+
+
 func face_local(dir: Vector3) -> void:
 	var planar := Vector3(dir.x, 0.0, dir.z)
 	if planar.length_squared() < 0.0001:

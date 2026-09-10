@@ -65,6 +65,8 @@ func configure(player: Node3D, _hud: CanvasLayer,
 	add_child(_hit_log)
 	_fps = FPS_OVERLAY.new()
 	_fps.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _fps is FpsOverlay:
+		(_fps as FpsOverlay).bind(_player)
 	add_child(_fps)
 	_overdrive = OVERDRIVE_VIGNETTE.new()
 	add_child(_overdrive)
@@ -302,15 +304,17 @@ func _flash_boss() -> void:
 func _on_enemy_damaged(target: Node, amount: float, _hit: DamageHit) -> void:
 	if amount <= 0.0 or target == null:
 		return
-	if not BossAdapter.is_boss_node(target):
+	var boss := BossAdapter.boss_of(target)
+	if boss == null:
 		return
 	_session_engaged = true
 	CombatantFlash.flash(BossAdapter.model_root(target))
 	# The host-side damage signal and the replicated-health poll describe the
 	# same hit. Baseline the poll now so it does not retrigger the flash on the
 	# next frame; remote observers, which receive no source-player signal, still
-	# flash from their health drop.
-	_last_boss_health = BossAdapter.health(target)
+	# flash from their health drop. Bushels belong to the tree, so read the
+	# encounter bar from the boss root.
+	_last_boss_health = BossAdapter.health(boss)
 
 
 func _on_status_changed(_id: StringName, _remaining: float) -> void:

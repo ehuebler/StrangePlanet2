@@ -51,9 +51,9 @@ static func recipe_from(mod: CrawlerCard, host: CrawlerCard,
 		"statuses": [],
 		"tint": tint_for(host_id, []),
 	}
-	if player != null and player.has_method(&"crawler_damage_scale"):
-		recipe["damage"] = float(recipe["damage"]) \
-			* float(player.call(&"crawler_damage_scale"))
+	if player != null and CrawlerRules.active():
+		recipe["damage"] = CrawlerRules.paired_hit_damage(
+			player, float(recipe["damage"]))
 	var carried: Array[Dictionary] = []
 	if host != null:
 		carried = CrawlerElements.payload(player, host.id, host_stats)

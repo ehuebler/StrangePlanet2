@@ -19,8 +19,8 @@ var _core: Array[Array] = []
 var _glow: Array[Array] = []
 var _lamp: OmniLight3D
 var _alive := 0.0
-var _core_material: StandardMaterial3D
-var _glow_material: StandardMaterial3D
+var _core_material: ShaderMaterial
+var _glow_material: ShaderMaterial
 var _colour := COLOR
 var _width_scale := 1.0
 var _from := Vector3.ZERO
@@ -34,8 +34,10 @@ var _far_cast := 0.0
 
 
 func _ready() -> void:
-	_core_material = _material(CORE_COLOR, 5.2, false)
-	_glow_material = _material(COLOR, 2.8, true)
+	_core_material = EnergyVfx.glow_material(
+		COLOR, CORE_COLOR, true, 5.2, 0.35, 0.24, 0.0)
+	_glow_material = EnergyVfx.glow_material(
+		COLOR, CORE_COLOR, true, 2.8, 0.62, 0.22, 1.0)
 	_core_mesh = _beam_mesh(RADIUS * CORE_SHARE, _core_material)
 	_glow_mesh = _beam_mesh(RADIUS, _glow_material)
 	for _hop in MAX_HOPS:
@@ -215,10 +217,8 @@ func _set_colour(colour: Color) -> void:
 		return
 	_colour = colour
 	var core_colour := colour.lerp(Color.WHITE, 0.55)
-	_core_material.albedo_color = core_colour
-	_core_material.emission = core_colour
-	_glow_material.albedo_color = Color(colour, 0.78)
-	_glow_material.emission = colour
+	EnergyVfx.paint_glow(_core_material, colour, core_colour)
+	EnergyVfx.paint_glow(_glow_material, colour, core_colour)
 	_lamp.light_color = colour
 
 
@@ -255,7 +255,7 @@ func _beam_chain(mesh: CylinderMesh) -> Array:
 	return chain
 
 
-func _beam_mesh(radius: float, material: StandardMaterial3D) -> CylinderMesh:
+func _beam_mesh(radius: float, material: Material) -> CylinderMesh:
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = radius * 0.45
 	mesh.bottom_radius = radius
@@ -276,18 +276,3 @@ func _beam_node(mesh: CylinderMesh) -> MeshInstance3D:
 	return beam
 
 
-func _material(tint: Color, energy: float,
-		additive: bool) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.albedo_color = tint
-	material.emission_enabled = true
-	material.emission = tint
-	material.emission_energy_multiplier = energy
-	material.disable_receive_shadows = true
-	if not additive:
-		return material
-	material.albedo_color = Color(tint, 0.78)
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	return material

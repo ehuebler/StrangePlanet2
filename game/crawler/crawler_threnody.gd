@@ -132,10 +132,6 @@ func apply_damage(hit: DamageHit) -> float:
 	return amount
 
 
-func drop_column_now() -> Node:
-	return _drop_column()
-
-
 func _desired_clip() -> String:
 	if not _alive:
 		return CLIP_HIT
@@ -146,21 +142,76 @@ func _desired_clip() -> String:
 	return BODY.CLIP_FLY
 
 
+func director_cold_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and (chase or hunting() or sees_player(player)):
+		steer = true
+		step = maxf(step, delta)
+	super.director_cold_tick(delta, step, steer, player, in_city)
+
+
+func director_warm_tick(delta: float, step: float, steer: bool, player: Node3D,
+		in_city := false) -> void:
+	if player != null and (chase or hunting() or sees_player(player)):
+		steer = true
+		step = maxf(step, delta)
+	super.director_warm_tick(delta, step, steer, player, in_city)
+
+
+func director_far_steer(delta: float, player: Node3D, in_city := false) -> void:
+	if _movement_locked():
+		velocity = Vector3.ZERO
+		return
+	var step := maxf(delta, 0.0)
+	if player != null and _apply_agro(player, step, in_city):
+		_fight(player, step)
+	else:
+		_fire_left = maxf(_fire_left - step, 0.0)
+		_tick_idle(step)
+	if flies():
+		_director_climb()
+
+
+func _should_first_agro(gap: float) -> bool:
+	if _row_agro_mode == "calm":
+		return false
+	return gap <= CrawlerRules.THRENODY_PERCEPTION
+
+
+func _hunt_rewake() -> float:
+	return CrawlerRules.THRENODY_PERCEPTION
+
+
 func _tick_idle(delta: float) -> void:
+	_faces_motion = true
 	_patrol_infinity(delta)
 
 
 func _tick_ai(delta: float) -> void:
+	var player := _hunt_target(delta)
+	if player == null:
+		_fire_left = maxf(_fire_left - delta, 0.0)
+		_tick_idle(delta)
+		return
+	_fight(player, delta)
+
+
+func _tick_far(delta: float) -> void:
+	var player := _nearest_player()
+	if player != null and tick_agro(player, delta):
+		_fight(player, delta)
+		return
+	_fire_left = maxf(_fire_left - delta, 0.0)
+	_tick_idle(delta)
+
+
+func _fight(player: Node, delta: float) -> void:
 	_fire_left = maxf(_fire_left - delta, 0.0)
 	_sway_clock += delta
 	_prune_columns()
-	var player := _hunt_target(delta)
-	if player == null:
-		_tick_idle(delta)
-		return
 	_lock_camera(player, delta)
 	if _fire_left <= 0.0 and live_columns() < CrawlerRules.THRENODY_COLUMN_CAP:
-		_drop_column()
+		_drop_column(player)
 
 
 func _patrol_infinity(delta: float) -> void:
@@ -175,15 +226,26 @@ func _patrol_infinity(delta: float) -> void:
 
 
 func _lock_camera(player: Node, delta: float) -> void:
+	_faces_motion = false
 	var station := hold_station(player)
 	var player_speed := _player_speed(player)
 	_match_speed(maxf(player_speed * 1.2, move_speed()), delta, 2.8, 42.0)
 	var along := station - global_position
 	if along.length_squared() > 0.0001:
 		_steer_toward(along.normalized() * _cruise, delta, 20.0)
+	var look := _combat_position_of(player) - global_position
+	var up := _up()
+	if look.length_squared() > 0.0001:
+		look -= up * look.dot(up)
+		if look.length_squared() > 0.0001:
+			global_transform.basis = _look_basis(look.normalized(), up)
 
 
-func _drop_column() -> Node:
+func drop_column_now() -> Node:
+	return _drop_column(_nearest_player())
+
+
+func _drop_column(player: Node = null) -> Node:
 	if not _begin_attack(0.72):
 		return null
 	_fire_left = CrawlerMobs.number(
@@ -194,13 +256,32 @@ func _drop_column() -> Node:
 	var radius := clampf(
 		CrawlerRules.THRENODY_COLUMN_RADIUS + float(maxi(threat_level - 1, 0)) * 0.8,
 		5.0, 10.0)
+	var at := _column_point(player)
 	var column: Node = COLUMN.place(
-		parent, self, _ground_under(), radius, damage(),
+		parent, self, at, radius, damage(),
 		CrawlerRules.THRENODY_COLUMN_DURATION,
 		CrawlerRules.THRENODY_COLUMN_HEIGHT)
 	if column != null:
 		_columns.append(column)
 	return column
+
+
+func _column_point(player: Node) -> Vector3:
+	if player == null:
+		return _ground_under()
+	var at := _combat_position_of(player)
+	var up := _loft_axis()
+	var motion := _player_velocity(player)
+	motion -= up * motion.dot(up)
+	if motion.length() > 2.0:
+		at += motion.normalized() * clampf(motion.length() * 0.35, 2.0, 8.0)
+	var surface := ground_surface(at)
+	if surface.is_finite():
+		return surface
+	var altitude := surface_altitude(at)
+	if altitude > 0.05:
+		return at - up * altitude
+	return at
 
 
 func _ground_under() -> Vector3:

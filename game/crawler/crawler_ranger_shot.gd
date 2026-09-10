@@ -58,15 +58,30 @@ func _ready() -> void:
 	_core = EnergyVfx.make(EnergyVfx.Kind.PROJECTILE, GLOW_COLOR)
 	add_child(_core)
 	_core.set_ball_radius(ball_radius)
-	var lamp := OmniLight3D.new()
-	lamp.light_color = GLOW_COLOR
-	lamp.light_energy = 4.6
-	lamp.omni_range = maxf(ball_radius * 9.0, 4.5)
-	lamp.shadow_enabled = false
-	add_child(lamp)
+	CrawlerShotSense.watch(self)
+
+
+func _exit_tree() -> void:
+	CrawlerShotSense.drop(self)
+
+
+func shot_glow_color() -> Color:
+	return GLOW_COLOR
+
+
+func shot_glow_energy() -> float:
+	return 0.0 if _spent else 4.6
+
+
+func shot_glow_range() -> float:
+	return maxf(ball_radius * 9.0, 4.5)
 
 
 func _physics_process(delta: float) -> void:
+	shot_tick(delta)
+
+
+func shot_tick(delta: float) -> void:
 	_live += delta
 	if is_instance_valid(_core):
 		var pulse := 1.0 + sin(_live * 11.0) * 0.10
@@ -77,8 +92,7 @@ func _physics_process(delta: float) -> void:
 	var up := _up()
 	_velocity -= up * maxf(gravity, 0.0) * delta
 	var from := global_position
-	var field_slow := CrawlerFieldVolume.speed_scale_at(self, from) \
-		* CrawlerLingerCloud.speed_scale_at(self, from)
+	var field_slow := CrawlerMobSense.field_slow(self, from)
 	var to := from + _velocity * field_slow * delta
 	var struck := _victim_along(from, to)
 	if struck != null:
@@ -99,36 +113,20 @@ func _physics_process(delta: float) -> void:
 
 
 func _victim_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, hit_radius, 0.0)
 	if not is_inside_tree():
 		return null
-	for node in _hurt_targets():
-		if not is_instance_valid(node):
-			continue
-		var bounds := 0.4
-		if node.has_method(&"combat_radius"):
-			bounds = float(node.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(node), bounds):
-			return node
-	return null
+	return CombatantSense.first_shot_along(
+		self, from, to, hit_radius, _live_shooter(), _shooter_charmed())
 
 
 func _hurt_targets() -> Array[Node]:
-	var found: Array[Node] = []
 	if not is_inside_tree():
-		return found
-	var charmed := _shooter_charmed()
-	if is_inside_tree():
-		CrawlerMobSense.ensure_frame(get_tree())
-	for node_variant: Variant in CrawlerMobSense.shot_targets(charmed):
-		var node := node_variant as Node
-		if node != null and _should_hurt(node):
-			found.append(node)
-	return found
+		return []
+	return CombatantSense.shot_collect(self, _live_shooter(), _shooter_charmed())
 
 
 func _should_hurt(node: Node) -> bool:
-	if not is_instance_valid(node) or node == shooter:
+	if not is_instance_valid(node) or node == _live_shooter():
 		return false
 	if not node is Node3D:
 		return false
@@ -139,6 +137,13 @@ func _should_hurt(node: Node) -> bool:
 	if _shooter_charmed():
 		return node is CrawlerMob
 	return node.is_in_group(&"network_players")
+
+
+func _live_shooter() -> Node:
+	if not is_instance_valid(shooter):
+		shooter = null
+		return null
+	return shooter
 
 
 func _shooter_charmed() -> bool:
@@ -232,12 +237,7 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(player: Node) -> Vector3:
-	if not is_instance_valid(player):
-		return global_position
-	if player.has_method(&"combat_position"):
-		return player.call(&"combat_position")
-	var body := player as Node3D
-	return body.global_position if body != null else global_position
+	return CombatantSense.point_of(player)
 
 
 func _up() -> Vector3:

@@ -20,6 +20,7 @@ var hit_radius := 2.2
 var knockback := 8.0
 var ability_id := "crawler_bastion_mortar"
 var impact_at := Vector3.INF
+var lift := Vector3.ZERO
 var shooter: Node
 var _charmed_shot := false
 var _velocity := Vector3.ZERO
@@ -40,6 +41,17 @@ func launch_anywhere(host: Node, from: Vector3, along: Vector3, by: Node) -> boo
 	name = "CrawlerBastionShell"
 	_velocity = along
 	shooter = by
+	if lift.length_squared() < 0.0001:
+		if by != null and by.has_method(&"_up"):
+			var axis: Variant = by.call(&"_up")
+			if axis is Vector3 and (axis as Vector3).length_squared() > 0.0001:
+				lift = (axis as Vector3).normalized()
+		elif from.length() > 80.0:
+			lift = from.normalized()
+		if lift.length_squared() < 0.0001:
+			lift = Vector3.UP
+	else:
+		lift = lift.normalized()
 	_charmed_shot = _read_shooter_charmed()
 	var body := by as CollisionObject3D
 	if body != null:
@@ -71,7 +83,7 @@ func _physics_process(delta: float) -> void:
 	if _live >= LIFETIME:
 		queue_free()
 		return
-	var up := _up()
+	var up := _flight_up()
 	_velocity -= up * maxf(gravity, 0.0) * delta
 	var from := global_position
 	var to := from + _velocity * delta
@@ -145,30 +157,16 @@ func _make_blast(at: Vector3) -> DamageHit:
 
 
 func _victim_along(from: Vector3, to: Vector3) -> Node:
-	var sweep := DamageHit.beam(from, to, hit_radius * 0.45, 0.0)
 	if not is_inside_tree():
 		return null
-	for node in _hurt_targets():
-		if not is_instance_valid(node):
-			continue
-		var bounds := 0.4
-		if node.has_method(&"combat_radius"):
-			bounds = float(node.call(&"combat_radius"))
-		if sweep.reaches(_combat_position(node), bounds):
-			return node
-	return null
+	return CombatantSense.first_shot_along(
+		self, from, to, hit_radius * 0.45, shooter, _shooter_charmed())
 
 
 func _hurt_targets() -> Array[Node]:
-	var found: Array[Node] = []
 	if not is_inside_tree():
-		return found
-	CrawlerMobSense.ensure_frame(get_tree())
-	for node_variant: Variant in CrawlerMobSense.shot_targets(_shooter_charmed()):
-		var node := node_variant as Node
-		if node != null and _should_hurt(node):
-			found.append(node)
-	return found
+		return []
+	return CombatantSense.shot_collect(self, shooter, _shooter_charmed())
 
 
 func _should_hurt(node: Node) -> bool:
@@ -210,18 +208,19 @@ func _nearest_on(from: Vector3, to: Vector3, point: Vector3) -> Vector3:
 
 
 func _combat_position(player: Node) -> Vector3:
-	if not is_instance_valid(player):
-		return global_position
-	if player.has_method(&"combat_position"):
-		return player.call(&"combat_position")
-	var body := player as Node3D
-	return body.global_position if body != null else global_position
+	return CombatantSense.point_of(player)
+
+
+func _flight_up() -> Vector3:
+	if lift.length_squared() > 0.0001:
+		return lift.normalized()
+	return _up()
 
 
 func _up() -> Vector3:
 	if _planet != null:
 		return _planet.up_at(global_position)
-	if global_position.length_squared() > 0.01:
+	if global_position.length() > 80.0:
 		return global_position.normalized()
 	return Vector3.UP
 

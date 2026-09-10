@@ -127,6 +127,7 @@ class _HuntDummy extends Node3D:
 
 
 func _ready() -> void:
+	CrawlerRules.glorb_field = false
 	NetworkManager.session_options = {"mode": "crawler"}
 	CrawlerCatalog.reload()
 	CrawlerMobs.reload()
@@ -162,6 +163,7 @@ func _ready() -> void:
 	_check_mob_sense()
 	_check_mob_director()
 	await _check_demons()
+	_check_run_field_packs()
 	await _check_robots()
 	await _check_aliens()
 	await _check_goblins()
@@ -781,8 +783,8 @@ func _check_city_ring() -> void:
 			< CrawlerRules.CITY_WAYPOINT_YELLOW.get_luminance()
 			and is_equal_approx(CrawlerRules.BOSS_SITE_RADIUS, 100.0),
 		"boss waypoints are dark purple 100 m circles")
-	_expect(ResourceLoader.exists(CrawlerCityRing.VILLAGE_MODEL),
-		"Neon Fjord village is ready to seat on the ring")
+	_expect(CrawlerAdobeSite.city_ready(),
+		"adobe village buildings are ready to seat on the ring")
 	_player.global_position = Vector3(300.0, 0.0, 0.0)
 	_press_interact(_player)
 	await get_tree().process_frame
@@ -862,6 +864,8 @@ func _check_site_clear() -> void:
 	add_child(ring)
 	await get_tree().process_frame
 	var rim := Vector3(98.0, 2.0, 0.0)
+	var wall := Vector3(160.0, 2.0, 0.0)
+	var far := Vector3(400.0, 2.0, 0.0)
 	_expect(not ring.contains_point(rim) and ring.in_site_clear(rim),
 		"the 100 m site circle sits just outside the city walls")
 	_player.global_position = Vector3.ZERO
@@ -869,6 +873,26 @@ func _check_site_clear() -> void:
 	MOB_SENSE.begin_frame(get_tree())
 	_expect(ring.clears_patch_mobs_at(rim) and MOB_SENSE.keepout_blocks(ring, rim),
 		"a solo player in the city despawns patch mobs in 100 m")
+	_expect(ring.clears_patch_mobs_at(wall) and not ring.clears_patch_mobs_at(far),
+		"the 100 m site circle still stops short of the far field")
+
+	var solo := CrawlerHorde.new()
+	add_child(solo)
+	solo.set_process(false)
+	var near_solo := solo.spawn_test_mob("ranger", wall, false)
+	var far_solo := solo.spawn_test_mob("ranger", far, false)
+	near_solo.set_physics_process(false)
+	far_solo.set_physics_process(false)
+	MOB_SENSE.invalidate()
+	MOB_SENSE.begin_frame(get_tree())
+	_expect(solo.should_clear_all_field(),
+		"a solo player in the city clears the whole field")
+	solo.call("_clear_site_patch_mobs")
+	_expect(not is_instance_valid(near_solo) or near_solo.dismissed,
+		"a solo city visit clears the wall pack")
+	_expect(not is_instance_valid(far_solo) or far_solo.dismissed,
+		"a solo city visit despawns the field everywhere")
+	solo.queue_free()
 
 	var mate := Node3D.new()
 	mate.name = "CoopMate"
@@ -879,30 +903,44 @@ func _check_site_clear() -> void:
 	MOB_SENSE.begin_frame(get_tree())
 	_expect(not CrawlerRules.all_players_inside_city(MOB_SENSE.players(), ring),
 		"coop is split when a partner is still in the field")
-	_expect(not ring.clears_patch_mobs_at(rim, MOB_SENSE.players())
-			and not MOB_SENSE.keepout_blocks(ring, rim),
-		"coop does not despawn the 100 m ring until both players are in the city")
+	_expect(ring.clears_patch_mobs_at(rim, MOB_SENSE.players())
+			and ring.clears_patch_mobs_at(wall, MOB_SENSE.players())
+			and MOB_SENSE.keepout_blocks(ring, rim),
+		"entering the city still clears the wall pack while a partner is outside")
 	_expect(ring.clears_patch_mobs_at(Vector3.ZERO, MOB_SENSE.players()),
 		"the plaza still stays clear while one player shops")
+	_expect(not ring.clears_patch_mobs_at(far, MOB_SENSE.players()),
+		"a partner still fighting far out keeps that pack")
 
 	var horde := CrawlerHorde.new()
 	add_child(horde)
 	horde.set_process(false)
 	var rim_mob := horde.spawn_test_mob("ranger", rim, false)
+	var wall_mob := horde.spawn_test_mob("ranger", wall, true)
 	var plaza_mob := horde.spawn_test_mob("ranger", Vector3(8.0, 2.0, 0.0), false)
+	var far_mob := horde.spawn_test_mob("ranger", far, false)
 	rim_mob.set_physics_process(false)
+	wall_mob.set_physics_process(false)
 	plaza_mob.set_physics_process(false)
-	horde.call("_clear_site_patch_mobs")
-	_expect(is_instance_valid(rim_mob) and not rim_mob.dismissed,
-		"the field pack stays up while a partner is still outside")
-	_expect(not is_instance_valid(plaza_mob) or plaza_mob.dismissed,
-		"mobs that followed into the plaza still despawn")
-	mate.global_position = Vector3.ZERO
-	MOB_SENSE.invalidate()
-	MOB_SENSE.begin_frame(get_tree())
+	far_mob.set_physics_process(false)
 	horde.call("_clear_site_patch_mobs")
 	_expect(not is_instance_valid(rim_mob) or rim_mob.dismissed,
-		"both players in the city despawn patch mobs in 100 m")
+		"the wall pack despawns when you reach the city")
+	_expect(not is_instance_valid(wall_mob) or wall_mob.dismissed,
+		"mobs at the border despawn with the arriving player")
+	_expect(not is_instance_valid(plaza_mob) or plaza_mob.dismissed,
+		"mobs that followed into the plaza still despawn")
+	_expect(is_instance_valid(far_mob) and not far_mob.dismissed,
+		"the far field stays up while a partner is still outside")
+	_player.global_position = Vector3(130.0, 2.0, 0.0)
+	MOB_SENSE.invalidate()
+	MOB_SENSE.begin_frame(get_tree())
+	var gate_mob := horde.spawn_test_mob("ranger", Vector3(170.0, 2.0, 0.0), true)
+	gate_mob.set_physics_process(false)
+	horde.call("_clear_site_patch_mobs")
+	_expect(not is_instance_valid(gate_mob) or gate_mob.dismissed,
+		"crossing the city border clears the mobs around you")
+	_player.global_position = Vector3.ZERO
 
 	var office := PatchMonument.new()
 	office.monument_id = CrawlerProgress.QUEST_TOWER
@@ -927,7 +965,10 @@ func _check_site_clear() -> void:
 	await get_tree().process_frame
 	MOB_SENSE.invalidate()
 	MOB_SENSE.begin_frame(get_tree())
-	_expect(not MOB_SENSE.keepout_blocks(pad, pad.global_position),
+	_expect(pad.holds_field() and horde.call("_arrival_holds"),
+		"the teleporter holds the field until you step off")
+	_expect(not MOB_SENSE.keepout_blocks(pad, pad.global_position)
+			and not pad.blocks_near(pad.global_position),
 		"the teleporter does not despawn patch mobs")
 	var hunter := CrawlerRanger.new()
 	hunter.configure(
@@ -941,23 +982,46 @@ func _check_site_clear() -> void:
 	MOB_SENSE.invalidate()
 	MOB_SENSE.begin_frame(get_tree())
 	_expect(MOB_SENSE.player_on_spawn_pad(_player)
-			and pad.holds_standing(_player.global_position),
-		"standing on the teleporter is still on the deck")
+			and pad.holds_standing(_player.global_position)
+			and horde.call("_arrival_holds"),
+		"standing on the teleporter holds the field")
 	hunter.chase = false
 	_expect(not hunter.tick_agro(_player, 0.16) and not hunter.chase,
 		"mobs do not agro a player on the teleporter")
 	_player.global_position = pad.global_position + Vector3(14.0, 1.5, 0.0)
 	MOB_SENSE.invalidate()
 	MOB_SENSE.begin_frame(get_tree())
-	_expect(not MOB_SENSE.player_on_spawn_pad(_player),
-		"walking off the teleporter leaves the deck")
+	_expect(not pad.holds_field() and not horde.call("_arrival_holds")
+			and not MOB_SENSE.player_on_spawn_pad(_player),
+		"walking off the teleporter opens the field")
 	_expect(hunter.tick_agro(_player, 0.16) and hunter.chase,
 		"mobs agro once the player steps off the teleporter")
 	_player.global_position = pad.global_position + Vector3(0.0, 1.5, 0.0)
 	MOB_SENSE.invalidate()
 	MOB_SENSE.begin_frame(get_tree())
-	_expect(not hunter.tick_agro(_player, 0.16) and not hunter.chase,
-		"agro drops if the player steps back onto the teleporter")
+	_expect(not MOB_SENSE.player_on_spawn_pad(_player)
+			and pad.holds_standing(_player.global_position),
+		"the open teleporter is no longer a site")
+	_expect(hunter.tick_agro(_player, 0.16) and hunter.chase,
+		"mobs keep agro after they enter the teleporter")
+	var deck_mob := horde.spawn_test_mob(
+		"ranger", pad.global_position + Vector3(2.0, 1.5, 0.0), false)
+	deck_mob.set_physics_process(false)
+	horde.call("_clear_site_patch_mobs")
+	_expect(is_instance_valid(deck_mob) and not deck_mob.dismissed
+			and horde._home_clear(pad.global_position + Vector3(2.0, 1.5, 0.0), "ranger"),
+		"mobs on the open teleporter stay in the field")
+	_player.global_position = Vector3.ZERO
+	mate.global_position = Vector3.ZERO
+	MOB_SENSE.invalidate()
+	MOB_SENSE.begin_frame(get_tree())
+	var leftover := horde.spawn_test_mob("ranger", far, false)
+	leftover.set_physics_process(false)
+	_expect(horde.should_clear_all_field(),
+		"the whole party in the city clears the field")
+	horde.call("_clear_site_patch_mobs")
+	_expect(not is_instance_valid(leftover) or leftover.dismissed,
+		"the field despawns everywhere once the whole party is in the city")
 	_player.global_position = saved_pad_at
 	hunter.queue_free()
 	mate.queue_free()
@@ -1095,7 +1159,7 @@ func _check_mob_sense() -> void:
 
 func _check_mob_director() -> void:
 	_expect(CrawlerRules.mob_lod(20.0) == CrawlerRules.MOB_LOD_HOT
-			and CrawlerRules.mob_lod(100.0) == CrawlerRules.MOB_LOD_WARM
+			and CrawlerRules.mob_lod(50.0) == CrawlerRules.MOB_LOD_WARM
 			and CrawlerRules.mob_lod(200.0) == CrawlerRules.MOB_LOD_COLD,
 		"mobs drop from unique AI to a cheap coast as they get farther")
 	_expect(CrawlerRules.MOB_SPAWN_BUILD < CrawlerHorde.SPAWN_PER_FRAME
@@ -1228,8 +1292,8 @@ func _check_demons() -> void:
 		"only one Threnody can live on a tile")
 	_expect(CrawlerRules.spawn_weight("gloam") > CrawlerRules.spawn_weight("vesper")
 			and CrawlerRules.spawn_weight("vesper") > CrawlerRules.spawn_weight("threnody")
-			and CrawlerMobs.kind_cap("gloam", 1) >= 32
-			and CrawlerRules.GLOAM_FLOCK >= 8,
+			and CrawlerMobs.kind_cap("gloam", 1) >= 48
+			and CrawlerRules.GLOAM_FLOCK >= 16,
 		"Gloam flocks swarm the inlet")
 	_expect(CrawlerMobs.number("gloam", 3, "health", 0.0)
 			> CrawlerMobs.number("gloam", 1, "health", 0.0)
@@ -1266,10 +1330,13 @@ func _check_demons() -> void:
 		"a home-distance check still cannot unlock demons at the pad")
 	var at_castle: String = horde.call(
 		"_pick_kind", Vector3.ZERO, CrawlerRules.CASTLE_PATCH, 400.0, 1)
+	var at_city: String = horde.call(
+		"_pick_kind", Vector3.ZERO, CrawlerRules.CITY_PATCH, 400.0, 1)
 	_expect(CrawlerRules.field_kinds(CrawlerRules.CITY_PATCH).has("vesper")
 			and CrawlerRules.field_kinds(CrawlerRules.DEMON_START_SE_PATCH)
 				.has("threnody")
-			and not CrawlerRules.field_kinds("Quiet Inlet 4 North").has("gloam"),
+			and not CrawlerRules.field_kinds("Quiet Inlet 4 North").has("gloam")
+			and CrawlerRules.DEMON_KINDS.has(at_city),
 		"the first-city inlet tiles can roll the demon roster")
 	_expect(at_castle.is_empty()
 			and CrawlerRules.field_kinds(CrawlerRules.CASTLE_PATCH).is_empty()
@@ -1519,24 +1586,51 @@ func _check_robots() -> void:
 	_expect(CrawlerMobs.spawn_mode("kestrel", 1) == "ahead"
 			and CrawlerMobs.kind_cap("kestrel", 1) >= 11,
 		"kestrels spawn ahead like rangers")
-	_expect(CrawlerMobs.spawn_mode("bastion", 1) == "grid"
-			and CrawlerMobs.agro_mode("bastion", 1) == "calm"
-			and CrawlerMobs.kind_cap("bastion", 1) >= 20
+	_expect(CrawlerMobs.spawn_mode("bastion", 1) == "pack"
+			and CrawlerMobs.agro_mode("bastion", 1) == "reserve"
+			and CrawlerMobs.kind_cap("bastion", 1) <= 11
+			and CrawlerRules.bastion_agro_cap(1) <= 3
+			and CrawlerRules.bastion_reserve_cap(1) >= 4
+			and CrawlerRules.bastion_reserve_cap(1) <= 8
 			and CrawlerMobs.number("bastion", 1, "speed", 9.0) <= 2.2
-			and CrawlerRules.BASTION_CLEAR >= 14.9,
-		"bastions plant a slow deagroed grid with a 15 m hole")
+			and CrawlerRules.BASTION_AGRO_NEAR
+				>= CrawlerRules.FIELD_RING_START + CrawlerRules.FIELD_RING_THICK,
+		"bastions keep a small agro pack and a distant reserve")
 	_expect(CrawlerRules.bastion_keepout(Vector3(10.0, 0.0, 0.0), Vector3.ZERO)
-			and not CrawlerRules.bastion_keepout(Vector3(16.0, 0.0, 0.0), Vector3.ZERO)
-			and CrawlerRules.bastion_in_grid(Vector3(22.0, 0.0, 0.0), Vector3.ZERO),
-		"bastion cells stay outside 15 m and inside the grid ring")
+			and not CrawlerRules.bastion_keepout(Vector3(25.0, 0.0, 0.0), Vector3.ZERO)
+			and CrawlerRules.bastion_in_band(
+				Vector3(42.0, 0.0, 0.0), Vector3.ZERO,
+				CrawlerRules.BASTION_AGRO_NEAR, CrawlerRules.BASTION_AGRO_FAR)
+			and CrawlerRules.bastion_in_grid(Vector3(58.0, 0.0, 0.0), Vector3.ZERO),
+		"bastions sit in the mid ring and reserves wait in the far ring")
 	var lob := CrawlerRules.high_lob_launch(
 		Vector3.ZERO, Vector3(0.0, 0.0, 22.0), Vector3.ZERO,
 		24.0, CrawlerRules.BASTION_GRAVITY, Vector3.UP)
 	_expect(lob.y > 10.0, "bastion shells launch on a high arc")
+	_expect(CrawlerMobs.number("bastion", 1, "agro_range", 0.0) >= 64.0
+			and CrawlerHunt.shot_max("bastion") >= 64.0,
+		"bastions wake and lob from the mid ring")
+	var lob_from := Vector3(0.0, 1.5, 0.0)
+	var lob_aim := Vector3(0.0, 1.5, 36.0)
+	var lob_vel := CrawlerRules.high_lob_launch(
+		lob_from, lob_aim, Vector3.ZERO,
+		24.0, CrawlerRules.BASTION_GRAVITY, Vector3.UP)
+	var lob_at := lob_from
+	for _i in 400:
+		lob_vel -= Vector3.UP * CrawlerRules.BASTION_GRAVITY * 0.016
+		lob_at += lob_vel * 0.016
+		if lob_at.y <= 1.5 and lob_vel.y < 0.0:
+			break
+	_expect(lob_at.distance_to(lob_aim) < 4.0
+			and lob_at.distance_to(lob_from) > 24.0,
+		"a bastion shell lands on the aim instead of falling on the walker")
 	_expect(CrawlerRules.spawn_weight("weaver") > CrawlerRules.spawn_weight("kestrel")
 			and CrawlerRules.spawn_weight("weaver") > CrawlerRules.spawn_weight("bastion")
-			and CrawlerMobs.kind_cap("weaver", 1) >= 26,
-		"weavers pack the office ring")
+			and CrawlerMobs.kind_cap("weaver", 1) >= 8
+			and CrawlerMobs.kind_cap("weaver", 1) <= 14
+			and CrawlerRules.WEAVER_FLOCK <= 3
+			and CrawlerMobs.number("weaver", 1, "health", 9.0) <= 4.5,
+		"weavers stay a thin low-health close pack")
 	_expect(CrawlerMobs.number("bastion", 3, "health", 0.0)
 			> CrawlerMobs.number("bastion", 1, "health", 0.0),
 		"robot stats scale with level")
@@ -1554,9 +1648,12 @@ func _check_robots() -> void:
 		"Bastion spawns on the ground")
 	_expect(weaver != null and weaver.wild_kind() == "weaver" and not weaver.flies(),
 		"Weaver stays on the ground")
-	_expect(kestrel.body_height() > 3.5 and bastion.body_height() > 3.8
-			and weaver.body_height() > 2.5,
-		"office robots stand larger than a player")
+	_expect(kestrel.body_height() > 3.5
+			and bastion.body_height() < 3.2
+			and bastion.body_height() > 1.6,
+		"kestrel stays large and bastions stay compact")
+	_expect(weaver.body_height() < 1.8 and weaver.body_height() > 0.7,
+		"weavers are small swarm spiders")
 	_expect(_authored_inks(kestrel).size() >= 3
 			and _has_bright_ink(_authored_inks(kestrel))
 			and _has_bright_ink(_authored_inks(bastion))
@@ -1577,8 +1674,8 @@ func _check_robots() -> void:
 	_expect(bastion.move_speed() <= 2.2, "bastions crawl")
 	var saved_at := _player.global_position
 	_player.global_position = bastion.global_position + Vector3(0.0, 0.0, 8.0)
-	_expect(not bastion.tick_agro(_player, 0.2) and not bastion.chase,
-		"bastions stay deagroed when the player is close")
+	_expect(bastion.tick_agro(_player, 0.2) and bastion.chase,
+		"a bastion next to the player agros without a slot cap")
 	_player.global_position = saved_at
 	prey.add_to_group(&"network_players")
 	MOB_SENSE.ensure_frame(get_tree())
@@ -1637,8 +1734,8 @@ func _check_robots() -> void:
 		"weavers hop after a runner")
 	_expect(str(weaver.call("current_clip")) == "Leap",
 		"a chasing weaver plays the hop")
-	_expect(bool(weaver.call("_shot_ready", prey, 24.0)) == false,
-		"a far runner is chased, not burned")
+	_expect(bool(weaver.call("_shot_ready", prey, 24.0)),
+		"weavers keep shooting as a runner leaves")
 	var hook: Vector3 = weaver.call("hop_goal", prey) - weaver.global_position
 	_expect(hook.z > 0.0 and not bool(weaver.call("in_camera", prey)),
 		"a rear hop swings into the look instead of planting behind")
@@ -1662,8 +1759,14 @@ func _check_robots() -> void:
 		"a slowed player looking at the spider is a laser shot")
 	MOB_SENSE.begin_frame(get_tree())
 	weaver.call("_try_beam", prey)
-	_expect(bool(weaver.call("beaming")), "weavers plant for Laser Eyes")
+	_expect(bool(weaver.call("beaming")) and bool(weaver.call("charging")),
+		"weavers plant and charge a red beam")
 	weaver.call("_service_beam", 0.12)
+	_expect(prey.taken == 0.0, "the charge does not cut yet")
+	var eyes := weaver.get_node_or_null("WeaverEyes")
+	_expect(eyes != null and bool(eyes.call("is_lit")),
+		"the red beam charges on the player")
+	weaver.call("_service_beam", 0.4)
 	_expect(prey.taken > 0.0, "Laser Eyes cuts the player")
 	_expect(prey.last_hit != null and prey.last_hit.ability_id == "laser_eyes",
 		"the weaver shot is Laser Eyes")
@@ -1757,6 +1860,28 @@ func _check_robots() -> void:
 		"a demon next to the player leaves a robot or wild tile")
 	_expect(is_instance_valid(kept) and not kept.dismissed,
 		"the current three-kind set stays around the player")
+	var leftover_ring: Array[Dictionary] = [{
+		"at": Vector3.ZERO,
+		"kinds": PackedStringArray(["gloam", "vesper", "threnody"]),
+		"patch_id": 4,
+	}]
+	_expect(not bool(horde.call(
+			"_off_combo_near", Vector3(40.0, 0.0, 0.0), "ranger", leftover_ring, 9)),
+		"a wild pack on the tile you left stays")
+	_expect(bool(horde.call(
+			"_off_combo_near", Vector3(8.0, 0.0, 0.0), "ranger", leftover_ring, 4)),
+		"a wild that followed onto the new tile still leaves")
+	var parked := horde.spawn_test_mob("ranger", Vector3(90.0, 2.0, 0.0), false, 1)
+	parked.set_physics_process(false)
+	horde.call("_trim_ring_overflow", _player)
+	horde.call("_reap_far_and_idle")
+	_expect(is_instance_valid(parked) and not parked.dismissed,
+		"a pack outside the spawn rings stays until stream-out")
+	var distant := horde.spawn_test_mob("ranger", Vector3(500.0, 2.0, 0.0), false, 1)
+	distant.set_physics_process(false)
+	horde.call("_reap_far_and_idle")
+	_expect(not is_instance_valid(distant) or distant.dismissed,
+		"a pack past stream-out still despawns")
 	_player.global_position = saved
 	prey.queue_free()
 	horde.queue_free()
@@ -1838,15 +1963,30 @@ func _check_aliens() -> void:
 	scout.call("_place_pointer")
 	_expect(bool(scout.call("pointer_on")),
 		"scout holds a green cannon pointer")
+	_expect(is_equal_approx(scout._pointer.current_opacity(),
+			CrawlerScout.POINTER_OPACITY)
+			and is_equal_approx(CrawlerScout.POINTER_OPACITY, 0.4),
+		"scout pointer is sixty percent transparent")
+	var barrel: Vector3 = scout.cannon_ahead()
+	var pointer_along: Vector3 = scout._pointer.global_transform.basis.y
+	_expect(pointer_along.length_squared() > 0.0001
+			and pointer_along.normalized().dot(barrel) > 0.98,
+		"scout pointer leaves the cannon straight")
 	scout.call("_start_pulses", prey)
 	var pulses := 0
+	var pulse_along := Vector3.ZERO
 	for node: Node in get_children():
 		if str(node.name) == "ScoutPulse":
 			pulses += 1
+			pulse_along = (node as Node3D).global_transform.basis.y
 	for node: Node in horde.find_children("*", "", true, false):
 		if str(node.name) == "ScoutPulse":
 			pulses += 1
+			pulse_along = (node as Node3D).global_transform.basis.y
 	_expect(pulses >= 1, "scout fires a pink pulse beam")
+	_expect(pulse_along.length_squared() > 0.0001
+			and pulse_along.normalized().dot(barrel) > 0.98,
+		"scout shots leave the cannon straight")
 
 	prey.taken = 0.0
 	prey.global_position = gray.combat_position() + Vector3(0.0, 0.0, 18.0)
@@ -1905,6 +2045,15 @@ func _check_aliens() -> void:
 	_expect(dropped != null and dropped.dropping()
 			and dropped.global_position.distance_to(drop_at) < 2.5,
 		"a killed scout drops a gray")
+	if dropped != null:
+		var hung := dropped.global_position
+		var up := dropped._up()
+		dropped.set_physics_process(false)
+		for _tick in 24:
+			dropped._physics_process(0.05)
+		var fallen := (hung - dropped.global_position).dot(up)
+		_expect(dropped.dropping() and fallen > 2.0,
+			"a dropped gray falls out of the wreck instead of hanging in the air")
 
 	prey.remove_from_group(&"network_players")
 	prey.queue_free()
@@ -2242,6 +2391,23 @@ func _check_idle_roam() -> void:
 	_expect(ranger.velocity.length() > 1.0, "cold rangers keep patrolling")
 	ranger.queue_free()
 
+	var maw := CrawlerTanglemaw.new()
+	maw.configure("sprint", Transform3D(Basis(), Vector3(70.0, 2.0, 0.0)), 1, false)
+	add_child(maw)
+	maw.set_physics_process(false)
+	await get_tree().process_frame
+	maw._patrol_left = 0.0
+	maw.velocity = Vector3.ZERO
+	maw._tick_idle(0.2)
+	var maw_first := maw._patrol_goal
+	_expect(maw.velocity.length() > 3.5,
+		"deagroed tanglemaws sprint instead of standing still")
+	maw._patrol_left = 0.0
+	maw._tick_idle(0.2)
+	_expect(maw_first.distance_to(maw._patrol_goal) > 4.0,
+		"tanglemaws pick a new sprint point")
+	maw.queue_free()
+
 	var rhino := CrawlerRhino.new()
 	rhino.configure("graze", Transform3D(Basis(), Vector3(100.0, 1.2, 0.0)), 1, false)
 	add_child(rhino)
@@ -2492,12 +2658,27 @@ func _check_enemy_presence() -> void:
 	var flying := CrawlerRangerShot.new()
 	add_child(flying)
 	flying.set_physics_process(false)
+	CrawlerShotSense.drop(flying)
 	flying.shooter = ranger
 	ranger.free()
 	_expect(not bool(flying.call("_shooter_charmed")),
 		"an orb whose ranger already died can still ask charm state")
 	_expect(bool(flying.call("_should_hurt", _player)),
 		"a dead ranger's orb still hunts the player")
+	flying._victim_along(flying.global_position, _player.global_position)
+	_expect(true, "a dead shooter does not crash the ranger shot sweep")
+	var orphan := CrawlerGrayShot.new()
+	add_child(orphan)
+	orphan.set_physics_process(false)
+	CrawlerShotSense.drop(orphan)
+	var gone := Node3D.new()
+	add_child(gone)
+	orphan.shooter = gone
+	gone.free()
+	orphan._victim_along(Vector3.ZERO, Vector3(1.0, 0.0, 0.0))
+	_expect(orphan._live_shooter() == null,
+		"a gray orb clears a freed shooter instead of crashing")
+	orphan.queue_free()
 	flying.queue_free()
 	var hulk: CrawlerMob = load("res://game/crawler/crawler_rift_hulk.gd").new()
 	hulk.configure("hulk", Transform3D.IDENTITY, 2, false)
@@ -2563,13 +2744,25 @@ func _check_enemy_presence() -> void:
 			"the meteor carries through the intercept")
 		_expect(charger._charge_heading.x > 0.5,
 			"the meteor is lined up to where the runner will be")
+		charger.velocity = Vector3(12.0, 0.0, 0.0)
+		charger._update_clips()
+		_expect(charger.current_clip() == CrawlerMob.CLIP_RUN
+				and str(charger._animator.current_animation).to_lower().contains("run"),
+			"a charging rhino plays its run clip")
 		_expect(DamageHit.ABILITY_DISPLAY_NAMES.get("crawler_rhino_meteor", "")
 				== "Meteor Strike",
 			"the rhino's only attack is named meteor strike")
+		charger._face_along(charger._charge_heading, 1.0)
 		charger._update_meteor_shock()
 		var shock := charger.find_child("MeteorShock", true, false) as MeteorShock
+		var horn := charger._nose_point()
 		_expect(shock != null and shock.visible,
 			"a charging rhino wears the red meteor shock")
+		_expect(shock != null
+				and shock.global_transform.basis.y.dot(charger._charge_heading) > 0.5,
+			"the meteor cone aims out the horn, not the tail")
+		_expect(shock != null and shock.global_position.distance_to(horn) < 3.2,
+			"the meteor cone sits on the rhino's head")
 		_expect(charger.slam_radius() > charger.ATTACK_RADIUS * 2.0,
 			"the meteor slams a crater wider than a horn")
 		_expect(not charger._should_slam(_player),
@@ -2584,7 +2777,9 @@ func _check_enemy_presence() -> void:
 			if child is EnergyExplosion:
 				boom = true
 				break
-		_expect(boom, "the meteor throws a red ground blast")
+		_expect(not boom, "the meteor does not throw a red shockwave")
+		_expect(is_instance_valid(shock),
+			"the meteor keeps the punch cone instead of a ground blast")
 		_player.velocity = Vector3(2.0, 0.0, 0.0)
 		charger._cooldown_left = 9.0
 		charger._lagged_frame = Vector3.ZERO
@@ -2655,6 +2850,7 @@ func _check_crawler_bursts() -> void:
 	orb.hit_radius = CrawlerRules.ranger_shot_hit(1)
 	add_child(orb)
 	orb.set_physics_process(false)
+	CrawlerShotSense.drop(orb)
 	await get_tree().process_frame
 	orb.global_position = near.global_position
 	_expect(orb.blast_radius() > orb.hit_radius,
@@ -2810,7 +3006,7 @@ func _check_hud() -> void:
 		_player._juke_cooldown_left = 0.0
 		if weapon_bar != null:
 			weapon_bar._process(0.0)
-		_expect(juke_slot != null and juke_slot.badge == "F"
+		_expect(juke_slot != null and juke_slot.badge == "RMB"
 				and not juke_slot.cooldown_active
 				and is_equal_approx(juke_slot.cooldown_fill, 1.0),
 			"juke icon is full when the dash is ready")
@@ -3396,6 +3592,11 @@ func _check_city_store() -> void:
 	add_child(menu)
 	await get_tree().process_frame
 	_expect(menu.current_tab() == CrawlerFieldMenu.Tab.HATS, "the city store opens on hats")
+	var store_gold := menu.find_child("StoreGold", true, false) as Label
+	_expect(store_gold != null and store_gold.visible
+			and store_gold.text == "GOLD  %s" % _player.crawler_progress.gold_text()
+			and store_gold.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT,
+		"the city store names the purse in the upper right")
 	var tab_row_1 := menu.find_child("StoreTabRow1", true, false) as HBoxContainer
 	var tab_row_2 := menu.find_child("StoreTabRow2", true, false) as HBoxContainer
 	_expect(tab_row_1 != null and tab_row_1.get_child_count() == 6,
@@ -3689,10 +3890,14 @@ func _check_city_store() -> void:
 		"upgrade tiles are not in a scroll")
 	damage = menu.find_child("UpgradeAct_damage", true, false) as Button
 	_expect(damage_tile != null and damage != null and damage.is_inside_tree()
-			and damage_tile.is_ancestor_of(damage),
+			and damage_tile.is_ancestor_of(damage)
+			and damage.text == "UPGRADE",
 		"the upgrade button lives inside its tile")
 	await get_tree().process_frame
 	await get_tree().process_frame
+	damage = menu.find_child("UpgradeAct_damage", true, false) as Button
+	_expect(damage != null and _upgrade_act_width(damage) >= 48.0,
+		"the upgrade button is wide enough to show UPGRADE")
 	_expect(_store_upgrades_fit(detail, upgrade_grid),
 		"starfire upgrades fit the lower half without overlap")
 	_expect(bag_center != null, "the bag slots are centred under the abilities")
@@ -4019,15 +4224,19 @@ func _check_crawler_death() -> void:
 		"the summary names discovered sites")
 	_expect(summary.contains("gem"), "the summary names gems earned")
 	progress.respawn_tickets = 0
+	CrawlerProgress.session_payload["tickets"] = 0
 	_player._die(null)
 	await get_tree().process_frame
 	var screen := _player.death_screen()
 	_expect(screen != null and screen.title_text() == DeathScreen.GAME_OVER_TITLE,
 		"crawler death says game over")
-	_expect(screen.sends_home()
+	_expect(screen.home_button() != null
+			and screen.home_button().visible
+			and screen.home_button().text == DeathScreen.HOME_LABEL
 			and screen.respawn_button() != null
-			and screen.respawn_button().text == DeathScreen.HOME_LABEL,
-		"without a ticket the only way out is home")
+			and screen.respawn_button().visible
+			and screen.respawn_button().text == DeathScreen.RESPAWN_LABEL,
+		"GAME OVER offers HOME and a free RESPAWN")
 	_expect(screen.summary_text().contains("killed")
 			and screen.summary_text().contains("gem"),
 		"game over lists the run")
@@ -4039,11 +4248,14 @@ func _check_crawler_death() -> void:
 	var xp_label := screen.find_child("RunXpLabel", true, false) as Label
 	_expect(xp_bar != null and xp_label != null and xp_label.text.contains("LV"),
 		"game over fills a global XP bar")
+	screen.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	screen.custom_minimum_size = Vector2(1280.0, 720.0)
+	screen.size = Vector2(1280.0, 720.0)
 	for _settle: int in 5:
 		await get_tree().process_frame
 		screen._fit_plate()
 	_expect(_death_home_is_on_plate(screen),
-		"game over keeps HOME on the plate")
+		"game over keeps HOME and RESPAWN on the plate")
 	var squeeze := DeathScreen.new()
 	add_child(squeeze)
 	squeeze.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -4052,7 +4264,7 @@ func _check_crawler_death() -> void:
 	squeeze.present_crawler(
 		"Killed by Rhino: Meteor Strike",
 		"23 MOBS KILLED\n1 SITE DISCOVERED\nTIDE MARGIN\n54 GEMS EARNED",
-		false,
+		true,
 		{
 			"achievements": [
 				{"id": "kills", "title": "KILL 10 MOBS", "rewards": PackedStringArray(["50 XP"])},
@@ -4078,20 +4290,31 @@ func _check_crawler_death() -> void:
 		await get_tree().process_frame
 		squeeze._fit_plate()
 	_expect(_death_home_is_on_plate(squeeze),
-		"a tall recap still keeps HOME on the plate")
+		"a tall recap still keeps HOME and RESPAWN on the plate")
 	_expect(squeeze.find_child("RunLevel_5", true, false) != null,
 		"levelled titles stay in the recap")
 	squeeze.queue_free()
 	var homes := [0]
 	screen.home_requested.connect(func() -> void: homes[0] += 1)
 	screen._process(DeathScreen.ARM_DELAY + 0.1)
-	screen.respawn_button().pressed.emit()
+	screen.home_button().pressed.emit()
 	_expect(homes[0] == 1, "home ends the run")
 	_expect(_player.is_dead(), "home does not revive the body")
 	_player.respawn_at(_player.global_transform)
 	await get_tree().process_frame
 	_expect(_player.death_screen() == null and not _player.is_dead(),
 		"a later revive clears the overlay")
+	progress.respawn_tickets = 0
+	_player._die(null)
+	await get_tree().process_frame
+	screen = _player.death_screen()
+	var asked := [0]
+	screen.respawn_requested.connect(func() -> void: asked[0] += 1)
+	screen._process(DeathScreen.ARM_DELAY + 0.1)
+	screen.respawn_button().pressed.emit()
+	_expect(asked[0] == 1, "GAME OVER respawns without a ticket")
+	_player.respawn_at(_player.global_transform)
+	await get_tree().process_frame
 	progress.respawn_tickets = 1
 	_player._die(null)
 	await get_tree().process_frame
@@ -4122,13 +4345,12 @@ func _check_monument_collision() -> void:
 		_expect(site.find_child("MonumentCollision", true, false) == null,
 			"%s is not wrapped in a solid box" % path.get_file())
 		_expect(_monument_has_trimesh(site),
-			"%s uses wall and floor triangle collision" % path.get_file())
+			"%s uses walkable hull and floor collision" % path.get_file())
 		_expect(not _monument_has_envelope_box(site),
 			"%s has no building-sized box collider" % path.get_file())
-		_expect(_night_lights_on(site) > 0,
-			"%s glowing fixtures cast real night light" % path.get_file())
-		_expect(_interior_homes_inside(site, path),
-			"%s preseeds spawn homes inside the asset" % path.get_file())
+		_expect(site.find_child("TidekinOffice", true, false) == null
+				and site.find_child("CastleGarrison", true, false) == null,
+			"%s does not seed site mobs" % path.get_file())
 		site.queue_free()
 	hosts.queue_free()
 	await get_tree().process_frame
@@ -4185,40 +4407,18 @@ func _check_tidekin_office() -> void:
 	site.global_position = Vector3(6400.0, 12.0, -6400.0)
 	hosts._attach_model(site, PatchMonuments.TOWER_MODEL)
 	await get_tree().process_frame
-	var seated: Node = site.find_child("TidekinOffice", true, false)
-	_expect(seated != null, "Meridian Tower seats Tidekin inhabitants")
-	_expect(seated != null and int(seated.call("home_count")) >= wanted,
-		"the office preseeds shrimp pads inside the tower")
+	_expect(site.get_node_or_null("Model") != null,
+		"the office seats the adobe headquarters")
+	_expect(site.find_child("TidekinOffice", true, false) == null,
+		"the adobe office does not seed Tidekin")
+	_expect(_monument_has_trimesh(site),
+		"the adobe office keeps walkable collision")
 	_expect(PatchMonument.find_id(CrawlerProgress.QUEST_TOWER) == site,
 		"the office keep uses the seated tower")
 	_expect(CrawlerRules.in_office_tower(site.global_position + Vector3(0.0, 2.0, 0.0))
 			and not CrawlerRules.in_office_tower(
 				site.global_position + Vector3(200.0, 0.0, 0.0)),
 		"the office keep covers the tower and ends outside")
-	if seated != null and _player != null:
-		var saved := _player.global_position
-		_player.global_position = site.global_position + Vector3(0.0, 2.0, 0.0)
-		await get_tree().process_frame
-		_expect(int(seated.call("live_count")) == wanted,
-			"Tidekin arrive when you walk into the office")
-		var inside := 0
-		for child: Node in seated.get_children():
-			if child.get_script() != TIDEKIN:
-				continue
-			var folk := child as Node3D
-			var local := site.to_local(folk.global_position)
-			if absf(local.x) <= CrawlerRules.OFFICE_KEEP_X \
-					and absf(local.z) <= CrawlerRules.OFFICE_KEEP_Z \
-					and local.y >= CrawlerRules.OFFICE_KEEP_Y_MIN \
-					and local.y <= CrawlerRules.OFFICE_KEEP_Y_MAX:
-				inside += 1
-		_expect(inside == wanted, "Tidekin stand on harvested office floors")
-		_player.global_position = site.global_position + Vector3(200.0, 0.0, 0.0)
-		await get_tree().physics_frame
-		await get_tree().process_frame
-		_expect(int(seated.call("live_count")) == 0,
-			"Tidekin leave when you step back outside")
-		_player.global_position = saved
 	site.queue_free()
 	hosts.queue_free()
 	flock.queue_free()
@@ -4363,7 +4563,10 @@ func _night_lights_on(node: Node) -> int:
 
 func _monument_has_trimesh(node: Node) -> bool:
 	if node is CollisionShape3D:
-		if (node as CollisionShape3D).shape is ConcavePolygonShape3D:
+		var shape := (node as CollisionShape3D).shape
+		if shape is ConcavePolygonShape3D \
+				or shape is ConvexPolygonShape3D \
+				or shape is BoxShape3D:
 			return true
 	for child in node.get_children():
 		if _monument_has_trimesh(child):
@@ -4452,6 +4655,12 @@ func _check_building_foundation() -> void:
 		"building floors still seat the village")
 	_expect(BuildingFoundation.uses_pad_mesh("01 Winding stone trails | Stone"),
 		"the plaza trails still seat the village")
+	_expect(BuildingFoundation.is_path_mesh(
+			"GRAY ADOBE | 14 shaped pads + 23 winding connections"),
+		"the authored gray path extrudes instead of paving its bounds")
+	_expect(BuildingFoundation.is_shell_mesh("12 Skylight Commons")
+			and not BuildingFoundation.is_shell_mesh("02 Plateau seat 1"),
+		"house shells stay enterable and furniture stays a cheap hull")
 	var root := Node3D.new()
 	add_child(root)
 	BuildingFoundation.seat(root, null)
@@ -4524,6 +4733,89 @@ func _check_monument_quests() -> void:
 	boss.queue_free()
 	keep.queue_free()
 	site.queue_free()
+
+
+func _check_run_field_packs() -> void:
+	var held := CrawlerRun.payload.duplicate(true)
+	var held_path := CrawlerRun.path
+	CrawlerRun.payload = {
+		"radius_m": 8000.0,
+		"spawn": {"direction": {"x": 0.0, "y": 1.0, "z": 0.0}},
+		"patches": [
+			{
+				"name": CrawlerRules.CITY_PATCH,
+				"combo": "robot",
+				"kinds": ["kestrel", "bastion", "weaver"],
+				"level": 2,
+				"direction": {"x": 0.0, "y": 0.0, "z": 1.0},
+			},
+			{
+				"name": CrawlerRules.CASTLE_PATCH,
+				"combo": "alien",
+				"kinds": ["scout", "gray", "tanglemaw"],
+				"level": 3,
+				"direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+			},
+			{
+				"name": CrawlerRules.TOWER_PATCH,
+				"combo": "demon",
+				"kinds": ["gloam", "vesper", "threnody"],
+				"level": 2,
+				"direction": {"x": 0.0, "y": 0.0, "z": -1.0},
+			},
+		],
+	}
+	CrawlerRun.path = "res://dev/fake_run.json"
+	CrawlerRun._index()
+	_expect(CrawlerRules.city_patch(CrawlerRules.CITY_PATCH)
+			and CrawlerRules.reserved_patch(CrawlerRules.CITY_PATCH),
+		"a run still knows the authored city names")
+	_expect(not CrawlerRules.castle_grounds(CrawlerRules.CASTLE_PATCH)
+			and CrawlerRules.field_kinds(CrawlerRules.CASTLE_PATCH).has("scout"),
+		"Long Shore fields its run pack instead of staying empty castle land")
+	_expect(not CrawlerRules.robot_grounds(CrawlerRules.TOWER_PATCH)
+			and CrawlerRules.demon_grounds(CrawlerRules.TOWER_PATCH)
+			and CrawlerRules.field_kinds(CrawlerRules.TOWER_PATCH).has("gloam"),
+		"Far Beacon fields the run combo, not the authored office robots")
+	_expect(CrawlerRules.field_kinds(CrawlerRules.CITY_PATCH).has("kestrel")
+			and not CrawlerRules.field_kinds(CrawlerRules.CITY_PATCH).has("gloam"),
+		"Quiet Inlet fields its run pack outside the plaza")
+	var horde := CrawlerHorde.new()
+	add_child(horde)
+	horde.set_process(false)
+	var city_kind: String = horde.call(
+		"_pick_kind", Vector3(400.0, 0.0, 0.0), CrawlerRules.CITY_PATCH, 400.0, 2)
+	_expect(city_kind == "kestrel" or city_kind == "weaver",
+		"the horde rolls the run pack on the old city name")
+	var empty_ring: Array[Dictionary] = [{
+		"at": Vector3.ZERO,
+		"kinds": PackedStringArray(),
+	}]
+	var demon_ring: Array[Dictionary] = [{
+		"at": Vector3.ZERO,
+		"kinds": PackedStringArray(["gloam", "vesper", "threnody"]),
+	}]
+	_expect(not bool(horde.call("_off_combo_near", Vector3.ZERO, "ranger", empty_ring)),
+		"an empty roster does not wipe the nearby pack")
+	_expect(bool(horde.call("_off_combo_near", Vector3.ZERO, "ranger", demon_ring)),
+		"a demon ring still retires wilds that followed in")
+	var left_ring: Array[Dictionary] = [{
+		"at": Vector3.ZERO,
+		"kinds": PackedStringArray(["gloam", "vesper", "threnody"]),
+		"patch_id": 2,
+	}]
+	_expect(not bool(horde.call(
+			"_off_combo_near", Vector3(36.0, 0.0, 0.0), "ranger", left_ring, 8)),
+		"crossing into a new combo does not wipe the tile you left")
+	_expect(bool(horde.call(
+			"_off_combo_near", Vector3(6.0, 0.0, 0.0), "ranger", left_ring, 2)),
+		"a wild that followed onto the new combo tile still leaves")
+	horde.queue_free()
+	CrawlerRun.clear()
+	CrawlerRun.payload = held
+	CrawlerRun.path = held_path
+	if not held.is_empty():
+		CrawlerRun._index()
 
 
 func _check_nearest_quest_marks() -> void:
@@ -4615,13 +4907,13 @@ func _check_nearest_quest_marks() -> void:
 	_expect(str(tree.call(&"combat_display_name")) == "The Giving Tree"
 			and tree.is_in_group(BossAdapter.CRAWLER_GROUP)
 			and is_equal_approx(float(tree.call(&"maximum_health")), 500.0)
-			and is_equal_approx(float(tree.call(&"battle_radius")), 50.0)
+			and is_equal_approx(float(tree.call(&"battle_radius")), 200.0)
 			and int(tree.call(&"bushel_count")) >= 6
 			and not bool(tree.call(&"blocks_field_spawns")),
 		"The Giving Tree is the first-ring boss")
-	_expect(is_equal_approx(CrawlerRules.TREE_BATTLE_RADIUS, 50.0)
+	_expect(is_equal_approx(CrawlerRules.TREE_BATTLE_RADIUS, 200.0)
 			and is_equal_approx(CrawlerRules.TREE_FLORA_CLEAR, 1.0),
-		"the giving tree fight is a 50 m ring with a 1 m trunk clear")
+		"the giving tree fight is a 200 m ring with a 1 m trunk clear")
 	var poke := DamageHit.impact(tree.call(&"combat_position"), 2.0, 40.0)
 	poke.faction = DamageHit.Faction.PLAYER
 	_expect(is_equal_approx(float(tree.call(&"apply_damage", poke)), 0.0),
@@ -4951,64 +5243,58 @@ func _check_entering_sites() -> void:
 	spawn.queue_free()
 	village.queue_free()
 	tower.queue_free()
-	if ResourceLoader.exists(CrawlerCityRing.VILLAGE_MODEL):
-		var packed := load(CrawlerCityRing.VILLAGE_MODEL) as PackedScene
-		if packed != null:
-			var ring = CITY_RING.new()
-			ring.force_village = true
-			add_child(ring)
-			await get_tree().process_frame
-			_expect(ring.get_node_or_null("Village") != null,
-				"the first city seats Neon Fjord")
-			_expect(ring.find_child("CityWall", true, false) == null,
-				"the village replaces the stand-in walls")
-			_expect(_monument_has_trimesh(ring)
-					or _ring_has_blocking_collision(ring),
-				"the village keeps walkable collision")
-			_expect(ring.find_child("LIGHT_SOURCE", true, false) != null
-					or _named_mesh_visible(ring, "streetlight"),
-				"the village keeps its streetlamps")
-			_expect(ring.find_child("INTERACT_HATS", true, false) != null
-					or _named_mesh_visible(ring, "01_Hats"),
-				"the village still has shop sites")
-			_expect(_night_lights_on(ring) > 0,
-				"village neon and lamps cast real night light")
-			_check_village_folk(ring)
-			ring.refresh_stall_signs()
-			await get_tree().process_frame
-			_check_stall_signs(ring)
-			ring.queue_free()
-			await get_tree().process_frame
-	if ResourceLoader.exists(CrawlerRules.CRESCENT_VILLAGE):
-		var packed_crescent := load(CrawlerRules.CRESCENT_VILLAGE) as PackedScene
-		if packed_crescent != null:
-			var crescent = CITY_RING.new()
-			crescent.force_village = true
-			crescent.configure(
-				-1,
-				Transform3D.IDENTITY,
-				CrawlerRules.CITY_CRESCENT_SITE_ID,
-				CrawlerRules.CITY_CRESCENT_TITLE,
-				CrawlerRules.CRESCENT_VILLAGE,
-				CrawlerRules.CITY_CRESCENT_SITE_ID
-			)
-			add_child(crescent)
-			await get_tree().process_frame
-			_expect(crescent.get_node_or_null("Village") != null,
-				"Crescent Market seats village 02")
-			_expect(crescent.find_child("INTERACT_HATS", true, false) != null
-					or _named_mesh_visible(crescent, "01_Hats"),
-				"Crescent Market keeps the shop sites")
-			var crescent_mark := crescent.get_node_or_null("CrawlerWaypoint") as CrawlerSite
-			_expect(crescent_mark != null and not crescent_mark.waypoint
-					and crescent_mark.title == CrawlerRules.CITY_CRESCENT_TITLE,
-				"Crescent Market waits until you enter Neon Fjord")
-			_check_village_folk(crescent, "Crescent Market")
-			crescent.refresh_stall_signs()
-			await get_tree().process_frame
-			_check_stall_signs(crescent, "Crescent Market")
-			crescent.queue_free()
-			await get_tree().process_frame
+	if CrawlerAdobeSite.city_ready():
+		var ring = CITY_RING.new()
+		ring.force_village = true
+		add_child(ring)
+		await get_tree().process_frame
+		_expect(ring.get_node_or_null("Village") != null,
+			"the first city seats adobe buildings")
+		_expect(CrawlerAdobeSite.building_count(ring) == CrawlerAdobeSite.CITY_BUILDINGS.size(),
+			"the city seats the blob village")
+		_expect(ring.find_child("CityWall", true, false) == null,
+			"the village replaces the stand-in walls")
+		_expect(_monument_has_trimesh(ring)
+				or _ring_has_blocking_collision(ring),
+			"the village keeps walkable collision")
+		_expect(ring.find_child("VillageFolk", true, false) == null,
+			"adobe cities do not seat meeps")
+		ring.refresh_stall_signs()
+		await get_tree().process_frame
+		_expect(ring.find_child("StallSign_hats", true, false) == null,
+			"adobe cities do not float stall tiles")
+		var first_palette := CrawlerAdobeSite.palette_for(ring.city_key())
+		var crescent = CITY_RING.new()
+		crescent.force_village = true
+		crescent.configure(
+			-1,
+			Transform3D.IDENTITY,
+			CrawlerRules.CITY_CRESCENT_SITE_ID,
+			CrawlerRules.CITY_CRESCENT_TITLE,
+			"",
+			CrawlerRules.CITY_CRESCENT_SITE_ID
+		)
+		add_child(crescent)
+		await get_tree().process_frame
+		_expect(crescent.get_node_or_null("Village") != null,
+			"later cities seat the same adobe catalog")
+		_expect(CrawlerAdobeSite.building_count(crescent)
+				== CrawlerAdobeSite.CITY_BUILDINGS.size(),
+			"Crescent Market seats the blob village")
+		var crescent_mark := crescent.get_node_or_null("CrawlerWaypoint") as CrawlerSite
+		_expect(crescent_mark != null and not crescent_mark.waypoint
+				and crescent_mark.title == CrawlerRules.CITY_CRESCENT_TITLE,
+			"Crescent Market waits until you enter Neon Fjord")
+		_expect(crescent.find_child("VillageFolk", true, false) == null,
+			"later adobe cities do not seat meeps")
+		var later_palette := CrawlerAdobeSite.palette_for(crescent.city_key())
+		_expect(first_palette[0] != later_palette[0]
+				or first_palette[1] != later_palette[1]
+				or first_palette[2] != later_palette[2],
+			"each city rolls its own adobe palette")
+		ring.queue_free()
+		crescent.queue_free()
+		await get_tree().process_frame
 	if ResourceLoader.exists(CrawlerSpawnPad.MODEL):
 		var packed_pad := load(CrawlerSpawnPad.MODEL) as PackedScene
 		if packed_pad != null:
@@ -5797,14 +6083,14 @@ func _has_named_clip(animator: AnimationPlayer, clip: String) -> bool:
 
 
 func _check_kill_loot(progress: CrawlerProgress) -> void:
-	_expect(is_equal_approx(CrawlerLoot.base_chance(CrawlerLoot.KIND_HAT), 0.10)
-			and is_equal_approx(CrawlerLoot.base_chance(CrawlerLoot.KIND_ABILITY), 0.10)
-			and is_equal_approx(CrawlerLoot.base_chance(CrawlerLoot.KIND_MOD), 0.10),
-		"hats, abilities, and mods drop at ten percent")
+	_expect(is_equal_approx(CrawlerLoot.base_chance(CrawlerLoot.KIND_HAT), 0.02)
+			and is_equal_approx(CrawlerLoot.base_chance(CrawlerLoot.KIND_ABILITY), 0.02)
+			and is_equal_approx(CrawlerLoot.base_chance(CrawlerLoot.KIND_MOD), 0.02),
+		"hats, abilities, and mods drop at two percent")
 	var plain := CrawlerLoot.drop_chance(CrawlerLoot.KIND_HAT, 0.0)
 	var lucky := CrawlerLoot.drop_chance(CrawlerLoot.KIND_HAT, 16.0)
-	_expect(is_equal_approx(plain, 0.10),
-		"hat drops stay at ten percent with no luck")
+	_expect(is_equal_approx(plain, 0.02),
+		"hat drops stay at two percent with no luck")
 	_expect(is_equal_approx(lucky, CrawlerLoot.CHANCE_CAP)
 			and is_equal_approx(
 				CrawlerLoot.drop_chance(CrawlerLoot.KIND_ABILITY, 16.0),
@@ -5812,7 +6098,7 @@ func _check_kill_loot(progress: CrawlerProgress) -> void:
 			and is_equal_approx(
 				CrawlerLoot.drop_chance(CrawlerLoot.KIND_MOD, 16.0),
 				CrawlerLoot.CHANCE_CAP),
-		"luck cannot push kill drops past ten percent")
+		"luck cannot push kill drops past two percent")
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 1
 	var drops := CrawlerLoot.roll_kill_drops(
@@ -5900,16 +6186,26 @@ func _advance_hat_missiles(missiles: Array[CrawlerMissile], seconds: float) -> v
 func _death_home_is_on_plate(screen: DeathScreen) -> bool:
 	if screen == null:
 		return false
-	var button := screen.respawn_button()
 	var plate := screen.find_child("Plate", true, false) as Control
-	if button == null or plate == null:
+	if plate == null:
 		return false
-	var btn := CrtType.screen_rect(button)
 	var box := CrtType.screen_rect(plate)
-	return btn.position.y >= box.position.y - 1.0 \
-		and btn.end.y <= box.end.y + 2.0 \
-		and btn.position.x >= box.position.x - 1.0 \
-		and btn.end.x <= box.end.x + 2.0
+	for button: Button in [screen.home_button(), screen.respawn_button()]:
+		if button == null or not button.visible:
+			continue
+		var btn := CrtType.screen_rect(button)
+		if btn.position.y < box.position.y - 1.0 \
+				or btn.end.y > box.end.y + 2.0 \
+				or btn.position.x < box.position.x - 1.0 \
+				or btn.end.x > box.end.x + 2.0:
+			return false
+	return true
+
+
+func _upgrade_act_width(button: Button) -> float:
+	if button == null:
+		return 0.0
+	return CrtType.screen_rect(button).size.x
 
 
 func _store_upgrades_fit(detail: Control, grid: Control) -> bool:

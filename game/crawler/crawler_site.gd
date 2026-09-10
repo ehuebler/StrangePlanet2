@@ -20,7 +20,7 @@ func _ready() -> void:
 	add_to_group(Landmark.GROUP)
 	set_notify_transform(Engine.is_editor_hint())
 	if CrawlerRules.starts_visible(site_id):
-		unlock_waypoint()
+		unlock_waypoint(not CrawlerRules.sandbox())
 	if planet_host() != null:
 		place()
 

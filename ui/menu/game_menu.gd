@@ -54,6 +54,7 @@ var _active_page: Control
 var _selector_buttons: Dictionary = {}
 var _settings_action: Button
 var _sandbox_cheat_buttons: Dictionary = {}
+var _gold: Label
 
 
 ## Called before the menu enters the tree. Each routed page is configured from
@@ -75,6 +76,8 @@ func _ready() -> void:
 	_build_shell()
 	_replace_active_page()
 	_refresh_navigation()
+	_connect_wallet()
+	_refresh_gold()
 	CrtType.watch(self)
 
 
@@ -90,8 +93,53 @@ func close() -> void:
 	if _closing:
 		return
 	_closing = true
+	_disconnect_wallet()
 	closed.emit()
 	queue_free()
+
+
+func _exit_tree() -> void:
+	_disconnect_wallet()
+
+
+func _connect_wallet() -> void:
+	if _player == null or _player.crawler_progress == null:
+		return
+	if not _player.crawler_progress.changed.is_connected(_refresh_gold):
+		_player.crawler_progress.changed.connect(_refresh_gold)
+
+
+func _disconnect_wallet() -> void:
+	if _player != null and _player.crawler_progress != null \
+			and _player.crawler_progress.changed.is_connected(_refresh_gold):
+		_player.crawler_progress.changed.disconnect(_refresh_gold)
+
+
+func _refresh_gold() -> void:
+	if _gold == null:
+		return
+	var progress := _player.crawler_progress if _player != null else null
+	var show := CrawlerRules.active() and progress != null
+	_gold.visible = show
+	if show:
+		_gold.text = "GOLD  %s" % progress.gold_text()
+
+
+func _make_gold_label() -> Label:
+	var gold := Label.new()
+	gold.name = "MenuGold"
+	gold.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	gold.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	gold.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	gold.add_theme_font_size_override(&"font_size", 18)
+	gold.add_theme_color_override(&"font_color", RED_BRIGHT)
+	gold.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	gold.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	gold.offset_left = -240.0
+	gold.offset_top = 14.0
+	gold.offset_right = -18.0
+	gold.offset_bottom = 42.0
+	return gold
 
 
 ## Opens a canonical page. Legacy aliases remain source-compatible:
@@ -172,6 +220,8 @@ func _build_shell() -> void:
 	_build_content_frame()
 	_build_bottom_selector()
 	_build_right_actions()
+	_gold = _make_gold_label()
+	_shell.add_child(_gold)
 
 
 func _build_content_frame() -> void:

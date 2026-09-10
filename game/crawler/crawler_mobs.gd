@@ -15,7 +15,7 @@ extends RefCounted
 ## [code]Far Beacon 4 Plaza[/code].
 
 const PATH := "res://assets/runtime/crawler/mobs.json"
-const FIELD_ORDER: PackedStringArray = ["ranger", "rammer", "rhino", "rift_hulk", "gloam", "vesper", "threnody", "kestrel", "bastion", "weaver", "scout", "gray", "tanglemaw", "gruk", "nix", "vex"]
+const FIELD_ORDER: PackedStringArray = ["ranger", "rammer", "rhino", "rift_hulk", "gloam", "vesper", "threnody", "kestrel", "bastion", "weaver", "scout", "gray", "tanglemaw", "gruk", "nix", "vex", "glorb_jellyfish", "glorb_rhino", "glorb_eyeball", "glorb_punching", "glorb_one_armed", "glorb_spider", "glorb_angel"]
 ## Level-1 catalog rows are the live L1 combat numbers (health 4–20, hits 2–20).
 ## Each later ring adds about 25% of those L1 numbers: L2 is 1.25×, L3 is 1.5×.
 const LEVEL_STEP := 0.25

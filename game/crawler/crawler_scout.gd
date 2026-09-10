@@ -2,7 +2,8 @@ class_name CrawlerScout
 extends CrawlerAlien
 
 ## Flying saucer. Banks while it tracks, holds a green sight, then freezes
-## that aim and fires short pink pulse beams.
+## that aim and fires short pink pulse beams. Both the sight and the shot
+## leave the cannon along its barrel; they do not bend toward the target.
 
 const CANNON_LOCAL := Vector3(0.0, 0.505, 1.708)
 const HEIGHT := 2.15
@@ -11,6 +12,7 @@ const PULSE_COUNT := 3
 const PULSE_GAP := 0.09
 const PULSE_RADIUS := 0.42
 const POINTER_RADIUS := 0.034
+const POINTER_OPACITY := 0.4
 const BANK_ROLL := 0.085
 const BANK_PITCH := 0.042
 
@@ -33,7 +35,9 @@ func _ready() -> void:
 	_bind_cannon()
 	_pointer = EnergyVfx.make(EnergyVfx.Kind.BEAM_STREAMS, EnergyVfx.TINT_GREEN)
 	_pointer.name = "ScoutPointer"
+	_pointer.top_level = true
 	add_child(_pointer)
+	_pointer.set_opacity(POINTER_OPACITY)
 	_pointer.visible = false
 
 
@@ -105,7 +109,7 @@ func _tick_ai(delta: float) -> void:
 		_hold_frozen(player, delta)
 	else:
 		_aim_point = _combat_position_of(player)
-		_flyer_track(player, delta)
+		_tick_hunt_motion(player, delta)
 	_try_lock(player, _flat_gap(player), delta)
 
 
@@ -134,12 +138,10 @@ func _hold_frozen(player: Node, delta: float) -> void:
 	_match_speed(frame.length(), delta, 1.4, 8.0)
 	var spring := (desired - global_position) * 1.2
 	velocity = velocity.lerp(frame + spring, clampf(3.6 * delta, 0.0, 1.0))
-	var ahead := _aim_point - global_position
-	var up := _up()
-	ahead -= up * ahead.dot(up)
+	var ahead := _aim_point - muzzle_point()
 	if ahead.length_squared() < 0.0001:
 		return
-	global_transform.basis = _look_basis(ahead.normalized(), up)
+	global_transform.basis = _look_basis(ahead.normalized(), _up())
 
 
 func _try_lock(player: Node, distance: float, delta: float) -> void:
@@ -153,10 +155,8 @@ func _try_lock(player: Node, distance: float, delta: float) -> void:
 	_faces_motion = true
 	if _fire_left > 0.0 or _pulse_left > 0:
 		return
-	var near := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_min", CrawlerRules.RANGER_ENGAGE_MIN)
-	var far := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_max", CrawlerRules.RANGER_ENGAGE_MAX)
+	var near := CrawlerHunt.shot_min(wild_kind(), threat_level)
+	var far := CrawlerHunt.shot_max(wild_kind(), threat_level)
 	if distance < near or distance > far:
 		return
 	var aim := CrawlerMobs.number(
@@ -167,6 +167,7 @@ func _try_lock(player: Node, distance: float, delta: float) -> void:
 	_pending_burst = true
 	_aim_left = aim
 	_aim_point = _combat_position_of(player)
+	_bank = Vector2.ZERO
 	_act = CLIP_ATTACK
 	set_physics_process(true)
 
@@ -195,25 +196,18 @@ func _service_pulses(delta: float) -> void:
 		_aim_frozen = false
 		_act = ""
 		_faces_motion = true
-		_fire_left = maxf(_fire_left, fire_scale())
+		_fire_left = maxf(_fire_left, maxf(fire_scale(), CrawlerHunt.SCOUT_FIRE))
 		return
 	_pulse_wait = PULSE_GAP
 	_fire_pulse(_nearest_player())
 
 
 func _fire_pulse(player: Node) -> void:
-	var from := muzzle_point()
-	var to := _aim_point
-	if not to.is_finite() and player != null:
-		to = _combat_position_of(player)
-	if not to.is_finite():
+	var shot := _cannon_span()
+	if shot.is_empty():
 		return
-	var along := to - from
-	if along.length_squared() < 0.0001:
-		return
-	var far := CrawlerMobs.number(
-		wild_kind(), threat_level, "engage_max", CrawlerRules.RANGER_ENGAGE_MAX)
-	to = from + along.normalized() * maxf(along.length(), far)
+	var from: Vector3 = shot[0]
+	var to: Vector3 = shot[1]
 	_flash_beam(from, to, EnergyVfx.TINT_PINK, PULSE_RADIUS)
 	var hit := DamageHit.beam(from, to, PULSE_RADIUS, damage())
 	hit.faction = outgoing_faction()
@@ -253,14 +247,38 @@ func _flash_beam(from: Vector3, to: Vector3, tint: Color, radius: float) -> void
 		beam.queue_free()
 
 
+func cannon_ahead() -> Vector3:
+	if is_instance_valid(_muzzle) and _muzzle.is_inside_tree():
+		var ahead := _muzzle.global_transform.basis.z
+		if ahead.length_squared() > 0.0001:
+			return ahead.normalized()
+	var ahead := global_transform.basis.z
+	if ahead.length_squared() > 0.0001:
+		return ahead.normalized()
+	return Vector3.FORWARD
+
+
+func _cannon_reach() -> float:
+	return maxf(CrawlerMobs.number(
+		wild_kind(), threat_level, "engage_max", CrawlerRules.RANGER_ENGAGE_MAX), 4.0)
+
+
+func _cannon_span() -> PackedVector3Array:
+	var from := muzzle_point()
+	var ahead := cannon_ahead()
+	if ahead.length_squared() < 0.0001:
+		return PackedVector3Array()
+	return PackedVector3Array([from, from + ahead * _cannon_reach()])
+
+
 func _place_pointer() -> void:
 	if _pointer == null:
 		return
 	if not _aim_point.is_finite() or not _alive:
 		_pointer.visible = false
 		return
-	var from := muzzle_point()
-	if not _pointer.place_beam(from, _aim_point, POINTER_RADIUS):
+	var shot := _cannon_span()
+	if shot.is_empty() or not _pointer.place_beam(shot[0], shot[1], POINTER_RADIUS):
 		_pointer.visible = false
 
 
@@ -283,7 +301,9 @@ func _bank_visual(delta: float) -> void:
 		want = Vector2(
 			clampf(-velocity.dot(up) * BANK_PITCH, -0.28, 0.28),
 			clampf(-velocity.dot(right) * BANK_ROLL, -0.55, 0.55))
-	_bank = _bank.lerp(want, clampf(delta * 6.0, 0.0, 1.0))
+		_bank = _bank.lerp(want, clampf(delta * 6.0, 0.0, 1.0))
+	else:
+		_bank = Vector2.ZERO
 	root.rotation = Vector3(_bank.x, 0.0, _bank.y)
 
 

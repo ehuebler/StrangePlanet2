@@ -13,7 +13,7 @@ const AUTHORED_HEIGHT := 1.85
 const CLIP_PAW := "Paw"
 const CLIP_CHARGE := "Charge"
 const CLIP_GORE := "Gore"
-const CHARGE_FROM := 20.0
+const CHARGE_FROM := 38.0
 const CHARGE_MINIMUM := 8.0
 const CHARGE_SECONDS := 1.15
 const CHARGE_TURN := 1.6
@@ -33,7 +33,7 @@ const SLAM_RADIUS := 5.2
 const SLAM_FALLOFF := 0.45
 const CRATER_RADIUS := 4.4
 const CRATER_DEPTH := 1.7
-const SHOCK_RADIUS := 2.8
+const SHOCK_RADIUS := 4.0
 const METEOR_TINT := Color(1.0, 0.22, 0.10)
 const FLORA_MARGIN := 0.6
 const FLORA_DAMAGE := 6000.0
@@ -100,10 +100,14 @@ func combat_display_name() -> String:
 
 
 func combat_position() -> Vector3:
+	if _hit_ready:
+		return super.combat_position()
 	return global_position + _up() * (HEIGHT * 0.28)
 
 
 func combat_radius() -> float:
+	if _hit_ready:
+		return super.combat_radius()
 	return HEIGHT * 0.50
 
 
@@ -114,14 +118,13 @@ func _desired_clip() -> String:
 		return CLIP_GORE
 	if _phase == Phase.PAW:
 		return CLIP_PAW
-	if _phase == Phase.CHARGE:
-		return CLIP_CHARGE
 	if _flash_left > 0.04 and _phase != Phase.CHARGE:
 		return CLIP_HIT
 	var speed := velocity.length()
-	if speed >= RUN_CLIP_SPEED or _phase == Phase.RECOVER:
+	if _phase == Phase.CHARGE or _phase == Phase.RECOVER \
+			or speed >= CrawlerRules.RHINO_RUN_SPEED:
 		return CLIP_RUN
-	if speed >= WALK_CLIP_SPEED * 0.35:
+	if speed >= 0.55 or _phase == Phase.STALK:
 		return CLIP_WALK
 	return CLIP_IDLE
 
@@ -137,6 +140,13 @@ func _tick_idle(delta: float) -> void:
 	_face_along(_face if _face.length_squared() > 0.01 else velocity, delta)
 
 
+func _tick_far(delta: float) -> void:
+	if _phase == Phase.PAW or _phase == Phase.CHARGE or _phase == Phase.RECOVER:
+		_tick_ai(delta)
+		return
+	super._tick_far(delta)
+
+
 func _tick_ai(delta: float) -> void:
 	snap_to_ground()
 	_cooldown_left = maxf(_cooldown_left - delta, 0.0)
@@ -144,6 +154,7 @@ func _tick_ai(delta: float) -> void:
 	var player := _hunt_target(delta)
 	if player == null:
 		_tick_idle(delta)
+		_update_meteor_shock()
 		return
 	match _phase:
 		Phase.PAW:
@@ -155,6 +166,7 @@ func _tick_ai(delta: float) -> void:
 		_:
 			_stalk(player, delta)
 	_face_along(_face if _face.length_squared() > 0.01 else velocity, delta)
+	_update_meteor_shock()
 
 
 func _patrol_ground(delta: float) -> void:
@@ -232,6 +244,8 @@ func _begin_paw(heading: Vector3) -> void:
 	_charge_heading = heading.normalized() if heading.length_squared() > 0.0001 \
 		else _flat_forward()
 	_face = _charge_heading
+	set_process(true)
+	_update_meteor_shock()
 
 
 func _update_paw(player: Node, delta: float) -> void:
@@ -341,14 +355,12 @@ func meteor_shock() -> MeteorShock:
 		_shock.name = "MeteorShock"
 		_shock.radius = SHOCK_RADIUS
 		add_child(_shock, false, Node.INTERNAL_MODE_BACK)
+		_shock.set_tint(METEOR_TINT)
 	return _shock
 
 
 func _charging_visually() -> bool:
-	var clip := _network_clip if not _is_host() and not _network_clip.is_empty() \
-		else _desired_clip()
-	return clip == CLIP_PAW or clip == CLIP_CHARGE \
-		or clip.ends_with("/" + CLIP_PAW) or clip.ends_with("/" + CLIP_CHARGE)
+	return _phase == Phase.PAW or _phase == Phase.CHARGE
 
 
 func _update_meteor_shock() -> void:
@@ -359,13 +371,15 @@ func _update_meteor_shock() -> void:
 	var heading := _charge_heading
 	if heading.length_squared() < 0.0001:
 		heading = velocity
+	var nose := _nose_forward()
 	if heading.length_squared() < 0.0001:
-		heading = _flat_forward()
-	var clip := _desired_clip() if _is_host() else _network_clip
-	var winding := clip == CLIP_PAW or clip.ends_with("/" + CLIP_PAW)
+		heading = nose
+	heading = heading.normalized()
+	if heading.dot(nose) < 0.0:
+		heading = nose
+	var winding := _phase == Phase.PAW
 	var speed := 88.0 if winding else maxf(velocity.length() * 5.0, 120.0)
-	meteor_shock().aim(
-		combat_position() + heading.normalized() * 0.85, heading, speed)
+	meteor_shock().aim(_nose_point(), heading, speed)
 
 
 func _should_slam(player: Node) -> bool:
@@ -385,7 +399,7 @@ func _slam_meteor(player: Node) -> void:
 	var heading := _charge_heading if _charge_heading.length_squared() > 0.0001 \
 		else _flat_forward()
 	var at := _slam_point(heading)
-	_play_meteor_vfx(at)
+	_play_meteor_dust(at)
 	if _is_host():
 		_apply_meteor_blow(at, heading, player)
 		_cut_crater(at)
@@ -407,20 +421,14 @@ func _slam_point(heading: Vector3) -> Vector3:
 	return guess
 
 
-func _play_meteor_vfx(at: Vector3) -> void:
-	if _horde != null and _horde.has_method(&"publish_rhino_meteor"):
-		_horde.call(&"publish_rhino_meteor", at, SLAM_RADIUS)
-		return
-	_spawn_meteor_vfx(at, SLAM_RADIUS)
-
-
-func _spawn_meteor_vfx(at: Vector3, reach: float) -> void:
-	var world: Node = _planet if _planet != null else get_parent()
-	EnergyExplosion.burst(world, at, reach, METEOR_TINT, 0.42)
+func _play_meteor_dust(at: Vector3) -> void:
 	var dust_owner := _nearest_player()
+	if dust_owner != null and dust_owner.has_method(&"play_meteor_impact_dust"):
+		dust_owner.call(&"play_meteor_impact_dust", at, _up(), SLAM_RADIUS, 0.9)
+		return
 	if dust_owner != null and dust_owner.get("dust") != null \
 			and dust_owner.dust.has_method(&"impact_cloud"):
-		dust_owner.dust.impact_cloud(at, _up(), reach, 0.9)
+		dust_owner.dust.impact_cloud(at, _up(), SLAM_RADIUS, 0.9)
 
 
 func _apply_meteor_blow(at: Vector3, heading: Vector3, player: Node) -> void:
@@ -683,8 +691,13 @@ func _tangent_toward(at: Vector3) -> Vector3:
 
 
 func _flat_forward() -> Vector3:
+	return _nose_forward()
+
+
+func _nose_forward() -> Vector3:
 	var up := _up()
-	var ahead := -global_transform.basis.z
+	var ahead := global_transform.basis.z if _uses_model_front \
+		else -global_transform.basis.z
 	ahead -= up * ahead.dot(up)
 	if ahead.length_squared() < 0.0001:
 		ahead = up.cross(Vector3.RIGHT)
@@ -693,8 +706,66 @@ func _flat_forward() -> Vector3:
 	return ahead.normalized()
 
 
+func _nose_point() -> Vector3:
+	var front := _visual_front_point()
+	var skeleton := find_child("Skeleton3D", true, false) as Skeleton3D
+	if skeleton == null:
+		return front
+	var best := -1
+	var rank := 0
+	for i: int in skeleton.get_bone_count():
+		var bone := skeleton.get_bone_name(i).to_lower()
+		var hit := 0
+		if bone.contains("horn"):
+			hit = 3
+		elif bone == "head" or bone.begins_with("head"):
+			hit = 2
+		if hit > rank:
+			rank = hit
+			best = i
+	if best < 0:
+		return front
+	var at := skeleton.to_global(skeleton.get_bone_global_pose(best).origin)
+	if front.distance_to(at) <= 1.6:
+		return at
+	return front
+
+
+func _visual_front_point() -> Vector3:
+	var bounds := AABB()
+	var started := false
+	for node_variant: Variant in find_children("*", "MeshInstance3D", true, false):
+		var mesh := node_variant as MeshInstance3D
+		if mesh == null or mesh.mesh == null:
+			continue
+		var box := mesh.global_transform * mesh.get_aabb()
+		if started:
+			bounds = bounds.merge(box)
+		else:
+			bounds = box
+			started = true
+	var along := _nose_forward()
+	if not started:
+		return combat_position() + along * (combat_radius() * 0.95)
+	var ext := bounds.size * 0.5
+	var center := bounds.get_center()
+	var support := center + Vector3(
+		signf(along.x) * ext.x,
+		signf(along.y) * ext.y,
+		signf(along.z) * ext.z)
+	return support + _up() * (ext.y * 0.2)
+
+
 func _stick_to_surface() -> void:
 	snap_to_ground()
+
+
+func _face_combat_player(delta: float) -> void:
+	var ahead := _face if _face.length_squared() > 0.01 else _charge_heading
+	if ahead.length_squared() < 0.0001:
+		super._face_combat_player(delta)
+		return
+	_face_along(ahead, delta)
 
 
 func _face_along(ahead: Vector3, delta: float) -> void:
@@ -705,9 +776,11 @@ func _face_along(ahead: Vector3, delta: float) -> void:
 	var current := global_transform.basis.orthonormalized()
 	if current.determinant() < 0.0:
 		current.x = -current.x
-	var desired := Basis.looking_at(ahead.normalized(), up).orthonormalized()
+	var desired := _look_basis(ahead, up)
 	if desired.determinant() < 0.0:
 		desired.x = -desired.x
+	if absf(desired.determinant()) < 0.01:
+		return
 	var from := current.get_rotation_quaternion()
 	var to := desired.get_rotation_quaternion()
 	var rate := 18.0 if _phase == Phase.PAW else 7.0

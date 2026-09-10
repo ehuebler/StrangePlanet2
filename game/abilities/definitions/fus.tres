@@ -8,7 +8,7 @@
 script = ExtResource("1_definition")
 ability_id = "fus"
 title = "Fus"
-description = "Scrunch in and bellow. Instead of a spherical shockwave, a bright green force cone bursts forward. It chips what it hits and throws them a long way. Will not fire under water."
+description = "Scrunch in and bellow. A bright green force ring bursts forward and swells as it flies. Anything the ring hits is thrown back. Size makes the ring expand faster. Will not fire under water."
 implementation = ExtResource("2_implementation")
 icon = ExtResource("3_icon")
 tint = Color(0.223529, 1.000000, 0.078431, 1.000000)
@@ -34,9 +34,10 @@ stats = {
 "damage": 8.0,
 "speed": 42.0,
 "range": 20.0,
-"radius": 3.8,
+"size": 1.0,
+"radius": 0.7,
 "cooldown": 3.2,
-"projectile_radius": 3.8,
+"projectile_radius": 0.9,
 "knockback": 72.0,
 "animation_duration": 1.15,
 }
